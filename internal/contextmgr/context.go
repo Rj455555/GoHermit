@@ -18,6 +18,7 @@ type Config struct {
 	MaxTokens                                int
 	CompressionThreshold, HardLimitThreshold float64
 	ReserveOutputTokens                      int
+	SystemPrompt                             string
 }
 type Manager struct{ cfg Config }
 
@@ -27,6 +28,18 @@ func New(c Config) (*Manager, error) {
 	}
 	return &Manager{cfg: c}, nil
 }
+
+// PromptForProfile returns the durable behavior prompt for a validated agent profile.
+func PromptForProfile(profile string) string {
+	switch profile {
+	case "review":
+		return DefaultSystem + " Act as a code reviewer. Inspect evidence and report prioritized findings. Do not modify files or execute mutating commands."
+	case "devops":
+		return DefaultSystem + " Focus on builds, tests, Git state, deployment configuration, and operational diagnosis. Make only workspace-scoped changes required by the task."
+	default:
+		return DefaultSystem
+	}
+}
 func EstimateTokens(text string) int {
 	if text == "" {
 		return 0
@@ -34,7 +47,11 @@ func EstimateTokens(text string) int {
 	return (len([]byte(text)) + 3) / 4
 }
 func (m *Manager) Build(workspace, goal, summary string, recent []model.Message) ([]model.Message, bool) {
-	layers := []model.Message{{Role: model.RoleSystem, Content: DefaultSystem}}
+	systemPrompt := m.cfg.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = DefaultSystem
+	}
+	layers := []model.Message{{Role: model.RoleSystem, Content: systemPrompt}}
 	if b, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md")); err == nil {
 		layers = append(layers, model.Message{Role: model.RoleSystem, Content: "Project rules:\n" + string(b)})
 	}

@@ -11,9 +11,12 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+      ALIBABA_CODING_PLAN_API_KEY: "${ALIBABA_CODING_PLAN_API_KEY:-}"
+      CODEX_HOME: "/codex"
     volumes:
       - "${GOHERMIT_WORKSPACE:-./sandbox}:/workspace"
       - "${GOHERMIT_CONFIG:-./configs/codex.toml}:/config/hermit.toml:ro"
+      - "${HOME}/.codex:/codex:ro"
     init: true
     restart: unless-stopped
     security_opt:

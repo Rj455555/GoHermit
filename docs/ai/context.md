@@ -4,7 +4,7 @@ This is the compact handoff for coding agents. Read `AGENTS.md` first, then this
 
 ## Product in one paragraph
 
-GoHermit `0.2.0-dev` is a foreground, local-first, single-agent coding runtime. The CLI and local Web debugger share one runtime assembly. Provider presets select OpenAI Responses/Codex, DeepSeek, Qwen, OpenAI Chat Completions, or a custom compatible endpoint. The agent executes controlled built-in or stdio JSON-RPC tools and atomically checkpoints sessions under `.gohermit/`. There is no daemon, public/hosted UI, multi-agent orchestration, telemetry, accounts, or automatic Git publishing.
+GoHermit `0.2.0-dev` is a foreground, local-first, single-agent coding runtime. The CLI and local Web debugger share one runtime assembly. The Hermes-derived catalog keeps provider slug, display company group, authentication type, model, and Agent profile separate. OpenAI Codex Plan imports Codex CLI OAuth; direct OpenAI, DeepSeek, and Qwen paths use server-side API keys. The agent executes controlled built-in or stdio JSON-RPC tools and atomically checkpoints sessions under `.gohermit/`. There is no daemon, public/hosted UI, multi-agent orchestration, telemetry, or automatic Git publishing.
 
 ## Shortest useful reading path
 
@@ -26,7 +26,8 @@ GoHermit `0.2.0-dev` is a foreground, local-first, single-agent coding runtime. 
 | CLI flag/output | `internal/app/app.go` | `internal/app/app_test.go`, `cmd/hermit/main.go` |
 | turns/stopping/tool loop | `internal/agent/agent.go` | agent tests, event/session contracts |
 | provider/streaming/retry | `internal/model` | HTTP fixture tests |
-| provider presets | `internal/config` | `configs/`, provider docs, config tests |
+| provider catalog/grouping | `internal/config` | `internal/auth`, provider docs, config tests |
+| Codex Plan credentials | `internal/auth` | Responses headers, Compose read-only mount |
 | local Web/SSE | `internal/web`, `cmd/hermit-web` | Web tests, `docs/web-debug.md` |
 | Docker packaging | `Dockerfile`, `compose.yaml` | Web/Docker guide |
 | tool registry/timeouts | `internal/tool/tool.go` | executor tests |
@@ -57,7 +58,7 @@ GoHermit `0.2.0-dev` is a foreground, local-first, single-agent coding runtime. 
 - Linux amd64 and Windows amd64 cross-builds pass from macOS arm64.
 - Python and Node echo plugin lifecycles are exercised by tests.
 - Chat Completions and Responses HTTP behavior are tested with local servers, including reasoning continuation; no paid API call is part of the test suite.
-- Docker Compose binds the Web surface to host loopback and keeps workspace/config/key selection server-side.
+- Docker Compose binds the Web surface to host loopback, mounts Codex CLI auth read-only, and keeps credentials/endpoints server-side.
 - The only third-party Go module is `github.com/BurntSushi/toml` for strict TOML decoding.
 
 ## Known boundaries
@@ -66,6 +67,7 @@ GoHermit `0.2.0-dev` is a foreground, local-first, single-agent coding runtime. 
 - Plugin streaming events are deferred beyond protocol v1.
 - Schema version 1 rejects unknown versions; there is no migration framework yet.
 - Permission-required events are non-interactive in v0.1.0.
+- Codex Plan currently imports or refreshes an existing Codex CLI login; GoHermit does not yet initiate device-code login itself.
 - The Web surface is single-user and unauthenticated; public exposure is unsupported.
 
 ## Verification

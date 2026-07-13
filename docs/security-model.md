@@ -16,9 +16,9 @@ This policy reduces risk but is not an OS sandbox. Build/test tools can execute 
 
 ## Sensitive information
 
-Provider keys are read from configuration or the named environment variable and are used only to set the request Authorization header. Model requests, headers, and keys are not logged. Redaction covers Authorization, API keys, cookies, tokens, passwords, secrets, and common private-key blocks. Credential-like workspace files are denied by built-ins.
+Provider keys are read from configuration or the named environment variable and are used only to set the request Authorization header. Codex Plan credentials are imported from the read-only Codex CLI auth file, refreshed only in memory, and never copied into the workspace. Model requests, headers, keys, and OAuth tokens are not logged. Redaction covers Authorization, API keys, cookies, tokens, passwords, secrets, and common private-key blocks. Credential-like workspace files are denied by built-ins.
 
-The Web API reports only whether the configured key is present. It never accepts or returns a key. Responses API requests set `store=false` and checkpoint only server-encrypted reasoning continuation items. DeepSeek reasoning needed for a later tool turn is AES-GCM encrypted with a key derived from the configured API key; readable reasoning is never serialized, rendered, or written to event logs.
+The Web API reports only authentication type, configured/not-configured state, and non-secret setup guidance. It never accepts or returns a key or OAuth token. Responses API requests set `store=false` and checkpoint only server-encrypted reasoning continuation items. DeepSeek reasoning needed for a later tool turn is AES-GCM encrypted with a key derived from the configured API key; readable reasoning is never serialized, rendered, or written to event logs.
 
 ## Local Web and Docker
 

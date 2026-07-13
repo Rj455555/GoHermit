@@ -1,0 +1,4 @@
+[model]
+provider = "alibaba-coding-plan"
+model = "qwen3-coder-plus"
+api_key_env = "ALIBABA_CODING_PLAN_API_KEY"

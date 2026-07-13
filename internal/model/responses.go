@@ -18,12 +18,14 @@ type ResponsesConfig struct {
 	BaseURL, APIKey string
 	Timeout         time.Duration
 	MaxRetries      int
+	Headers         map[string]string
 }
 
 type ResponsesProvider struct {
 	baseURL, apiKey string
 	client          *http.Client
 	maxRetries      int
+	headers         map[string]string
 }
 
 func NewResponsesProvider(c ResponsesConfig) (*ResponsesProvider, error) {
@@ -37,7 +39,7 @@ func NewResponsesProvider(c ResponsesConfig) (*ResponsesProvider, error) {
 	if c.Timeout <= 0 {
 		c.Timeout = 120 * time.Second
 	}
-	return &ResponsesProvider{baseURL: strings.TrimRight(c.BaseURL, "/"), apiKey: c.APIKey, client: &http.Client{Timeout: c.Timeout}, maxRetries: c.MaxRetries}, nil
+	return &ResponsesProvider{baseURL: strings.TrimRight(c.BaseURL, "/"), apiKey: c.APIKey, client: &http.Client{Timeout: c.Timeout}, maxRetries: c.MaxRetries, headers: c.Headers}, nil
 }
 
 func (p *ResponsesProvider) Capabilities() Capabilities {
@@ -45,12 +47,13 @@ func (p *ResponsesProvider) Capabilities() Capabilities {
 }
 
 type responsesRequest struct {
-	Model   string            `json:"model"`
-	Input   []json.RawMessage `json:"input"`
-	Tools   []responsesTool   `json:"tools,omitempty"`
-	Include []string          `json:"include,omitempty"`
-	Stream  bool              `json:"stream,omitempty"`
-	Store   bool              `json:"store"`
+	Model        string            `json:"model"`
+	Instructions string            `json:"instructions,omitempty"`
+	Input        []json.RawMessage `json:"input"`
+	Tools        []responsesTool   `json:"tools,omitempty"`
+	Include      []string          `json:"include,omitempty"`
+	Stream       bool              `json:"stream,omitempty"`
+	Store        bool              `json:"store"`
 }
 
 type responsesTool struct {
@@ -138,6 +141,13 @@ func (p *ResponsesProvider) Generate(ctx context.Context, req GenerateRequest) (
 func makeResponsesRequest(req GenerateRequest) (responsesRequest, error) {
 	body := responsesRequest{Model: req.Model, Stream: req.Stream, Store: false, Include: []string{"reasoning.encrypted_content"}}
 	for _, message := range req.Messages {
+		if message.Role == RoleSystem {
+			if body.Instructions != "" {
+				body.Instructions += "\n\n"
+			}
+			body.Instructions += message.Content
+			continue
+		}
 		if message.Role == RoleAssistant && len(message.ProviderData) > 0 {
 			var items []json.RawMessage
 			if err := json.Unmarshal(message.ProviderData, &items); err != nil {
@@ -172,6 +182,12 @@ func (p *ResponsesProvider) do(ctx context.Context, payload []byte) (*http.Respo
 	}
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer "+p.apiKey)
+	for name, value := range p.headers {
+		if strings.EqualFold(name, "Authorization") || strings.EqualFold(name, "Content-Type") {
+			continue
+		}
+		r.Header.Set(name, value)
+	}
 	resp, err := p.client.Do(r)
 	if err != nil {
 		kind := ErrorUnavailable

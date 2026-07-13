@@ -9,11 +9,13 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/app"
+	modelauth "github.com/Rj455555/GoHermit/internal/auth"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/session"
@@ -27,7 +29,7 @@ type Server struct {
 	ConfigPath string
 	active     atomic.Bool
 	static     http.Handler
-	build      func(context.Context, string, string) (*app.Runtime, error)
+	build      func(context.Context, string, string, config.RuntimeSelection) (*app.Runtime, error)
 }
 
 func New(workspace, configPath string) (*Server, error) {
@@ -38,8 +40,8 @@ func New(workspace, configPath string) (*Server, error) {
 	return &Server{
 		Workspace: workspace, ConfigPath: configPath,
 		static: http.FileServer(http.FS(root)),
-		build: func(ctx context.Context, workspace, configPath string) (*app.Runtime, error) {
-			return app.BuildRuntime(ctx, workspace, configPath, nil)
+		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection) (*app.Runtime, error) {
+			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection}, nil)
 		},
 	}, nil
 }
@@ -63,15 +65,33 @@ func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	credentials := make(map[string]bool)
+	authStatus := make(map[string]map[string]any)
+	for _, company := range config.CompanyPresets() {
+		for _, access := range company.Access {
+			if access.APIKeyEnv != "" {
+				configured := os.Getenv(access.APIKeyEnv) != ""
+				credentials[access.APIKeyEnv] = configured
+				authStatus[access.ID] = map[string]any{"configured": configured, "detail": access.APIKeyEnv}
+			}
+		}
+	}
+	codexConfigured, codexDetail := modelauth.CodexStatus()
+	authStatus["openai-codex"] = map[string]any{"configured": codexConfigured, "detail": codexDetail}
 	_, keyErr := conf.APIKey()
+	currentConfigured := keyErr == nil
+	if conf.Model.Provider == "openai-codex" {
+		currentConfigured = codexConfigured
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":   app.Version,
 		"workspace": s.Workspace,
 		"model": map[string]any{
 			"provider": conf.Model.Provider, "protocol": conf.Model.Protocol(), "base_url": conf.Model.BaseURL,
-			"model": conf.Model.Name, "api_key_env": conf.Model.APIKeyEnv, "api_key_configured": keyErr == nil,
+			"model": conf.Model.Name, "api_key_env": conf.Model.APIKeyEnv, "api_key_configured": currentConfigured,
 		},
-		"presets": config.ModelPresets(), "active": s.active.Load(),
+		"selection": conf.CurrentSelection(), "companies": config.CompanyPresets(), "agents": config.AgentPresets(),
+		"credentials": credentials, "auth_status": authStatus, "active": s.active.Load(),
 	})
 }
 
@@ -87,7 +107,11 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	defer s.active.Store(false)
 
 	var request struct {
-		Task string `json:"task"`
+		Task    string `json:"task"`
+		Company string `json:"company"`
+		Access  string `json:"access"`
+		Model   string `json:"model"`
+		Agent   string `json:"agent"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
@@ -100,7 +124,12 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "task must contain 1 to 16384 bytes"})
 		return
 	}
-	runtime, err := s.build(r.Context(), s.Workspace, s.ConfigPath)
+	selection := config.RuntimeSelection{Company: request.Company, Access: request.Access, Model: request.Model, Agent: request.Agent}
+	if _, _, err := config.ResolveSelection(selection); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	runtime, err := s.build(r.Context(), s.Workspace, s.ConfigPath, selection)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return

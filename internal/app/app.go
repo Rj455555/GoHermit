@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/agent"
+	modelauth "github.com/Rj455555/GoHermit/internal/auth"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
 	"github.com/Rj455555/GoHermit/internal/event"
@@ -44,6 +45,11 @@ type Runtime struct {
 	Store     *session.Store
 	Runner    *agent.Runner
 	close     func()
+}
+
+// RuntimeOptions contains validated, non-secret per-run overrides.
+type RuntimeOptions struct {
+	Selection *config.RuntimeSelection
 }
 
 func (r *Runtime) Close() {
@@ -265,6 +271,11 @@ func (c CLI) assemble(ctx context.Context, f commonFlags) (string, config.Config
 }
 
 func BuildRuntime(ctx context.Context, workspace, configPath string, newProvider func(config.Config) (model.Provider, error)) (*Runtime, error) {
+	return BuildRuntimeWithOptions(ctx, workspace, configPath, RuntimeOptions{}, newProvider)
+}
+
+// BuildRuntimeWithOptions assembles a runtime after applying a catalog selection.
+func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, options RuntimeOptions, newProvider func(config.Config) (model.Provider, error)) (*Runtime, error) {
 	workspace, err := filepath.Abs(workspace)
 	if err != nil {
 		return nil, err
@@ -272,6 +283,21 @@ func BuildRuntime(ctx context.Context, workspace, configPath string, newProvider
 	conf, err := LoadConfig(workspace, configPath)
 	if err != nil {
 		return nil, err
+	}
+	if options.Selection != nil {
+		preset, profile, selectionErr := config.ResolveSelection(*options.Selection)
+		if selectionErr != nil {
+			return nil, selectionErr
+		}
+		conf.Model.Provider = preset.Provider
+		conf.Model.BaseURL = preset.BaseURL
+		conf.Model.Name = preset.Model
+		conf.Model.APIKeyEnv = preset.APIKeyEnv
+		conf.Model.APIKey = ""
+		conf.Agent.Profile = profile.ID
+		if err = conf.Validate(); err != nil {
+			return nil, err
+		}
 	}
 	if conf.Model.Name == "" {
 		return nil, errors.New("model.model must be configured")
@@ -290,7 +316,13 @@ func BuildRuntime(ctx context.Context, workspace, configPath string, newProvider
 		return nil, err
 	}
 	registry := tool.NewRegistry()
-	if err = builtin.RegisterAll(registry, ws, conf.Tools.DefaultTimeout.Value(), conf.Tools.MaxStdoutBytes, conf.Tools.MaxStderrBytes, conf.Permissions.AllowNetwork); err != nil {
+	profile, _ := config.AgentProfile(conf.Agent.Profile)
+	if profile.ReadOnly {
+		err = builtin.RegisterReadOnly(registry, ws, conf.Tools.DefaultTimeout.Value(), conf.Tools.MaxStdoutBytes, conf.Tools.MaxStderrBytes)
+	} else {
+		err = builtin.RegisterAll(registry, ws, conf.Tools.DefaultTimeout.Value(), conf.Tools.MaxStdoutBytes, conf.Tools.MaxStderrBytes, conf.Permissions.AllowNetwork)
+	}
+	if err != nil {
 		return nil, err
 	}
 	var clients []*plugin.Client
@@ -323,7 +355,7 @@ func BuildRuntime(ctx context.Context, workspace, configPath string, newProvider
 		cleanup()
 		return nil, err
 	}
-	manager, err := contextmgr.New(contextmgr.Config{MaxTokens: conf.Context.MaxTokens, CompressionThreshold: conf.Context.CompressionThreshold, HardLimitThreshold: conf.Context.HardLimitThreshold, ReserveOutputTokens: conf.Context.ReserveOutputTokens})
+	manager, err := contextmgr.New(contextmgr.Config{MaxTokens: conf.Context.MaxTokens, CompressionThreshold: conf.Context.CompressionThreshold, HardLimitThreshold: conf.Context.HardLimitThreshold, ReserveOutputTokens: conf.Context.ReserveOutputTokens, SystemPrompt: contextmgr.PromptForProfile(conf.Agent.Profile)})
 	if err != nil {
 		cleanup()
 		return nil, err
@@ -333,6 +365,13 @@ func BuildRuntime(ctx context.Context, workspace, configPath string, newProvider
 }
 
 func NewProvider(conf config.Config) (model.Provider, error) {
+	if conf.Model.Provider == "openai-codex" {
+		credentials, err := modelauth.ResolveCodex(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return model.NewResponsesProvider(model.ResponsesConfig{BaseURL: conf.Model.BaseURL, APIKey: credentials.Token, Headers: credentials.Headers, Timeout: conf.Model.RequestTimeout.Value(), MaxRetries: conf.Model.MaxRetries})
+	}
 	key, err := conf.APIKey()
 	if err != nil {
 		return nil, err

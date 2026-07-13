@@ -76,6 +76,23 @@ func TestResponsesStreaming(t *testing.T) {
 	}
 }
 
+func TestResponsesProviderAddsCodexAccountHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("originator") != "codex_cli_rs" || r.Header.Get("ChatGPT-Account-ID") != "acct_test" {
+			t.Fatalf("headers=%v", r.Header)
+		}
+		fmt.Fprint(w, `{"status":"completed","output":[]}`)
+	}))
+	defer server.Close()
+	provider, err := NewResponsesProvider(ResponsesConfig{BaseURL: server.URL, APIKey: "secret", Timeout: time.Second, Headers: map[string]string{"originator": "codex_cli_rs", "ChatGPT-Account-ID": "acct_test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.Generate(context.Background(), GenerateRequest{Model: "gpt-5.3-codex"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func bytesJoin(values []json.RawMessage) []byte {
 	var out []byte
 	for _, value := range values {

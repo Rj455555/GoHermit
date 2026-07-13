@@ -1,6 +1,6 @@
 # Local Web and Docker debugging
 
-`hermit-web` is a local single-user debugging surface. It displays the resolved non-secret model configuration and streams structured Agent Core events over one POST response. It does not accept API keys, base URLs, workspaces, or shell approvals from the browser.
+`hermit-web` is a local single-user debugging surface. It selects a company group, a real provider/access slug, a model from that provider, and an Agent profile, then streams structured Agent Core events over one POST response. It does not accept API keys, base URLs, workspaces, or shell approvals from the browser.
 
 ## Start on the same machine
 
@@ -10,7 +10,7 @@ docker compose up --build -d
 open http://127.0.0.1:8787
 ```
 
-Compose defaults to `configs/codex.toml` and `./sandbox`. Select another provider or workspace without editing committed files:
+Compose defaults to `configs/codex.toml` and `./sandbox`. The config supplies startup defaults; the Web picker applies a validated per-run selection. Select another workspace without editing committed files:
 
 ```bash
 GOHERMIT_CONFIG=./configs/deepseek.toml \
@@ -20,6 +20,17 @@ docker compose up --build -d
 ```
 
 On macOS Docker Desktop, the default container identity is UID 501/GID 20 so mounted developer workspaces remain writable. Override `GOHERMIT_UID` and `GOHERMIT_GID` on other hosts.
+
+## Codex Plan versus API
+
+OpenAI expands to two provider rows, matching Hermes:
+
+- `openai-codex`: ChatGPT/Codex subscription login and the Codex backend.
+- `openai-api`: direct API billing through `OPENAI_API_KEY`.
+
+For Codex Plan, first sign in with Codex CLI on the Docker host. Compose mounts `${HOME}/.codex` read-only and the status card reports whether the login was detected. GoHermit never sends the Codex token to the browser and never modifies the CLI auth file.
+
+Alibaba likewise exposes standard DashScope API and Alibaba Coding Plan as separate provider rows because their keys and endpoints differ.
 
 If Docker Hub is unavailable through a configured registry mirror, point the build at an equivalent trusted mirror without changing Docker's global settings:
 
@@ -41,7 +52,7 @@ Then open <http://127.0.0.1:8787> locally. Do not change the Compose bind to `0.
 ## Security boundaries
 
 - Model keys stay in container environment variables and are never returned by `/api/info`.
-- The workspace and config path are fixed when the server starts.
+- The workspace and config path are fixed when the server starts; browser selections can only reference server-defined catalog entries.
 - Only one task may run at a time.
 - Request size and task length are bounded; disconnecting cancels the run.
 - Browser POSTs are same-origin checked and responses set a restrictive content security policy.

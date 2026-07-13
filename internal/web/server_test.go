@@ -35,6 +35,9 @@ func TestHealthAndInfoDoNotExposeKeys(t *testing.T) {
 		if strings.Contains(response.Body.String(), "top-secret") {
 			t.Fatalf("%s leaked API key", path)
 		}
+		if path == "/api/info" && (!strings.Contains(response.Body.String(), `"openai-codex"`) || !strings.Contains(response.Body.String(), `"auth_type":"oauth_external"`)) {
+			t.Fatalf("%s missing grouped provider catalog: %s", path, response.Body.String())
+		}
 	}
 }
 
@@ -63,7 +66,7 @@ func TestStaticIndexHasSecurityHeaders(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "GoHermit") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "GoHermit") || !strings.Contains(response.Body.String(), "company-select") {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("X-Frame-Options") != "DENY" {

@@ -38,6 +38,15 @@ func def(name, description string, s json.RawMessage, permission core.Permission
 }
 
 func RegisterAll(r *core.Registry, w *Workspace, timeout time.Duration, maxStdout, maxStderr int, allowNetwork bool) error {
+	return register(r, w, timeout, maxStdout, maxStderr, allowNetwork, false)
+}
+
+// RegisterReadOnly installs only tools whose declared permission is read.
+func RegisterReadOnly(r *core.Registry, w *Workspace, timeout time.Duration, maxStdout, maxStderr int) error {
+	return register(r, w, timeout, maxStdout, maxStderr, false, true)
+}
+
+func register(r *core.Registry, w *Workspace, timeout time.Duration, maxStdout, maxStderr int, allowNetwork, readOnly bool) error {
 	if maxStdout <= 0 || maxStderr <= 0 {
 		return errors.New("stdout and stderr limits must be positive")
 	}
@@ -56,6 +65,9 @@ func RegisterAll(r *core.Registry, w *Workspace, timeout time.Duration, maxStdou
 		functionTool{def("test.run", "Run Go tests in the workspace", schema(`"package":{"type":"string"}`, ``), core.PermissionExecute, false, timeout, maxOutput), w.testRun(allowNetwork)},
 	}
 	for _, t := range tools {
+		if readOnly && t.Definition().Permission != core.PermissionRead {
+			continue
+		}
 		if err := r.Register(t); err != nil {
 			return err
 		}

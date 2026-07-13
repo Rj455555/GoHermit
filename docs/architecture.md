@@ -29,11 +29,11 @@ Dependencies point inward: `cmd` depends on `internal/app`; app assembles domain
 
 ## Model call flow
 
-Provider-neutral messages and tool definitions are converted at the HTTP boundary. Presets resolve configuration into either Chat Completions or Responses protocol implementations. Both never log requests or Authorization headers, classify HTTP errors, retry only rate-limit/availability failures, parse JSON/SSE, and propagate cancellation through `http.NewRequestWithContext`. Responses retains only provider-encrypted reasoning continuation items; the Chat adapter AES-GCM encrypts DeepSeek `reasoning_content` before checkpointing and decrypts it only when replaying a tool turn.
+Provider-neutral messages and tool definitions are converted at the HTTP boundary. A Hermes-style catalog keeps canonical provider slug, display company group, `auth_type`, model list, and Agent profile separate. Provider slugs resolve into either Chat Completions or Responses implementations. `openai-codex` imports Codex CLI OAuth and targets the subscription backend; `openai-api` uses an API key and the public endpoint. Both protocols never log requests or Authorization headers, classify HTTP errors, parse JSON/SSE, and propagate cancellation. Responses retains only provider-encrypted reasoning continuation items; the Chat adapter encrypts DeepSeek `reasoning_content` before checkpointing.
 
 ## Web boundary
 
-`hermit-web` embeds static assets and exposes health, non-secret provider metadata, and one same-origin SSE task endpoint. Workspace, config, endpoint, and credentials are fixed server-side. It permits one active run and is designed only for loopback or SSH-tunneled access.
+`hermit-web` embeds static assets and exposes health, the non-secret provider catalog/auth status, and one same-origin SSE task endpoint. The browser may select only registered provider/model/Agent IDs; workspace, endpoints, and credentials remain server-side. It permits one active run and is designed only for loopback or SSH-tunneled access. The review Agent receives a read-only registry rather than relying on prompt compliance.
 
 ## Tool call flow
 

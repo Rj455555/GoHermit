@@ -39,6 +39,7 @@ type Config struct {
 type Agent struct {
 	MaxTurns int      `toml:"max_turns" json:"max_turns"`
 	Timeout  Duration `toml:"timeout" json:"timeout"`
+	Profile  string   `toml:"profile" json:"profile"`
 }
 
 type Model struct {
@@ -60,17 +61,183 @@ type ModelPreset struct {
 	APIKeyEnv string `json:"api_key_env"`
 }
 
+// ModelOption is a selectable model within one provider access method.
+type ModelOption struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Provider string `json:"provider"`
+}
+
+// AccessPreset describes one billing and authentication path for a company.
+type AccessPreset struct {
+	ID          string        `json:"id"`
+	Label       string        `json:"label"`
+	AuthType    string        `json:"auth_type"`
+	Description string        `json:"description"`
+	APIKeyEnv   string        `json:"api_key_env,omitempty"`
+	Supported   bool          `json:"supported"`
+	Models      []ModelOption `json:"models"`
+}
+
+// CompanyPreset groups access methods under the company users recognize.
+type CompanyPreset struct {
+	ID     string         `json:"id"`
+	Label  string         `json:"label"`
+	Access []AccessPreset `json:"access"`
+}
+
+// AgentPreset selects behavior and the enforced tool boundary for an agent run.
+type AgentPreset struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	ReadOnly    bool   `json:"read_only"`
+}
+
+// RuntimeSelection is the non-secret selection accepted by the local Web UI.
+type RuntimeSelection struct {
+	Company string `json:"company"`
+	Access  string `json:"access"`
+	Model   string `json:"model"`
+	Agent   string `json:"agent"`
+}
+
 var modelPresets = map[string]ModelPreset{
-	"codex":             {Provider: "codex", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.3-codex", APIKeyEnv: "OPENAI_API_KEY"},
-	"openai":            {Provider: "openai", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.6", APIKeyEnv: "OPENAI_API_KEY"},
-	"deepseek":          {Provider: "deepseek", Protocol: "chat_completions", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY"},
-	"qwen":              {Provider: "qwen", Protocol: "chat_completions", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen3.7-plus", APIKeyEnv: "DASHSCOPE_API_KEY"},
-	"openai-compatible": {Provider: "openai-compatible", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
-	"openai-chat":       {Provider: "openai-chat", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
+	"openai-codex":        {Provider: "openai-codex", Protocol: "responses", BaseURL: "https://chatgpt.com/backend-api/codex", Model: "gpt-5.3-codex"},
+	"openai-api":          {Provider: "openai-api", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.6", APIKeyEnv: "OPENAI_API_KEY"},
+	"codex":               {Provider: "codex", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.3-codex", APIKeyEnv: "OPENAI_API_KEY"},
+	"openai":              {Provider: "openai", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.6", APIKeyEnv: "OPENAI_API_KEY"},
+	"deepseek":            {Provider: "deepseek", Protocol: "chat_completions", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY"},
+	"alibaba":             {Provider: "alibaba", Protocol: "chat_completions", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen3.7-plus", APIKeyEnv: "DASHSCOPE_API_KEY"},
+	"qwen":                {Provider: "qwen", Protocol: "chat_completions", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen3.7-plus", APIKeyEnv: "DASHSCOPE_API_KEY"},
+	"alibaba-coding-plan": {Provider: "alibaba-coding-plan", Protocol: "chat_completions", BaseURL: "https://coding-intl.dashscope.aliyuncs.com/v1", Model: "qwen3-coder-plus", APIKeyEnv: "ALIBABA_CODING_PLAN_API_KEY"},
+	"openai-compatible":   {Provider: "openai-compatible", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
+	"openai-chat":         {Provider: "openai-chat", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
+}
+
+var companyPresets = []CompanyPreset{
+	{ID: "openai", Label: "OpenAI", Access: []AccessPreset{
+		{ID: "openai-codex", Label: "Codex Plan", AuthType: "oauth_external", Description: "使用 ChatGPT/Codex 订阅，登录状态从 CODEX_HOME 安全导入。", Supported: true, Models: []ModelOption{
+			{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol", Provider: "openai-codex"},
+			{ID: "gpt-5.5", Label: "GPT-5.5", Provider: "openai-codex"},
+			{ID: "gpt-5.4", Label: "GPT-5.4", Provider: "openai-codex"},
+			{ID: "gpt-5.3-codex", Label: "GPT-5.3 Codex", Provider: "openai-codex"},
+		}},
+		{ID: "openai-api", Label: "OpenAI API", AuthType: "api_key", Description: "使用 OpenAI API 独立计费，密钥只从服务端读取。", APIKeyEnv: "OPENAI_API_KEY", Supported: true, Models: []ModelOption{
+			{ID: "gpt-5.6", Label: "GPT-5.6", Provider: "openai-api"},
+			{ID: "gpt-5.3-codex", Label: "GPT-5.3 Codex", Provider: "openai-api"},
+		}},
+	}},
+	{ID: "deepseek", Label: "DeepSeek", Access: []AccessPreset{
+		{ID: "deepseek", Label: "DeepSeek API", AuthType: "api_key", Description: "使用 DeepSeek 官方 API，密钥只从服务端读取。", APIKeyEnv: "DEEPSEEK_API_KEY", Supported: true, Models: []ModelOption{
+			{ID: "deepseek-v4-pro", Label: "DeepSeek V4 Pro", Provider: "deepseek"},
+			{ID: "deepseek-chat", Label: "DeepSeek Chat", Provider: "deepseek"},
+			{ID: "deepseek-reasoner", Label: "DeepSeek Reasoner", Provider: "deepseek"},
+		}},
+	}},
+	{ID: "alibaba", Label: "Alibaba Cloud / Qwen", Access: []AccessPreset{
+		{ID: "alibaba", Label: "DashScope API", AuthType: "api_key", Description: "使用阿里云百炼 DashScope 标准 API。", APIKeyEnv: "DASHSCOPE_API_KEY", Supported: true, Models: []ModelOption{
+			{ID: "qwen3.7-plus", Label: "Qwen 3.7 Plus", Provider: "alibaba"},
+		}},
+		{ID: "alibaba-coding-plan", Label: "Alibaba Coding Plan", AuthType: "api_key", Description: "使用阿里云 Coding Plan 专用额度、密钥与端点。", APIKeyEnv: "ALIBABA_CODING_PLAN_API_KEY", Supported: true, Models: []ModelOption{
+			{ID: "qwen3-coder-plus", Label: "Qwen3 Coder Plus", Provider: "alibaba-coding-plan"},
+		}},
+	}},
+}
+
+var agentPresets = []AgentPreset{
+	{ID: "coding", Label: "Development Agent", Description: "读取、修改和测试代码，直到完成开发任务。", ReadOnly: false},
+	{ID: "review", Label: "Code Review Agent", Description: "只读检查代码并输出分级问题，不修改工作区。", ReadOnly: true},
+	{ID: "devops", Label: "DevOps Agent", Description: "在安全策略内诊断构建、测试、Git 与本地运行问题。", ReadOnly: false},
+}
+
+// CompanyPresets returns a copy of the Web-facing provider hierarchy.
+func CompanyPresets() []CompanyPreset {
+	out := make([]CompanyPreset, len(companyPresets))
+	copy(out, companyPresets)
+	return out
+}
+
+// AgentPresets returns the available single-agent behavior profiles.
+func AgentPresets() []AgentPreset {
+	out := make([]AgentPreset, len(agentPresets))
+	copy(out, agentPresets)
+	return out
+}
+
+// AgentProfile resolves one agent profile by ID.
+func AgentProfile(id string) (AgentPreset, bool) {
+	for _, profile := range agentPresets {
+		if profile.ID == id {
+			return profile, true
+		}
+	}
+	return AgentPreset{}, false
+}
+
+// ResolveSelection validates a Web selection and resolves it to provider config.
+func ResolveSelection(selection RuntimeSelection) (ModelPreset, AgentPreset, error) {
+	agent, agentOK := AgentProfile(selection.Agent)
+	if !agentOK {
+		return ModelPreset{}, AgentPreset{}, fmt.Errorf("unknown agent profile %q", selection.Agent)
+	}
+	for _, company := range companyPresets {
+		if company.ID != selection.Company {
+			continue
+		}
+		for _, access := range company.Access {
+			if access.ID != selection.Access {
+				continue
+			}
+			if !access.Supported {
+				return ModelPreset{}, AgentPreset{}, fmt.Errorf("%s %s is not enabled: a supported Codex client bridge is required", company.Label, access.Label)
+			}
+			for _, choice := range access.Models {
+				if choice.ID != selection.Model {
+					continue
+				}
+				preset, ok := modelPresets[choice.Provider]
+				if !ok {
+					return ModelPreset{}, AgentPreset{}, fmt.Errorf("provider %q is not configured", choice.Provider)
+				}
+				preset.Model = choice.ID
+				return preset, agent, nil
+			}
+			return ModelPreset{}, AgentPreset{}, fmt.Errorf("model %q is not available for %s %s", selection.Model, company.Label, access.Label)
+		}
+		return ModelPreset{}, AgentPreset{}, fmt.Errorf("access method %q is not available for %s", selection.Access, company.Label)
+	}
+	return ModelPreset{}, AgentPreset{}, fmt.Errorf("unknown model company %q", selection.Company)
+}
+
+// CurrentSelection maps the loaded config to the closest Web catalog selection.
+func (c Config) CurrentSelection() RuntimeSelection {
+	selection := RuntimeSelection{Model: c.Model.Name, Agent: c.Agent.Profile}
+	if selection.Agent == "" {
+		selection.Agent = "coding"
+	}
+	switch c.Model.Provider {
+	case "openai-codex":
+		selection.Company = "openai"
+		selection.Access = "openai-codex"
+	case "codex", "openai", "openai-api", "openai-chat", "openai-compatible":
+		selection.Company = "openai"
+		selection.Access = "openai-api"
+	case "deepseek":
+		selection.Company = "deepseek"
+		selection.Access = "deepseek"
+	case "qwen", "alibaba":
+		selection.Company = "alibaba"
+		selection.Access = "alibaba"
+	case "alibaba-coding-plan":
+		selection.Company = "alibaba"
+		selection.Access = "alibaba-coding-plan"
+	}
+	return selection
 }
 
 func ModelPresets() []ModelPreset {
-	names := []string{"codex", "openai", "deepseek", "qwen", "openai-compatible", "openai-chat"}
+	names := []string{"openai-codex", "openai-api", "deepseek", "alibaba", "alibaba-coding-plan", "openai-compatible", "openai-chat"}
 	out := make([]ModelPreset, 0, len(names))
 	for _, name := range names {
 		out = append(out, modelPresets[name])
@@ -138,7 +305,7 @@ type PluginProcess struct {
 
 func Default() Config {
 	return Config{
-		Agent:       Agent{MaxTurns: 50, Timeout: Duration(30 * time.Minute)},
+		Agent:       Agent{MaxTurns: 50, Timeout: Duration(30 * time.Minute), Profile: "coding"},
 		Model:       Model{Provider: "openai-compatible", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY", RequestTimeout: Duration(120 * time.Second), MaxRetries: 3, Stream: true},
 		Context:     Context{MaxTokens: 128000, CompressionThreshold: .80, HardLimitThreshold: .92, ReserveOutputTokens: 16000},
 		Tools:       Tools{DefaultTimeout: Duration(120 * time.Second), MaxStdoutBytes: 1 << 20, MaxStderrBytes: 1 << 20},
@@ -199,8 +366,12 @@ func (c Config) Validate() error {
 	if c.Agent.Timeout.Value() <= 0 {
 		problems = append(problems, "agent.timeout must be positive")
 	}
+	_, profileOK := AgentProfile(c.Agent.Profile)
+	if !profileOK {
+		problems = append(problems, "agent.profile must be coding, review, or devops")
+	}
 	if _, ok := modelPresets[c.Model.Provider]; !ok {
-		problems = append(problems, "model.provider must be codex, openai, deepseek, qwen, openai-chat, or openai-compatible")
+		problems = append(problems, "model.provider is not registered")
 	}
 	if !strings.HasPrefix(c.Model.BaseURL, "https://") && !strings.HasPrefix(c.Model.BaseURL, "http://localhost") && !strings.HasPrefix(c.Model.BaseURL, "http://127.0.0.1") {
 		problems = append(problems, "model.base_url must use HTTPS or loopback HTTP")

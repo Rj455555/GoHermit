@@ -1,6 +1,7 @@
 [agent]
 max_turns = 50
 timeout = "30m"
+profile = "coding"
 
 [model]
 # Presets: codex (Responses), openai (Responses), deepseek, qwen,

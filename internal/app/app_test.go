@@ -70,3 +70,27 @@ func TestCLIUsageAndConfigValidation(t *testing.T) {
 		t.Fatalf("validate code=%d stderr=%s", code, stderr.String())
 	}
 }
+
+func TestRuntimeSelectionAppliesReadOnlyReviewAgent(t *testing.T) {
+	root := t.TempDir()
+	selection := config.RuntimeSelection{Company: "openai", Access: "openai-api", Model: "gpt-5.3-codex", Agent: "review"}
+	runtime, err := BuildRuntimeWithOptions(context.Background(), root, "", RuntimeOptions{Selection: &selection}, func(config.Config) (model.Provider, error) {
+		return finalProvider{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	if runtime.Config.Model.Provider != "openai-api" || runtime.Config.Agent.Profile != "review" {
+		t.Fatalf("config=%+v", runtime.Config)
+	}
+	definitions := runtime.Runner.Executor.Registry.Definitions()
+	if len(definitions) == 0 {
+		t.Fatal("review agent has no tools")
+	}
+	for _, definition := range definitions {
+		if definition.Permission != "read" || definition.MutatesWorkspace {
+			t.Fatalf("review tool is not read-only: %+v", definition)
+		}
+	}
+}

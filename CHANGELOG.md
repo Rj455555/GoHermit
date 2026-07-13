@@ -3,6 +3,7 @@
 ## 0.2.0-dev
 
 - Added provider presets inspired by Hermes: Codex/OpenAI Responses, DeepSeek, Qwen, OpenAI Chat Completions, and custom OpenAI-compatible endpoints.
+- Split provider selection into Hermes-style company groups, provider/auth slugs, models, and Agent profiles; added Codex CLI account import for Codex Plan.
 - Added Responses API streaming and function calls with `store=false`, preserving only encrypted reasoning continuation between tool turns.
 - Added DeepSeek `reasoning_content` replay for thinking-mode tool-call compatibility, encrypted before session checkpointing.
 - Added a loopback-only local Web debugger, server-sent runtime events, Docker image, and Compose configuration.

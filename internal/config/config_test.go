@@ -58,3 +58,23 @@ func TestProviderPresetsFillOnlyMissingValues(t *testing.T) {
 		t.Fatalf("deepseek preset=%+v", c.Model)
 	}
 }
+
+func TestHermesStyleProviderGroupingAndSelection(t *testing.T) {
+	companies := CompanyPresets()
+	if len(companies) < 3 || companies[0].ID != "openai" {
+		t.Fatalf("companies=%+v", companies)
+	}
+	if companies[0].Access[0].ID != "openai-codex" || companies[0].Access[0].AuthType != "oauth_external" {
+		t.Fatalf("OpenAI Codex descriptor=%+v", companies[0].Access[0])
+	}
+	preset, profile, err := ResolveSelection(RuntimeSelection{Company: "openai", Access: "openai-codex", Model: "gpt-5.3-codex", Agent: "review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preset.Provider != "openai-codex" || preset.BaseURL != "https://chatgpt.com/backend-api/codex" || !profile.ReadOnly {
+		t.Fatalf("preset=%+v profile=%+v", preset, profile)
+	}
+	if _, _, err = ResolveSelection(RuntimeSelection{Company: "openai", Access: "openai-codex", Model: "deepseek-chat", Agent: "coding"}); err == nil {
+		t.Fatal("expected cross-provider model rejection")
+	}
+}

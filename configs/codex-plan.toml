@@ -1,0 +1,3 @@
+[model]
+provider = "openai-codex"
+model = "gpt-5.3-codex"
