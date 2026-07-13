@@ -1,0 +1,5 @@
+/hermit
+/hermit.exe
+/.gohermit/
+*.test
+coverage.out

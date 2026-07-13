@@ -1,0 +1,51 @@
+[agent]
+max_turns = 50
+timeout = "30m"
+
+[model]
+provider = "openai-compatible"
+base_url = "https://api.openai.com/v1"
+model = ""
+api_key_env = "OPENAI_API_KEY"
+request_timeout = "120s"
+max_retries = 3
+stream = true
+
+[context]
+max_tokens = 128000
+compression_threshold = 0.80
+hard_limit_threshold = 0.92
+reserve_output_tokens = 16000
+
+[tools]
+default_timeout = "120s"
+max_stdout_bytes = 1048576
+max_stderr_bytes = 1048576
+
+[permissions]
+workspace_only = true
+allow_network = false
+allow_write_outside_workspace = false
+require_confirmation_for_dangerous_commands = true
+
+[storage]
+directory = ".gohermit"
+flush_interval = "10s"
+checkpoint_every_turns = 5
+checkpoint_on_tool_completion = true
+save_stream_chunks = false
+save_full_prompts = false
+save_full_tool_output = false
+max_log_size_mb = 20
+retention_days = 7
+
+[plugins]
+enabled = true
+max_message_bytes = 4194304
+default_timeout = "60s"
+
+# [[plugins.process]]
+# name = "python-echo"
+# command = "python3"
+# args = ["examples/plugins/python-echo/plugin.py"]
+# enabled = true

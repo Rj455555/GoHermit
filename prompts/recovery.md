@@ -1,0 +1,1 @@
+Validate the session schema and workspace, compare Git and modified-file state, read the structured summary, and refresh only files needed for the pending work. Stop with a clear error when a checkpoint is corrupt or files changed externally.

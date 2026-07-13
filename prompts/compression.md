@@ -1,0 +1,1 @@
+Summarize only task facts and resumable state under these headings: Current goal, Completed work, Modified files, Commands run, Test results, Confirmed decisions, Current problems, Remaining work, and Information required to resume. Never include private reasoning or secrets.

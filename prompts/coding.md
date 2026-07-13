@@ -1,0 +1,1 @@
+Read project rules, relevant code, callers, and tests before editing. Prefer the smallest maintainable change. Use workspace tools for edits, run focused tests, then run the project verification commands. Report remaining failures truthfully.
