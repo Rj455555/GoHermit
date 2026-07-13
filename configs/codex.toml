@@ -1,0 +1,5 @@
+[model]
+provider = "codex"
+
+[permissions]
+allow_network = false

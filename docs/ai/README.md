@@ -18,7 +18,7 @@ This is the preferred low-token path. Do not preload every ADR or topic document
 ## Files
 
 - `context.md`: current product boundary, code map, invariants, verified state, and known limitations.
-- `next-development-plan.md`: ordered v0.1.1 milestones with acceptance criteria.
+- `next-development-plan.md`: ordered work after the provider/Web milestone, with acceptance criteria.
 - `handoff-template.md`: compact factual format for ending an AI development session.
 
 ## General technical documentation

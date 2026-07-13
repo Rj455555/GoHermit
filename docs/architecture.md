@@ -2,7 +2,7 @@
 
 ## System boundary
 
-GoHermit is a foreground CLI process. It owns configuration, model HTTP calls, workspace-scoped built-in tools, plugin child processes, and `.gohermit` session data. The workspace and configured plugins are trusted inputs; model output, tool arguments, provider responses, plugin stdout, and checkpoint files are untrusted and validated at their boundary.
+GoHermit is a foreground CLI or local Web process. Both presentation surfaces reuse the same runtime assembly and structured events. The process owns configuration, model HTTP calls, workspace-scoped built-in tools, plugin child processes, and `.gohermit` session data. The workspace and configured plugins are trusted inputs; model output, tool arguments, provider responses, browser input, plugin stdout, and checkpoint files are untrusted and validated at their boundary.
 
 ```text
 CLI renderer
@@ -29,7 +29,11 @@ Dependencies point inward: `cmd` depends on `internal/app`; app assembles domain
 
 ## Model call flow
 
-Provider-neutral messages and tool definitions are converted at the HTTP boundary. The OpenAI-compatible implementation POSTs to `/chat/completions`, never logs the request or Authorization header, classifies HTTP errors, retries only rate-limit/availability failures, parses JSON responses, and assembles streaming tool-call fragments by index. Cancellation propagates through `http.NewRequestWithContext`.
+Provider-neutral messages and tool definitions are converted at the HTTP boundary. Presets resolve configuration into either Chat Completions or Responses protocol implementations. Both never log requests or Authorization headers, classify HTTP errors, retry only rate-limit/availability failures, parse JSON/SSE, and propagate cancellation through `http.NewRequestWithContext`. Responses retains only provider-encrypted reasoning continuation items; the Chat adapter AES-GCM encrypts DeepSeek `reasoning_content` before checkpointing and decrypts it only when replaying a tool turn.
+
+## Web boundary
+
+`hermit-web` embeds static assets and exposes health, non-secret provider metadata, and one same-origin SSE task endpoint. Workspace, config, endpoint, and credentials are fixed server-side. It permits one active run and is designed only for loopback or SSH-tunneled access.
 
 ## Tool call flow
 

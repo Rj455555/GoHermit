@@ -31,3 +31,30 @@ func TestUnsafeStorageOptionsRejected(t *testing.T) {
 		t.Fatal("expected validation failure")
 	}
 }
+
+func TestProviderPresetsFillOnlyMissingValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex.toml")
+	if err := os.WriteFile(path, []byte("[model]\nprovider = \"codex\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Model.Protocol() != "responses" || c.Model.Name != "gpt-5.3-codex" || c.Model.APIKeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("codex preset=%+v", c.Model)
+	}
+
+	path = filepath.Join(t.TempDir(), "deepseek.toml")
+	data := "[model]\nprovider = \"deepseek\"\nmodel = \"deepseek-v4-flash\"\napi_key_env = \"CUSTOM_KEY\"\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Load(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Model.BaseURL != "https://api.deepseek.com" || c.Model.Name != "deepseek-v4-flash" || c.Model.APIKeyEnv != "CUSTOM_KEY" {
+		t.Fatalf("deepseek preset=%+v", c.Model)
+	}
+}

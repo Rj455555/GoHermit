@@ -19,7 +19,7 @@ Do not load all documentation by default.
 - Never persist secrets, private reasoning, stream chunks, full prompts/requests, or unbounded output.
 - Prefer synchronous standard-library code; document every new dependency and protocol change.
 - Preserve `%w` error chains, strong internal types, and failure-path tests.
-- Do not add multi-agent orchestration, a daemon, UI, telemetry, auto-push, deployment, or speculative frameworks to v0.1.x.
+- Do not add multi-agent orchestration, a daemon, telemetry, auto-push, or speculative frameworks. The local-only Web debug surface and Docker packaging are deliberate v0.2 development scope; keep them loopback-bound and single-user.
 - Do not rewrite unrelated changes or bypass tool policy through shell commands.
 
 ## Required verification
@@ -30,6 +30,7 @@ go test ./...
 go test -race ./...
 go vet ./...
 go build ./cmd/hermit
+go build ./cmd/hermit-web
 ```
 
 Before handoff, review the diff and secrets, update affected documentation, use `docs/ai/handoff-template.md`, and report every skipped check or incomplete feature.

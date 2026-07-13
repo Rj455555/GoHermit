@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0-dev
+
+- Added provider presets inspired by Hermes: Codex/OpenAI Responses, DeepSeek, Qwen, OpenAI Chat Completions, and custom OpenAI-compatible endpoints.
+- Added Responses API streaming and function calls with `store=false`, preserving only encrypted reasoning continuation between tool turns.
+- Added DeepSeek `reasoning_content` replay for thinking-mode tool-call compatibility, encrypted before session checkpointing.
+- Added a loopback-only local Web debugger, server-sent runtime events, Docker image, and Compose configuration.
+
 ## 0.1.0 - 2026-07-13
 
 - Added a bounded single-agent coding loop with cancellation, model retry, tool errors, and structured events.

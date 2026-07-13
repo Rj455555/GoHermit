@@ -17,10 +17,12 @@ const (
 )
 
 type Message struct {
-	Role       Role       `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role             Role            `json:"role"`
+	Content          string          `json:"content,omitempty"`
+	ReasoningContent string          `json:"-"`
+	ToolCalls        []ToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
+	ProviderData     json.RawMessage `json:"provider_data,omitempty"`
 }
 
 type ToolDefinition struct {

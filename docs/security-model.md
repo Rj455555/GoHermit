@@ -18,6 +18,12 @@ This policy reduces risk but is not an OS sandbox. Build/test tools can execute 
 
 Provider keys are read from configuration or the named environment variable and are used only to set the request Authorization header. Model requests, headers, and keys are not logged. Redaction covers Authorization, API keys, cookies, tokens, passwords, secrets, and common private-key blocks. Credential-like workspace files are denied by built-ins.
 
+The Web API reports only whether the configured key is present. It never accepts or returns a key. Responses API requests set `store=false` and checkpoint only server-encrypted reasoning continuation items. DeepSeek reasoning needed for a later tool turn is AES-GCM encrypted with a key derived from the configured API key; readable reasoning is never serialized, rendered, or written to event logs.
+
+## Local Web and Docker
+
+The Web surface has no user authentication and must remain bound to host loopback or accessed through an SSH tunnel. Same-origin checks, request limits, a restrictive content security policy, one active run, fixed server-side workspace/config, dropped container capabilities, and no Docker socket reduce its local attack surface. They do not make it suitable for public exposure or hostile repositories.
+
 ## Plugins
 
 Plugins may access anything allowed to their OS process. GoHermit limits messages, time, concurrency, stdout protocol, and lifecycle, but does not sandbox filesystem or network access. Keep plugin entries disabled until reviewed; use an OS sandbox for hostile plugins.

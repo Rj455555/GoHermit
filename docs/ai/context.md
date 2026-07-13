@@ -4,7 +4,7 @@ This is the compact handoff for coding agents. Read `AGENTS.md` first, then this
 
 ## Product in one paragraph
 
-GoHermit v0.1.0 is a foreground, local-first, single-agent coding runtime. The `hermit` CLI builds bounded context, calls an OpenAI-compatible Chat Completions provider, executes controlled built-in or stdio JSON-RPC plugin tools, feeds structured results back to the model, and atomically checkpoints auditable sessions under `.gohermit/`. There is no daemon, UI, multi-agent orchestration, telemetry, automatic Git publishing, or deployment.
+GoHermit `0.2.0-dev` is a foreground, local-first, single-agent coding runtime. The CLI and local Web debugger share one runtime assembly. Provider presets select OpenAI Responses/Codex, DeepSeek, Qwen, OpenAI Chat Completions, or a custom compatible endpoint. The agent executes controlled built-in or stdio JSON-RPC tools and atomically checkpoints sessions under `.gohermit/`. There is no daemon, public/hosted UI, multi-agent orchestration, telemetry, accounts, or automatic Git publishing.
 
 ## Shortest useful reading path
 
@@ -26,6 +26,9 @@ GoHermit v0.1.0 is a foreground, local-first, single-agent coding runtime. The `
 | CLI flag/output | `internal/app/app.go` | `internal/app/app_test.go`, `cmd/hermit/main.go` |
 | turns/stopping/tool loop | `internal/agent/agent.go` | agent tests, event/session contracts |
 | provider/streaming/retry | `internal/model` | HTTP fixture tests |
+| provider presets | `internal/config` | `configs/`, provider docs, config tests |
+| local Web/SSE | `internal/web`, `cmd/hermit-web` | Web tests, `docs/web-debug.md` |
+| Docker packaging | `Dockerfile`, `compose.yaml` | Web/Docker guide |
 | tool registry/timeouts | `internal/tool/tool.go` | executor tests |
 | filesystem/shell/Git/test | `internal/tool/builtin` | policy and security tests |
 | prompt budget/summary | `internal/contextmgr` | context tests and compression prompt |
@@ -38,7 +41,7 @@ GoHermit v0.1.0 is a foreground, local-first, single-agent coding runtime. The `
 ## Invariants that must survive every change
 
 - Agent Core emits events; it never prints to a terminal.
-- Model/vendor JSON does not enter agent domain types.
+- Model/vendor JSON does not enter Agent Core behavior; opaque provider continuation data stays in the message envelope and is interpreted only by its provider.
 - Every loop is bounded by turns and total time; every external call is cancellable and timed.
 - Tool errors are returned to the model as structured results unless the task itself cannot continue.
 - Built-in filesystem access stays inside the real workspace and cannot read `.git`, `.gohermit`, credential-like files, or symlink escapes.
@@ -46,14 +49,15 @@ GoHermit v0.1.0 is a foreground, local-first, single-agent coding runtime. The `
 - Stream chunks, full prompts/requests, secrets, private reasoning, and unbounded outputs are not persisted.
 - Checkpoints are versioned JSON, atomically replaced, and resumable without full conversation history.
 - Plugin stdout is protocol-only, message/concurrency sizes are bounded, and crashes cannot crash the core.
-- GoHermit never commits, pushes, opens PRs, deploys, changes system settings, or emits telemetry by itself.
+- GoHermit never commits, pushes, opens PRs, changes system settings, or emits telemetry by itself. Docker packaging is an operator-started local debug surface.
 
 ## Current verified state
 
 - Required commands pass: normal tests, race tests, vet, and CLI build.
 - Linux amd64 and Windows amd64 cross-builds pass from macOS arm64.
 - Python and Node echo plugin lifecycles are exercised by tests.
-- OpenAI-compatible HTTP behavior is tested with local servers; no live paid API call is part of the test suite.
+- Chat Completions and Responses HTTP behavior are tested with local servers, including reasoning continuation; no paid API call is part of the test suite.
+- Docker Compose binds the Web surface to host loopback and keeps workspace/config/key selection server-side.
 - The only third-party Go module is `github.com/BurntSushi/toml` for strict TOML decoding.
 
 ## Known boundaries
@@ -62,6 +66,7 @@ GoHermit v0.1.0 is a foreground, local-first, single-agent coding runtime. The `
 - Plugin streaming events are deferred beyond protocol v1.
 - Schema version 1 rejects unknown versions; there is no migration framework yet.
 - Permission-required events are non-interactive in v0.1.0.
+- The Web surface is single-user and unauthenticated; public exposure is unsupported.
 
 ## Verification
 
@@ -71,6 +76,8 @@ go test ./...
 go test -race ./...
 go vet ./...
 go build ./cmd/hermit
+go build ./cmd/hermit-web
+docker compose config
 ```
 
 When handing off, update this file only if the product boundary, code map, invariants, verified state, or known boundaries changed. Keep it compact.

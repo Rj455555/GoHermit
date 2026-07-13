@@ -1,5 +1,8 @@
 /hermit
 /hermit.exe
+/hermit-web
+/hermit-web.exe
 /.gohermit/
 *.test
 coverage.out
+/.env

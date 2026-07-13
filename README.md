@@ -2,11 +2,11 @@
 
 GoHermit is a lightweight, local-first AI coding-agent runtime written in Go. It reads a workspace, calls an OpenAI-compatible model, executes bounded tools, runs tests, and persists auditable sessions that can be resumed after interruption.
 
-GoHermit is not a hosted service, a multi-agent orchestrator, a workflow engine, or a port of Hermes/OpenClaw. Version 0.1.0 deliberately focuses on one reliable loop: inspect, edit, test, continue, checkpoint, and resume.
+GoHermit is not a hosted service, a multi-agent orchestrator, a workflow engine, or a port of Hermes/OpenClaw. Its provider registry borrows the useful preset idea from Hermes while keeping a small provider-neutral Go core.
 
 ## Status
 
-Version 0.1.0 is an experimental but end-to-end usable release. It includes the CLI, single-agent loop, OpenAI-compatible Chat Completions provider, built-in tools, context budgeting, file-based sessions, and stdio JSON-RPC plugins. It does not provide a TUI, web UI, background daemon, telemetry, automatic Git push, or deployment.
+The main branch is now `0.2.0-dev`. It adds OpenAI Responses/Codex, DeepSeek and Qwen presets plus a local-only Web debug surface and Docker packaging. It remains single-user and foreground; there is no account system, daemon, telemetry, automatic Git push, or cloud deployment.
 
 ## Build and install
 
@@ -15,6 +15,7 @@ Go 1.24 or newer is required.
 ```bash
 go test ./...
 go build -o hermit ./cmd/hermit
+go build -o hermit-web ./cmd/hermit-web
 install -m 0755 hermit "$HOME/.local/bin/hermit"
 ```
 
@@ -23,8 +24,7 @@ GoHermit has one third-party dependency: `github.com/BurntSushi/toml`, used for 
 ## Quick start
 
 ```bash
-cp hermit.example.toml hermit.toml
-$EDITOR hermit.toml                     # set model.model
+cp configs/codex.toml hermit.toml       # or deepseek.toml / qwen.toml
 export OPENAI_API_KEY='...'
 hermit config validate
 hermit run --workspace /path/to/project "inspect the project and fix failing tests"
@@ -48,7 +48,17 @@ JSON mode emits one JSON object per line for runtime events, making it safe to c
 
 ## Configuration
 
-See [hermit.example.toml](hermit.example.toml). API keys may be supplied by `model.api_key`, but an environment variable named by `model.api_key_env` is strongly preferred. Keys, Authorization headers, cookies, passwords, common tokens, and private-key blocks are redacted from logs.
+See [hermit.example.toml](hermit.example.toml) and [model provider documentation](docs/model-providers.md). API keys may be supplied by `model.api_key`, but an environment variable named by `model.api_key_env` is strongly preferred. Keys, Authorization headers, cookies, passwords, common tokens, and private-key blocks are redacted from logs.
+
+## Local Web debug
+
+```bash
+export OPENAI_API_KEY='...'
+docker compose up --build -d
+open http://127.0.0.1:8787
+```
+
+The Compose port is published only on loopback. Change models by setting `GOHERMIT_CONFIG`, for example `GOHERMIT_CONFIG=./configs/deepseek.toml`, and provide the matching environment variable. See [local Web and Docker guide](docs/web-debug.md).
 
 Configured plugins are opt-in:
 
@@ -79,6 +89,8 @@ External plugins are separate processes and form an explicit trust boundary. Onl
 - [Context management](docs/context-management.md)
 - [Session storage](docs/session-storage.md)
 - [Plugin protocol](docs/plugin-protocol.md)
+- [Model providers](docs/model-providers.md)
+- [Local Web and Docker debugging](docs/web-debug.md)
 - [Security model](docs/security-model.md)
 - [Testing](docs/testing.md)
 - [Roadmap](docs/roadmap.md)

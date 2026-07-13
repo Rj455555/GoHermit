@@ -24,7 +24,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/tool/builtin"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.0-dev"
 const (
 	ExitOK        = 0
 	ExitRuntime   = 1
@@ -36,6 +36,20 @@ const (
 type CLI struct {
 	Stdout, Stderr io.Writer
 	NewProvider    func(config.Config) (model.Provider, error)
+}
+
+type Runtime struct {
+	Workspace string
+	Config    config.Config
+	Store     *session.Store
+	Runner    *agent.Runner
+	close     func()
+}
+
+func (r *Runtime) Close() {
+	if r != nil && r.close != nil {
+		r.close()
+	}
 }
 
 func (c CLI) Run(ctx context.Context, args []string) int {
@@ -156,7 +170,7 @@ func (c CLI) status(ctx context.Context, args []string, summaryOnly bool) int {
 	if err != nil {
 		return c.reportError(err, ExitUsage)
 	}
-	conf, err := loadConfig(workspace, f.configPath)
+	conf, err := LoadConfig(workspace, f.configPath)
 	if err != nil {
 		return c.reportError(err, ExitConfig)
 	}
@@ -198,7 +212,7 @@ func (c CLI) clean(ctx context.Context, args []string) int {
 	if err != nil {
 		return c.reportError(err, ExitUsage)
 	}
-	conf, err := loadConfig(workspace, f.configPath)
+	conf, err := LoadConfig(workspace, f.configPath)
 	if err != nil {
 		return c.reportError(err, ExitConfig)
 	}
@@ -243,28 +257,41 @@ func (c CLI) assemble(ctx context.Context, f commonFlags) (string, config.Config
 	if f.output != "human" && f.output != "json" {
 		return "", config.Config{}, nil, nil, noop, errors.New("output must be human or json")
 	}
-	workspace, err := filepath.Abs(f.workspace)
+	runtime, err := BuildRuntime(ctx, f.workspace, f.configPath, c.NewProvider)
 	if err != nil {
 		return "", config.Config{}, nil, nil, noop, err
 	}
-	conf, err := loadConfig(workspace, f.configPath)
+	return runtime.Workspace, runtime.Config, runtime.Store, runtime.Runner, runtime.Close, nil
+}
+
+func BuildRuntime(ctx context.Context, workspace, configPath string, newProvider func(config.Config) (model.Provider, error)) (*Runtime, error) {
+	workspace, err := filepath.Abs(workspace)
 	if err != nil {
-		return "", config.Config{}, nil, nil, noop, err
+		return nil, err
+	}
+	conf, err := LoadConfig(workspace, configPath)
+	if err != nil {
+		return nil, err
 	}
 	if conf.Model.Name == "" {
-		return "", conf, nil, nil, noop, errors.New("model.model must be configured")
+		return nil, errors.New("model.model must be configured")
 	}
-	provider, err := c.provider(conf)
+	var provider model.Provider
+	if newProvider != nil {
+		provider, err = newProvider(conf)
+	} else {
+		provider, err = NewProvider(conf)
+	}
 	if err != nil {
-		return "", conf, nil, nil, noop, err
+		return nil, err
 	}
 	ws, err := builtin.NewWorkspace(workspace)
 	if err != nil {
-		return "", conf, nil, nil, noop, err
+		return nil, err
 	}
 	registry := tool.NewRegistry()
 	if err = builtin.RegisterAll(registry, ws, conf.Tools.DefaultTimeout.Value(), conf.Tools.MaxStdoutBytes, conf.Tools.MaxStderrBytes, conf.Permissions.AllowNetwork); err != nil {
-		return "", conf, nil, nil, noop, err
+		return nil, err
 	}
 	var clients []*plugin.Client
 	cleanup := func() {
@@ -282,39 +309,45 @@ func (c CLI) assemble(ctx context.Context, f commonFlags) (string, config.Config
 			client, startErr := plugin.Start(ctx, plugin.Config{Command: append([]string{process.Command}, process.Args...), Directory: workspace, MaxMessageBytes: conf.Plugins.MaxMessageBytes, DefaultTimeout: conf.Plugins.DefaultTimeout.Value()})
 			if startErr != nil {
 				cleanup()
-				return "", conf, nil, nil, noop, fmt.Errorf("start plugin %s: %w", process.Name, startErr)
+				return nil, fmt.Errorf("start plugin %s: %w", process.Name, startErr)
 			}
 			clients = append(clients, client)
 			if startErr = plugin.RegisterTools(ctx, registry, process.Name, client); startErr != nil {
 				cleanup()
-				return "", conf, nil, nil, noop, fmt.Errorf("register plugin %s: %w", process.Name, startErr)
+				return nil, fmt.Errorf("register plugin %s: %w", process.Name, startErr)
 			}
 		}
 	}
 	store, err := session.NewStore(workspace, conf.Storage.Directory)
 	if err != nil {
 		cleanup()
-		return "", conf, nil, nil, noop, err
+		return nil, err
 	}
 	manager, err := contextmgr.New(contextmgr.Config{MaxTokens: conf.Context.MaxTokens, CompressionThreshold: conf.Context.CompressionThreshold, HardLimitThreshold: conf.Context.HardLimitThreshold, ReserveOutputTokens: conf.Context.ReserveOutputTokens})
 	if err != nil {
 		cleanup()
-		return "", conf, nil, nil, noop, err
+		return nil, err
 	}
 	runner := &agent.Runner{Provider: provider, Executor: tool.Executor{Registry: registry, DefaultTimeout: conf.Tools.DefaultTimeout.Value()}, Context: manager, Store: store, Config: agent.Config{MaxTurns: conf.Agent.MaxTurns, Timeout: conf.Agent.Timeout.Value(), Model: conf.Model.Name, Stream: conf.Model.Stream, CheckpointEveryTurns: conf.Storage.CheckpointEveryTurns, CheckpointOnToolCompletion: conf.Storage.CheckpointOnToolCompletion}}
-	return workspace, conf, store, runner, cleanup, nil
+	return &Runtime{Workspace: workspace, Config: conf, Store: store, Runner: runner, close: cleanup}, nil
 }
-func (c CLI) provider(conf config.Config) (model.Provider, error) {
-	if c.NewProvider != nil {
-		return c.NewProvider(conf)
-	}
+
+func NewProvider(conf config.Config) (model.Provider, error) {
 	key, err := conf.APIKey()
 	if err != nil {
 		return nil, err
 	}
-	return model.NewOpenAIProvider(model.OpenAIConfig{BaseURL: conf.Model.BaseURL, APIKey: key, Timeout: conf.Model.RequestTimeout.Value(), MaxRetries: conf.Model.MaxRetries})
+	switch conf.Model.Protocol() {
+	case "responses":
+		return model.NewResponsesProvider(model.ResponsesConfig{BaseURL: conf.Model.BaseURL, APIKey: key, Timeout: conf.Model.RequestTimeout.Value(), MaxRetries: conf.Model.MaxRetries})
+	case "chat_completions":
+		return model.NewOpenAIProvider(model.OpenAIConfig{BaseURL: conf.Model.BaseURL, APIKey: key, Timeout: conf.Model.RequestTimeout.Value(), MaxRetries: conf.Model.MaxRetries})
+	default:
+		return nil, fmt.Errorf("unsupported model provider %q", conf.Model.Provider)
+	}
 }
-func loadConfig(workspace, path string) (config.Config, error) {
+
+func LoadConfig(workspace, path string) (config.Config, error) {
 	optional := path == ""
 	if path == "" {
 		path = filepath.Join(workspace, "hermit.toml")

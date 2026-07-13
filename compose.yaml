@@ -1,0 +1,27 @@
+services:
+  gohermit-web:
+    build:
+      context: .
+      args:
+        GO_IMAGE: "${GOHERMIT_GO_IMAGE:-golang:1.26-bookworm}"
+    user: "${GOHERMIT_UID:-501}:${GOHERMIT_GID:-20}"
+    ports:
+      - "127.0.0.1:${GOHERMIT_WEB_PORT:-8787}:8787"
+    environment:
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+    volumes:
+      - "${GOHERMIT_WORKSPACE:-./sandbox}:/workspace"
+      - "${GOHERMIT_CONFIG:-./configs/codex.toml}:/config/hermit.toml:ro"
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "hermit", "version"]
+      interval: 15s
+      timeout: 3s
+      retries: 3

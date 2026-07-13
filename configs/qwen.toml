@@ -1,0 +1,6 @@
+[model]
+provider = "qwen"
+model = "qwen3.7-plus"
+
+[permissions]
+allow_network = false

@@ -1,0 +1,6 @@
+[model]
+provider = "deepseek"
+model = "deepseek-v4-pro"
+
+[permissions]
+allow_network = false

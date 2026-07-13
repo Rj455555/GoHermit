@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -80,5 +81,37 @@ func TestGenerateCancellation(t *testing.T) {
 	_, err := p.Generate(ctx, GenerateRequest{Model: "test"})
 	if err == nil {
 		t.Fatal("expected cancellation")
+	}
+}
+
+func TestReasoningContentIsEncryptedAtRestAndReplayed(t *testing.T) {
+	var calls atomic.Int32
+	p := providerFor(t, func(w http.ResponseWriter, r *http.Request) {
+		var request openAIRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if calls.Add(1) == 1 {
+			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"private chain","tool_calls":[{"id":"c1","type":"function","function":{"name":"filesystem.read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+			return
+		}
+		if len(request.Messages) != 1 || request.Messages[0].ReasoningContent != "private chain" {
+			t.Fatalf("reasoning was not replayed: %+v", request.Messages)
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`)
+	}, 0)
+	first, err := p.Generate(context.Background(), GenerateRequest{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := json.Marshal(first.Message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), "private chain") || len(first.Message.ProviderData) == 0 {
+		t.Fatalf("reasoning was stored in plaintext: %s", persisted)
+	}
+	if _, err = p.Generate(context.Background(), GenerateRequest{Model: "test", Messages: []Message{first.Message}}); err != nil {
+		t.Fatal(err)
 	}
 }

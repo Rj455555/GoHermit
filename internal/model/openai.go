@@ -4,6 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,10 +56,11 @@ type openAIRequest struct {
 	Stream   bool            `json:"stream,omitempty"`
 }
 type openAIMessage struct {
-	Role       Role             `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Role             Role             `json:"role"`
+	Content          string           `json:"content"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
+	ToolCalls        []openAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
 }
 type openAITool struct {
 	Type     string         `json:"type"`
@@ -82,7 +88,11 @@ type openAIResponse struct {
 func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
 	body := openAIRequest{Model: req.Model, Stream: req.Stream}
 	for _, m := range req.Messages {
-		om := openAIMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
+		reasoning, err := p.reasoningForMessage(m)
+		if err != nil {
+			return GenerateResponse{}, err
+		}
+		om := openAIMessage{Role: m.Role, Content: m.Content, ReasoningContent: reasoning, ToolCallID: m.ToolCallID}
 		for _, tc := range m.ToolCalls {
 			var c openAIToolCall
 			c.ID = tc.ID
@@ -113,10 +123,16 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 		}
 		resp, err := p.do(ctx, payload)
 		if err == nil {
+			var result GenerateResponse
 			if req.Stream {
-				return p.readStream(resp.Body, req.OnStream)
+				result, err = p.readStream(resp.Body, req.OnStream)
+			} else {
+				result, err = p.readJSON(resp.Body)
 			}
-			return p.readJSON(resp.Body)
+			if err == nil {
+				err = p.protectReasoning(&result.Message)
+			}
+			return result, err
 		}
 		last = err
 		var pe *ProviderError
@@ -125,6 +141,66 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 		}
 	}
 	return GenerateResponse{}, last
+}
+
+type protectedReasoning struct {
+	Type       string `json:"type"`
+	Nonce      string `json:"nonce"`
+	Ciphertext string `json:"ciphertext"`
+}
+
+func (p *OpenAIProvider) protectReasoning(message *Message) error {
+	if message.ReasoningContent == "" || len(message.ToolCalls) == 0 {
+		return nil
+	}
+	key := sha256.Sum256([]byte("gohermit/provider-reasoning/v1\x00" + p.apiKey))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = rand.Read(nonce); err != nil {
+		return err
+	}
+	ciphertext := gcm.Seal(nil, nonce, []byte(message.ReasoningContent), nil)
+	message.ProviderData, err = json.Marshal(protectedReasoning{Type: "gohermit.encrypted_reasoning.v1", Nonce: base64.RawStdEncoding.EncodeToString(nonce), Ciphertext: base64.RawStdEncoding.EncodeToString(ciphertext)})
+	return err
+}
+
+func (p *OpenAIProvider) reasoningForMessage(message Message) (string, error) {
+	if message.ReasoningContent != "" || len(message.ProviderData) == 0 {
+		return message.ReasoningContent, nil
+	}
+	var protected protectedReasoning
+	if err := json.Unmarshal(message.ProviderData, &protected); err != nil || protected.Type != "gohermit.encrypted_reasoning.v1" {
+		return "", nil
+	}
+	nonce, err := base64.RawStdEncoding.DecodeString(protected.Nonce)
+	if err != nil {
+		return "", &ProviderError{Kind: ErrorProtocol, Message: "decode protected reasoning nonce", Cause: err}
+	}
+	ciphertext, err := base64.RawStdEncoding.DecodeString(protected.Ciphertext)
+	if err != nil {
+		return "", &ProviderError{Kind: ErrorProtocol, Message: "decode protected reasoning content", Cause: err}
+	}
+	key := sha256.Sum256([]byte("gohermit/provider-reasoning/v1\x00" + p.apiKey))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", &ProviderError{Kind: ErrorAuthentication, Message: "decrypt protected reasoning; the API key may have changed", Cause: err}
+	}
+	return string(plaintext), nil
 }
 
 func (p *OpenAIProvider) do(ctx context.Context, payload []byte) (*http.Response, error) {
@@ -177,7 +253,7 @@ func (p *OpenAIProvider) readJSON(body io.ReadCloser) (GenerateResponse, error) 
 }
 
 func convertChoice(m openAIMessage, finish string, usage Usage) (GenerateResponse, error) {
-	out := Message{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
+	out := Message{Role: m.Role, Content: m.Content, ReasoningContent: m.ReasoningContent, ToolCallID: m.ToolCallID}
 	for _, c := range m.ToolCalls {
 		args := json.RawMessage(c.Function.Arguments)
 		if len(args) == 0 {
@@ -198,6 +274,7 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, on func(StreamEvent)) (G
 	msg := openAIMessage{Role: RoleAssistant}
 	calls := map[int]*openAIToolCall{}
 	finish := ""
+	usage := Usage{}
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -212,10 +289,14 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, on func(StreamEvent)) (G
 			return GenerateResponse{}, &ProviderError{Kind: ErrorProtocol, Message: "invalid stream event", Cause: err}
 		}
 		if len(chunk.Choices) == 0 {
+			if chunk.Usage.TotalTokens > 0 {
+				usage = chunk.Usage
+			}
 			continue
 		}
 		choice := chunk.Choices[0]
 		msg.Content += choice.Delta.Content
+		msg.ReasoningContent += choice.Delta.ReasoningContent
 		if choice.Delta.Content != "" && on != nil {
 			on(StreamEvent{Delta: choice.Delta.Content})
 		}
@@ -245,7 +326,7 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, on func(StreamEvent)) (G
 			msg.ToolCalls = append(msg.ToolCalls, *c)
 		}
 	}
-	out, err := convertChoice(msg, finish, Usage{})
+	out, err := convertChoice(msg, finish, usage)
 	if err == nil && on != nil {
 		on(StreamEvent{Done: true})
 	}

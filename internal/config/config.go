@@ -52,6 +52,44 @@ type Model struct {
 	Stream         bool     `toml:"stream" json:"stream"`
 }
 
+type ModelPreset struct {
+	Provider  string `json:"provider"`
+	Protocol  string `json:"protocol"`
+	BaseURL   string `json:"base_url"`
+	Model     string `json:"model"`
+	APIKeyEnv string `json:"api_key_env"`
+}
+
+var modelPresets = map[string]ModelPreset{
+	"codex":             {Provider: "codex", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.3-codex", APIKeyEnv: "OPENAI_API_KEY"},
+	"openai":            {Provider: "openai", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.6", APIKeyEnv: "OPENAI_API_KEY"},
+	"deepseek":          {Provider: "deepseek", Protocol: "chat_completions", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", APIKeyEnv: "DEEPSEEK_API_KEY"},
+	"qwen":              {Provider: "qwen", Protocol: "chat_completions", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen3.7-plus", APIKeyEnv: "DASHSCOPE_API_KEY"},
+	"openai-compatible": {Provider: "openai-compatible", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
+	"openai-chat":       {Provider: "openai-chat", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
+}
+
+func ModelPresets() []ModelPreset {
+	names := []string{"codex", "openai", "deepseek", "qwen", "openai-compatible", "openai-chat"}
+	out := make([]ModelPreset, 0, len(names))
+	for _, name := range names {
+		out = append(out, modelPresets[name])
+	}
+	return out
+}
+
+func (m Model) Preset() (ModelPreset, bool) {
+	p, ok := modelPresets[m.Provider]
+	return p, ok
+}
+
+func (m Model) Protocol() string {
+	if p, ok := m.Preset(); ok {
+		return p.Protocol
+	}
+	return ""
+}
+
 type Context struct {
 	MaxTokens            int     `toml:"max_tokens" json:"max_tokens"`
 	CompressionThreshold float64 `toml:"compression_threshold" json:"compression_threshold"`
@@ -123,6 +161,7 @@ func Load(path string, optional bool) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("load config %s: %w", path, err)
 	}
+	applyModelPreset(&c, func(key string) bool { return meta.IsDefined("model", key) })
 	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
 		parts := make([]string, len(undecoded))
 		for i, key := range undecoded {
@@ -136,6 +175,22 @@ func Load(path string, optional bool) (Config, error) {
 	return c, nil
 }
 
+func applyModelPreset(c *Config, isDefined func(string) bool) {
+	preset, ok := modelPresets[c.Model.Provider]
+	if !ok {
+		return
+	}
+	if !isDefined("base_url") {
+		c.Model.BaseURL = preset.BaseURL
+	}
+	if !isDefined("model") && preset.Model != "" {
+		c.Model.Name = preset.Model
+	}
+	if !isDefined("api_key_env") {
+		c.Model.APIKeyEnv = preset.APIKeyEnv
+	}
+}
+
 func (c Config) Validate() error {
 	var problems []string
 	if c.Agent.MaxTurns < 1 || c.Agent.MaxTurns > 1000 {
@@ -144,8 +199,8 @@ func (c Config) Validate() error {
 	if c.Agent.Timeout.Value() <= 0 {
 		problems = append(problems, "agent.timeout must be positive")
 	}
-	if c.Model.Provider != "openai-compatible" {
-		problems = append(problems, "model.provider must be openai-compatible")
+	if _, ok := modelPresets[c.Model.Provider]; !ok {
+		problems = append(problems, "model.provider must be codex, openai, deepseek, qwen, openai-chat, or openai-compatible")
 	}
 	if !strings.HasPrefix(c.Model.BaseURL, "https://") && !strings.HasPrefix(c.Model.BaseURL, "http://localhost") && !strings.HasPrefix(c.Model.BaseURL, "http://127.0.0.1") {
 		problems = append(problems, "model.base_url must use HTTPS or loopback HTTP")

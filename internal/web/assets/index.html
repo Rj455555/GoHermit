@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GoHermit Lab</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div><span class="eyebrow">LOCAL AGENT LAB</span><h1>GoHermit</h1></div>
+      <span id="health" class="pill muted">连接中</span>
+    </header>
+    <section class="model-card">
+      <div><span class="label">Provider</span><strong id="provider">—</strong></div>
+      <div><span class="label">Model</span><strong id="model">—</strong></div>
+      <div><span class="label">Protocol</span><strong id="protocol">—</strong></div>
+      <div><span class="label">API Key</span><strong id="key">—</strong></div>
+    </section>
+    <section class="composer">
+      <label for="task">开发任务</label>
+      <textarea id="task" maxlength="16384" placeholder="例如：检查项目结构，运行测试并修复失败用例。"></textarea>
+      <div class="actions"><span id="hint">配置和密钥只保留在服务端。</span><button id="run">开始运行</button></div>
+    </section>
+    <section class="activity">
+      <div class="activity-title"><h2>实时事件</h2><button id="clear" class="ghost">清空</button></div>
+      <div id="events" class="events"><p class="empty">尚未运行任务。</p></div>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>
