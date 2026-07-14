@@ -24,6 +24,17 @@ func TestLoadDefaultsAndRejectUnknown(t *testing.T) {
 		t.Fatalf("expected unknown-key error, got %v", err)
 	}
 }
+
+func TestResolveSelectionUsesLiveCodexModels(t *testing.T) {
+	selection := RuntimeSelection{Company: "openai", Access: "openai-codex", Model: "account-model", Agent: "coding"}
+	preset, _, err := ResolveSelectionWithModels(selection, []ModelOption{{ID: "account-model", Label: "Account Model", Provider: "openai-codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preset.Model != "account-model" || preset.Provider != "openai-codex" {
+		t.Fatalf("preset=%+v", preset)
+	}
+}
 func TestUnsafeStorageOptionsRejected(t *testing.T) {
 	c := Default()
 	c.Storage.SaveFullPrompts = true

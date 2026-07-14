@@ -103,7 +103,7 @@ type RuntimeSelection struct {
 }
 
 var modelPresets = map[string]ModelPreset{
-	"openai-codex":        {Provider: "openai-codex", Protocol: "responses", BaseURL: "https://chatgpt.com/backend-api/codex", Model: "gpt-5.3-codex"},
+	"openai-codex":        {Provider: "openai-codex", Protocol: "responses", BaseURL: "https://chatgpt.com/backend-api/codex", Model: "gpt-5.4-mini"},
 	"openai-api":          {Provider: "openai-api", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.6", APIKeyEnv: "OPENAI_API_KEY"},
 	"codex":               {Provider: "codex", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.3-codex", APIKeyEnv: "OPENAI_API_KEY"},
 	"openai":              {Provider: "openai", Protocol: "responses", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.6", APIKeyEnv: "OPENAI_API_KEY"},
@@ -154,7 +154,14 @@ var agentPresets = []AgentPreset{
 // CompanyPresets returns a copy of the Web-facing provider hierarchy.
 func CompanyPresets() []CompanyPreset {
 	out := make([]CompanyPreset, len(companyPresets))
-	copy(out, companyPresets)
+	for i, company := range companyPresets {
+		out[i] = company
+		out[i].Access = make([]AccessPreset, len(company.Access))
+		for j, access := range company.Access {
+			out[i].Access[j] = access
+			out[i].Access[j].Models = append([]ModelOption(nil), access.Models...)
+		}
+	}
 	return out
 }
 
@@ -192,6 +199,11 @@ func AgentProfile(id string) (AgentPreset, bool) {
 
 // ResolveSelection validates a Web selection and resolves it to provider config.
 func ResolveSelection(selection RuntimeSelection) (ModelPreset, AgentPreset, error) {
+	return ResolveSelectionWithModels(selection, nil)
+}
+
+// ResolveSelectionWithModels validates a selection against a live access catalog when supplied.
+func ResolveSelectionWithModels(selection RuntimeSelection, liveModels []ModelOption) (ModelPreset, AgentPreset, error) {
 	agent, agentOK := AgentProfile(selection.Agent)
 	if !agentOK {
 		return ModelPreset{}, AgentPreset{}, fmt.Errorf("unknown agent profile %q", selection.Agent)
@@ -207,7 +219,11 @@ func ResolveSelection(selection RuntimeSelection) (ModelPreset, AgentPreset, err
 			if !access.Supported {
 				return ModelPreset{}, AgentPreset{}, fmt.Errorf("%s %s is not enabled: a supported Codex client bridge is required", company.Label, access.Label)
 			}
-			for _, choice := range access.Models {
+			models := access.Models
+			if access.ID == "openai-codex" && liveModels != nil {
+				models = liveModels
+			}
+			for _, choice := range models {
 				if choice.ID != selection.Model {
 					continue
 				}

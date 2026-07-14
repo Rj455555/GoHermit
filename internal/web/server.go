@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,13 +26,16 @@ import (
 var assets embed.FS
 
 type Server struct {
-	Workspace   string
-	ConfigPath  string
-	active      atomic.Bool
-	static      http.Handler
-	credentials *modelauth.Store
-	logins      *modelauth.LoginManager
-	build       func(context.Context, string, string, config.RuntimeSelection, string) (*app.Runtime, error)
+	Workspace     string
+	ConfigPath    string
+	active        atomic.Bool
+	static        http.Handler
+	credentials   *modelauth.Store
+	logins        *modelauth.LoginManager
+	build         func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error)
+	codexModelsMu sync.Mutex
+	codexModels   []config.ModelOption
+	codexModelsAt time.Time
 }
 
 func New(workspace, configPath string) (*Server, error) {
@@ -48,8 +52,8 @@ func New(workspace, configPath string) (*Server, error) {
 		static:      http.FileServer(http.FS(root)),
 		credentials: credentials,
 		logins:      modelauth.NewLoginManager(credentials),
-		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string) (*app.Runtime, error) {
-			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey}, nil)
+		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
+			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models}, nil)
 		},
 	}, nil
 }
@@ -80,11 +84,20 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	authStatus := make(map[string]map[string]any)
 	companies := config.CompanyPresets()
 	availableCompanies := make([]config.CompanyPreset, 0, len(companies))
-	for _, company := range companies {
+	for companyIndex, company := range companies {
 		available := company
 		available.Access = nil
-		for _, access := range company.Access {
+		for accessIndex, access := range company.Access {
 			configured, source, detail := s.accessStatus(r.Context(), access)
+			if configured && access.ID == "openai-codex" {
+				models, modelErr := s.codexCatalog(r.Context())
+				if modelErr != nil {
+					configured, source, detail = false, "", "登录有效，但无法读取该账户的可用模型。"
+				} else {
+					access.Models = models
+					companies[companyIndex].Access[accessIndex].Models = models
+				}
+			}
 			authStatus[access.ID] = map[string]any{"configured": configured, "source": source, "detail": detail}
 			if configured && access.Supported {
 				available.Access = append(available.Access, access)
@@ -99,6 +112,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	if conf.Model.Provider == "openai-codex" {
 		currentConfigured, _, _ = s.accessStatus(r.Context(), config.AccessPreset{ID: "openai-codex", AuthType: "oauth_external"})
 	}
+	selection := normalizeSelection(conf.CurrentSelection(), availableCompanies)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":   app.Version,
 		"workspace": s.Workspace,
@@ -106,9 +120,65 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			"provider": conf.Model.Provider, "protocol": conf.Model.Protocol(), "base_url": conf.Model.BaseURL,
 			"model": conf.Model.Name, "api_key_env": conf.Model.APIKeyEnv, "api_key_configured": currentConfigured,
 		},
-		"selection": conf.CurrentSelection(), "companies": companies, "available_companies": availableCompanies, "agents": config.AgentPresets(),
+		"selection": selection, "companies": companies, "available_companies": availableCompanies, "agents": config.AgentPresets(),
 		"auth_status": authStatus, "active": s.active.Load(),
 	})
+}
+
+func normalizeSelection(selection config.RuntimeSelection, companies []config.CompanyPreset) config.RuntimeSelection {
+	if selection.Agent == "" {
+		selection.Agent = "coding"
+	}
+	for _, company := range companies {
+		for _, access := range company.Access {
+			if company.ID != selection.Company || access.ID != selection.Access {
+				continue
+			}
+			for _, model := range access.Models {
+				if model.ID == selection.Model {
+					return selection
+				}
+			}
+		}
+	}
+	if len(companies) == 0 || len(companies[0].Access) == 0 || len(companies[0].Access[0].Models) == 0 {
+		return selection
+	}
+	company, access := companies[0], companies[0].Access[0]
+	selection.Company, selection.Access = company.ID, access.ID
+	selection.Model = access.Models[0].ID
+	if access.ID == "openai-codex" {
+		for _, model := range access.Models {
+			if model.ID == "gpt-5.4-mini" {
+				selection.Model = model.ID
+				break
+			}
+		}
+	}
+	return selection
+}
+
+func (s *Server) codexCatalog(ctx context.Context) ([]config.ModelOption, error) {
+	s.codexModelsMu.Lock()
+	defer s.codexModelsMu.Unlock()
+	if len(s.codexModels) > 0 && time.Since(s.codexModelsAt) < 5*time.Minute {
+		return append([]config.ModelOption(nil), s.codexModels...), nil
+	}
+	credentials, err := modelauth.ResolveCodexWithStore(ctx, s.credentials)
+	if err != nil {
+		return nil, err
+	}
+	discovered, err := modelauth.DiscoverCodexModels(ctx, credentials.Token)
+	if err != nil {
+		return nil, err
+	}
+	models := make([]config.ModelOption, 0, len(discovered))
+	for _, model := range discovered {
+		models = append(models, config.ModelOption{ID: model.ID, Label: model.ID, Provider: "openai-codex"})
+	}
+	s.codexModels = models
+	s.codexModelsAt = time.Now()
+	return append([]config.ModelOption(nil), models...), nil
 }
 
 func (s *Server) accessStatus(ctx context.Context, access config.AccessPreset) (bool, string, string) {
@@ -161,7 +231,16 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	selection := config.RuntimeSelection{Company: request.Company, Access: request.Access, Model: request.Model, Agent: request.Agent}
-	if _, _, err := config.ResolveSelection(selection); err != nil {
+	var liveModels []config.ModelOption
+	if selection.Access == "openai-codex" {
+		models, modelErr := s.codexCatalog(r.Context())
+		if modelErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "无法读取 Codex 账户的可用模型，请重新登录后再试"})
+			return
+		}
+		liveModels = models
+	}
+	if _, _, err := config.ResolveSelectionWithModels(selection, liveModels); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
@@ -170,7 +249,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	runtime, err := s.build(r.Context(), s.Workspace, s.ConfigPath, selection, apiKey)
+	runtime, err := s.build(r.Context(), s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -287,6 +366,12 @@ func (s *Server) loginStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "登录会话不存在"})
 		return
+	}
+	if session.Status == "approved" {
+		s.codexModelsMu.Lock()
+		s.codexModels = nil
+		s.codexModelsAt = time.Time{}
+		s.codexModelsMu.Unlock()
 	}
 	writeJSON(w, http.StatusOK, session)
 }

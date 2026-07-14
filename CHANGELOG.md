@@ -9,6 +9,7 @@
 - Added a loopback-only local Web debugger, server-sent runtime events, Docker image, and Compose configuration.
 - Replaced the single debug form with Dashboard, Run Agent, and Provider Settings pages.
 - Added server-side API key storage, Codex device-code login, strict credential availability checks, and a credential-filtered run catalog.
+- Added account-scoped Codex model discovery and Codex-compatible streaming tool-call/continuation handling.
 
 ## 0.1.0 - 2026-07-13
 

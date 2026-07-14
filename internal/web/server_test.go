@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Rj455555/GoHermit/internal/config"
 )
 
 func testServer(t *testing.T) *Server {
@@ -99,5 +101,15 @@ func TestStaticIndexHasSecurityHeaders(t *testing.T) {
 	}
 	if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("X-Frame-Options") != "DENY" {
 		t.Fatal("security headers missing")
+	}
+}
+
+func TestNormalizeSelectionPrefersVerifiedCodexMini(t *testing.T) {
+	companies := []config.CompanyPreset{{ID: "openai", Access: []config.AccessPreset{{ID: "openai-codex", Models: []config.ModelOption{
+		{ID: "gpt-5.6-sol"}, {ID: "gpt-5.4-mini"},
+	}}}}}
+	selection := normalizeSelection(config.RuntimeSelection{Agent: "coding"}, companies)
+	if selection.Company != "openai" || selection.Access != "openai-codex" || selection.Model != "gpt-5.4-mini" {
+		t.Fatalf("selection=%+v", selection)
 	}
 }

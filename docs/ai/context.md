@@ -60,6 +60,7 @@ GoHermit `0.2.0-dev` is a foreground, local-first, single-agent coding runtime. 
 - Chat Completions and Responses HTTP behavior are tested with local servers, including reasoning continuation; no paid API call is part of the test suite.
 - Docker Compose binds the Web surface to host loopback, mounts Codex CLI auth read-only, and persists Web-managed credentials in a dedicated data volume.
 - `/api/info` returns secret-free status and separates the full Settings catalog from the credential-filtered Run catalog.
+- Codex Run models are discovered from the authenticated account; Responses streaming reconstructs text and tool calls from output-item events and safely replays encrypted continuation.
 - The only third-party Go module is `github.com/BurntSushi/toml` for strict TOML decoding.
 
 ## Known boundaries

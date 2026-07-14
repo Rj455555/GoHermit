@@ -20,7 +20,9 @@ Legacy `codex`, `openai`, `openai-chat`, and `openai-compatible` TOML presets re
 
 ## Codex Plan
 
-The Codex Plan path supports both GoHermit-managed device login and Hermes-style safe CLI import. Credential precedence is environment token, GoHermit credential store, then `CODEX_HOME/auth.json`. An expiring access token must refresh successfully before the access method is offered to Run. GoHermit never rewrites the Codex CLI file. Requests use the Codex Responses endpoint plus the `originator`, Codex-shaped user agent, and JWT-derived `ChatGPT-Account-ID` headers.
+The Codex Plan path supports both GoHermit-managed device login and Hermes-style safe CLI import. Credential precedence is environment token, GoHermit credential store, then `CODEX_HOME/auth.json`. An expiring access token must refresh successfully before the access method is offered to Run. The Web catalog is discovered from the authenticated account's live Codex models endpoint; guessed or unsupported models are not offered. GoHermit never rewrites the Codex CLI file. Requests use the Codex Responses endpoint plus the `originator`, Codex-shaped user agent, and JWT-derived `ChatGPT-Account-ID` headers.
+
+Codex streaming is assembled from `response.output_item.done` events because the terminal `response.completed` payload may omit output. Function names are mapped to API-safe identifiers and mapped back before local execution. Encrypted reasoning replay strips response item IDs and replaces reasoning summaries with an empty required array, preserving continuation without persisting private reasoning text.
 
 Either log in from Web Provider Settings, or prepare the CLI fallback on the host:
 

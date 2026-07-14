@@ -51,6 +51,7 @@ type Runtime struct {
 type RuntimeOptions struct {
 	Selection *config.RuntimeSelection
 	APIKey    string
+	Models    []config.ModelOption
 }
 
 func (r *Runtime) Close() {
@@ -286,7 +287,7 @@ func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, 
 		return nil, err
 	}
 	if options.Selection != nil {
-		preset, profile, selectionErr := config.ResolveSelection(*options.Selection)
+		preset, profile, selectionErr := config.ResolveSelectionWithModels(*options.Selection, options.Models)
 		if selectionErr != nil {
 			return nil, selectionErr
 		}

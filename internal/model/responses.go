@@ -47,13 +47,16 @@ func (p *ResponsesProvider) Capabilities() Capabilities {
 }
 
 type responsesRequest struct {
-	Model        string            `json:"model"`
-	Instructions string            `json:"instructions,omitempty"`
-	Input        []json.RawMessage `json:"input"`
-	Tools        []responsesTool   `json:"tools,omitempty"`
-	Include      []string          `json:"include,omitempty"`
-	Stream       bool              `json:"stream,omitempty"`
-	Store        bool              `json:"store"`
+	Model         string            `json:"model"`
+	Instructions  string            `json:"instructions,omitempty"`
+	Input         []json.RawMessage `json:"input"`
+	Tools         []responsesTool   `json:"tools,omitempty"`
+	Include       []string          `json:"include,omitempty"`
+	Stream        bool              `json:"stream,omitempty"`
+	Store         bool              `json:"store"`
+	ToolChoice    string            `json:"tool_choice,omitempty"`
+	ParallelTools bool              `json:"parallel_tool_calls,omitempty"`
+	toolNames     map[string]string `json:"-"`
 }
 
 type responsesTool struct {
@@ -86,6 +89,7 @@ type responseOutputItem struct {
 	CallID    string `json:"call_id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	Phase     string `json:"phase,omitempty"`
 	Content   []struct {
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
@@ -125,9 +129,9 @@ func (p *ResponsesProvider) Generate(ctx context.Context, req GenerateRequest) (
 		resp, requestErr := p.do(ctx, payload)
 		if requestErr == nil {
 			if req.Stream {
-				return p.readStream(resp.Body, req.OnStream)
+				return p.readStream(resp.Body, req.OnStream, body.toolNames)
 			}
-			return p.readJSON(resp.Body)
+			return p.readJSON(resp.Body, body.toolNames)
 		}
 		last = requestErr
 		var pe *ProviderError
@@ -139,7 +143,21 @@ func (p *ResponsesProvider) Generate(ctx context.Context, req GenerateRequest) (
 }
 
 func makeResponsesRequest(req GenerateRequest) (responsesRequest, error) {
-	body := responsesRequest{Model: req.Model, Stream: req.Stream, Store: false, Include: []string{"reasoning.encrypted_content"}}
+	body := responsesRequest{
+		Model: req.Model, Stream: req.Stream, Store: false,
+		Include:   []string{"reasoning.encrypted_content"},
+		toolNames: make(map[string]string),
+	}
+	if len(req.Tools) > 0 {
+		body.ToolChoice = "auto"
+		body.ParallelTools = true
+	}
+	externalNames := make(map[string]string, len(req.Tools))
+	for index, tool := range req.Tools {
+		external := fmt.Sprintf("tool_%d", index)
+		externalNames[tool.Name] = external
+		body.toolNames[external] = tool.Name
+	}
 	for _, message := range req.Messages {
 		if message.Role == RoleSystem {
 			if body.Instructions != "" {
@@ -165,12 +183,16 @@ func makeResponsesRequest(req GenerateRequest) (responsesRequest, error) {
 			body.Input = append(body.Input, item)
 		}
 		for _, call := range message.ToolCalls {
-			toolItem, _ := json.Marshal(map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Name, "arguments": string(call.Arguments)})
+			name := call.Name
+			if external := externalNames[name]; external != "" {
+				name = external
+			}
+			toolItem, _ := json.Marshal(map[string]any{"type": "function_call", "call_id": call.ID, "name": name, "arguments": string(call.Arguments)})
 			body.Input = append(body.Input, toolItem)
 		}
 	}
-	for _, tool := range req.Tools {
-		body.Tools = append(body.Tools, responsesTool{Type: "function", Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+	for index, tool := range req.Tools {
+		body.Tools = append(body.Tools, responsesTool{Type: "function", Name: fmt.Sprintf("tool_%d", index), Description: tool.Description, Parameters: tool.Parameters})
 	}
 	return body, nil
 }
@@ -222,16 +244,16 @@ func (p *ResponsesProvider) do(ctx context.Context, payload []byte) (*http.Respo
 	return nil, &ProviderError{Kind: kind, Status: resp.StatusCode, Retryable: retry, Message: message}
 }
 
-func (p *ResponsesProvider) readJSON(body io.ReadCloser) (GenerateResponse, error) {
+func (p *ResponsesProvider) readJSON(body io.ReadCloser, toolNames map[string]string) (GenerateResponse, error) {
 	defer body.Close()
 	var response responseObject
 	if err := json.NewDecoder(io.LimitReader(body, 16<<20)).Decode(&response); err != nil {
 		return GenerateResponse{}, &ProviderError{Kind: ErrorProtocol, Message: "decode response", Cause: err}
 	}
-	return convertResponse(response)
+	return convertResponse(response, toolNames)
 }
 
-func convertResponse(response responseObject) (GenerateResponse, error) {
+func convertResponse(response responseObject, toolNames map[string]string) (GenerateResponse, error) {
 	if response.Error != nil {
 		return GenerateResponse{}, &ProviderError{Kind: ErrorInvalidRequest, Message: response.Error.Message}
 	}
@@ -253,10 +275,14 @@ func convertResponse(response responseObject) (GenerateResponse, error) {
 				return GenerateResponse{}, &ProviderError{Kind: ErrorProtocol, Message: "invalid Responses reasoning item", Cause: err}
 			}
 			if reasoning.EncryptedContent != "" {
-				safeItem, _ := json.Marshal(map[string]any{"type": "reasoning", "id": reasoning.ID, "status": reasoning.Status, "encrypted_content": reasoning.EncryptedContent})
+				safe := map[string]any{"type": "reasoning", "status": reasoning.Status, "encrypted_content": reasoning.EncryptedContent, "summary": []any{}}
+				safeItem, _ := json.Marshal(safe)
 				continuation = append(continuation, safeItem)
 			}
 		case "message":
+			if item.Phase == "commentary" || item.Phase == "analysis" {
+				continue
+			}
 			for _, content := range item.Content {
 				if content.Type == "output_text" {
 					message.Content += content.Text
@@ -270,7 +296,11 @@ func convertResponse(response responseObject) (GenerateResponse, error) {
 			if !json.Valid(arguments) {
 				return GenerateResponse{}, &ProviderError{Kind: ErrorProtocol, Message: "invalid tool call arguments"}
 			}
-			message.ToolCalls = append(message.ToolCalls, ToolCall{ID: item.CallID, Name: item.Name, Arguments: arguments})
+			name := item.Name
+			if internal := toolNames[name]; internal != "" {
+				name = internal
+			}
+			message.ToolCalls = append(message.ToolCalls, ToolCall{ID: item.CallID, Name: name, Arguments: arguments})
 		}
 	}
 	if len(message.ToolCalls) > 0 && len(continuation) > 0 {
@@ -287,11 +317,13 @@ func convertResponse(response responseObject) (GenerateResponse, error) {
 	return GenerateResponse{Message: message, FinishReason: finish, Usage: Usage{PromptTokens: response.Usage.InputTokens, CompletionTokens: response.Usage.OutputTokens, TotalTokens: response.Usage.TotalTokens}}, nil
 }
 
-func (p *ResponsesProvider) readStream(body io.ReadCloser, on func(StreamEvent)) (GenerateResponse, error) {
+func (p *ResponsesProvider) readStream(body io.ReadCloser, on func(StreamEvent), toolNames map[string]string) (GenerateResponse, error) {
 	defer body.Close()
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64<<10), 8<<20)
 	var final *responseObject
+	var outputItems []json.RawMessage
+	var streamedText strings.Builder
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -310,6 +342,11 @@ func (p *ResponsesProvider) readStream(body io.ReadCloser, on func(StreamEvent))
 			if event.Delta != "" && on != nil {
 				on(StreamEvent{Delta: event.Delta})
 			}
+			streamedText.WriteString(event.Delta)
+		case "response.output_item.done":
+			if len(event.Item) > 0 && string(event.Item) != "null" {
+				outputItems = append(outputItems, append(json.RawMessage(nil), event.Item...))
+			}
 		case "response.completed":
 			final = event.Response
 		case "error":
@@ -326,7 +363,16 @@ func (p *ResponsesProvider) readStream(body io.ReadCloser, on func(StreamEvent))
 	if final == nil {
 		return GenerateResponse{}, &ProviderError{Kind: ErrorProtocol, Message: "stream ended before response.completed"}
 	}
-	response, err := convertResponse(*final)
+	if len(outputItems) > 0 {
+		final.Output = outputItems
+	} else if len(final.Output) == 0 && streamedText.Len() > 0 {
+		item, _ := json.Marshal(map[string]any{
+			"type": "message", "role": "assistant", "status": "completed",
+			"content": []map[string]string{{"type": "output_text", "text": streamedText.String()}},
+		})
+		final.Output = []json.RawMessage{item}
+	}
+	response, err := convertResponse(*final, toolNames)
 	if err == nil && on != nil {
 		on(StreamEvent{Done: true})
 	}

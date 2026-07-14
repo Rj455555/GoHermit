@@ -58,6 +58,12 @@ func TestResponsesGenerateAndPreserveOutputItems(t *testing.T) {
 	if !strings.Contains(joined, `"type":"reasoning"`) || !strings.Contains(joined, `"type":"function_call_output"`) {
 		t.Fatalf("input=%s", joined)
 	}
+	if strings.Contains(joined, `"id":"rs_1"`) {
+		t.Fatalf("store=false replay must not include response item ids: %s", joined)
+	}
+	if !strings.Contains(joined, `"summary"`) {
+		t.Fatalf("reasoning replay must retain summary: %s", joined)
+	}
 }
 
 func TestResponsesStreaming(t *testing.T) {
@@ -73,6 +79,48 @@ func TestResponsesStreaming(t *testing.T) {
 	}
 	if streamed.String() != "hello" || response.Message.Content != "hello" {
 		t.Fatalf("stream=%q response=%+v", streamed.String(), response)
+	}
+}
+
+func TestResponsesStreamingBuildsToolCallFromOutputItemDone(t *testing.T) {
+	provider := responsesProviderFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"tool_0\",\"arguments\":\"{}\"}}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n")
+	})
+	response, err := provider.Generate(t.Context(), GenerateRequest{
+		Model: "gpt", Stream: true,
+		Tools: []ToolDefinition{{Name: "filesystem.read", Parameters: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Message.ToolCalls) != 1 || response.Message.ToolCalls[0].Name != "filesystem.read" {
+		t.Fatalf("tool calls=%+v", response.Message.ToolCalls)
+	}
+}
+
+func TestResponsesMapsToolNamesBidirectionally(t *testing.T) {
+	provider := responsesProviderFor(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Tools []responsesTool `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Tools) != 1 || body.Tools[0].Name != "tool_0" {
+			t.Fatalf("tools=%+v", body.Tools)
+		}
+		fmt.Fprint(w, `{"status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"tool_0","arguments":"{}"}]}`)
+	})
+	response, err := provider.Generate(t.Context(), GenerateRequest{
+		Model: "gpt", Tools: []ToolDefinition{{Name: "filesystem.read", Parameters: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Message.ToolCalls) != 1 || response.Message.ToolCalls[0].Name != "filesystem.read" {
+		t.Fatalf("tool calls=%+v", response.Message.ToolCalls)
 	}
 }
 
