@@ -12,7 +12,7 @@ import (
 func TestLoginManagerCompletesDeviceFlow(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /device/usercode", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"device_auth_id": "device", "user_code": "TEST-CODE", "interval": 2})
+		_ = json.NewEncoder(w).Encode(map[string]any{"device_auth_id": "device", "user_code": "TEST-CODE", "interval": "2"})
 	})
 	mux.HandleFunc("POST /device/token", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"authorization_code": "code", "code_verifier": "verifier"})

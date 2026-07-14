@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,9 +53,9 @@ func NewLoginManager(store *Store) *LoginManager {
 // Start requests a device code and begins polling without exposing OAuth tokens to the browser.
 func (m *LoginManager) Start(ctx context.Context) (LoginSession, error) {
 	var issued struct {
-		DeviceAuthID string `json:"device_auth_id"`
-		UserCode     string `json:"user_code"`
-		Interval     int    `json:"interval"`
+		DeviceAuthID string      `json:"device_auth_id"`
+		UserCode     string      `json:"user_code"`
+		Interval     flexibleInt `json:"interval"`
 	}
 	if err := m.postJSON(ctx, m.deviceURL+"/usercode", map[string]string{"client_id": codexClientID}, &issued); err != nil {
 		return LoginSession{}, fmt.Errorf("start Codex login: %w", err)
@@ -79,6 +80,27 @@ func (m *LoginManager) Start(ctx context.Context) (LoginSession, error) {
 	}
 	go m.poll(session.ID, issued.DeviceAuthID, issued.UserCode, interval)
 	return session, nil
+}
+
+// flexibleInt accepts OAuth servers that encode interval as either 5 or "5".
+type flexibleInt int
+
+func (value *flexibleInt) UnmarshalJSON(data []byte) error {
+	var number int
+	if err := json.Unmarshal(data, &number); err == nil {
+		*value = flexibleInt(number)
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return errors.New("device login interval must be a number or numeric string")
+	}
+	number, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil {
+		return errors.New("device login interval must be a number or numeric string")
+	}
+	*value = flexibleInt(number)
+	return nil
 }
 
 func (m *LoginManager) Status(id string) (LoginSession, bool) {
