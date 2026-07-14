@@ -6,7 +6,7 @@ GoHermit is not a hosted service, a multi-agent orchestrator, a workflow engine,
 
 ## Status
 
-The main branch is now `0.2.0-dev`. It adds OpenAI Codex Plan and direct API paths, DeepSeek and Qwen providers, selectable single-agent profiles, plus a local-only Web debug surface and Docker packaging. It remains single-user and foreground; there is no daemon, telemetry, automatic Git push, or cloud deployment.
+The main branch is now `0.2.0-dev`. It adds OpenAI Codex Plan and direct API paths, DeepSeek and Qwen providers, selectable single-agent profiles, durable multi-turn Sessions, verified project memory, plus a local-only Web console and Docker packaging. It remains single-user and foreground; there is no daemon, telemetry, automatic Git push, or cloud deployment.
 
 ## Build and install
 
@@ -30,7 +30,7 @@ hermit config validate
 hermit run --workspace /path/to/project "inspect the project and fix failing tests"
 ```
 
-Sessions are written to `.gohermit/sessions/<session-id>/` in the workspace.
+Sessions are written to `.gohermit/sessions/<session-id>/` in the workspace. The Web console keeps one Session across follow-up messages; every message creates a bounded, verified Run.
 
 ## Commands
 
@@ -58,7 +58,7 @@ docker compose up --build -d
 open http://127.0.0.1:8787
 ```
 
-The Compose port is published only on loopback. The page selects company, access path, model, and Agent for each run. API keys remain server-side. Codex Plan imports an existing Codex CLI login from the host's `${HOME}/.codex` read-only mount. See [local Web and Docker guide](docs/web-debug.md).
+The Compose port is published only on loopback. The page selects company, access path, model, and Agent when creating a Session, then supports continued conversation, event replay, cancellation, and interrupted-run recovery. API keys remain server-side. Codex Plan imports an existing Codex CLI login from the host's `${HOME}/.codex` read-only mount. See [local Web and Docker guide](docs/web-debug.md).
 
 Configured plugins are opt-in:
 
@@ -82,6 +82,7 @@ External plugins are separate processes and form an explicit trust boundary. Onl
 
 - [AI documentation and low-token reading index](docs/ai/README.md)
 - [AI context and code map](docs/ai/context.md)
+- [Agent Harness quick reference](docs/ai/harness.md)
 - [Next development plan](docs/ai/next-development-plan.md)
 - [Architecture](docs/architecture.md)
 - [Project structure](docs/project-structure.md)

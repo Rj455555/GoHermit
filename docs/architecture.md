@@ -18,14 +18,14 @@ Dependencies point inward: `cmd` depends on `internal/app`; app assembles domain
 
 ## Agent loop
 
-1. Create or load a versioned session.
-2. Build layered context from system rules, `AGENTS.md`, project memory, goal, summary, and recent bounded messages.
+1. Create or load a versioned Session and its queued/interrupted Run.
+2. Rebuild layered context before every model call from system rules, `AGENTS.md`, project memory, Session summary, active Run state, goal, and recent bounded messages.
 3. Start a turn only while total deadline and `max_turns` allow it.
 4. Call the provider with a per-request deadline and finite retry policy.
 5. Emit stream deltas without persisting token chunks.
 6. If the assistant returns tool calls, execute each through the registry and append structured results, including errors, to model context.
 7. Checkpoint after tool completion and every configured number of turns.
-8. A response with no tool calls is the explicit success condition. Context cancellation, total timeout, provider failure, checkpoint failure, or maximum turns are explicit non-success conditions.
+8. A response with no tool calls enters verification. Read-only work may complete; mutations require `git diff --check`, and non-document changes require a successful test after the last mutation. Verification may return work to the model up to three times.
 
 ## Model call flow
 
@@ -33,7 +33,7 @@ Provider-neutral messages and tool definitions are converted at the HTTP boundar
 
 ## Web boundary
 
-`hermit-web` embeds static assets and exposes health, the non-secret provider catalog/auth status, and one same-origin SSE task endpoint. The browser may select only registered provider/model/Agent IDs; workspace, endpoints, and credentials remain server-side. It permits one active run and is designed only for loopback or SSH-tunneled access. The review Agent receives a read-only registry rather than relying on prompt compliance.
+`hermit-web` embeds a Dashboard, persistent Agent workspace, and Provider Settings. Same-origin Session APIs create fixed provider/model/Agent selections, append user-message Runs, and replay persisted events by sequence before continuing live SSE. Workspace, endpoints, and credentials remain server-side. One workspace permits one active Run; history and settings remain readable. The surface is only for loopback or SSH-tunneled access.
 
 ## Tool call flow
 
@@ -41,7 +41,7 @@ The registry rejects duplicate names. The executor resolves the tool, applies a 
 
 ## Session flow
 
-Session state is kept in memory during a turn. Events are buffered and appended in batches. A checkpoint serializes a language-neutral schema, writes a temporary file in the destination directory, flushes it, and atomically renames it. Resume checks schema version, workspace identity, and saved hashes of files changed by the agent. Complete conversation history is not required for recovery.
+A Session is a durable conversation; each user message creates a Run with its own status and verification state. Visible user/assistant messages and sequenced events are append-only JSONL, while bounded recovery state is atomically replaced in `session.json`. Schema v1 migrates explicitly to v2. Workspace identity mismatch fails closed; external file/Git changes trigger reconciliation instead of discarding the Session. Started-but-unfinished tools become uncertain and are never blindly replayed.
 
 ## Cancellation and errors
 

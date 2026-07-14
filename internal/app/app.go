@@ -150,9 +150,12 @@ func (c CLI) resume(ctx context.Context, args []string) int {
 		return c.reportError(err, ExitConfig)
 	}
 	defer cleanup()
-	s, err := store.Load(ctx, fs.Arg(0))
+	s, err := store.Recover(ctx, fs.Arg(0))
 	if err != nil {
 		return c.reportError(err, ExitRuntime)
+	}
+	if run := s.ActiveRun(); run == nil || run.Status != session.RunInterrupted {
+		return c.reportError(errors.New("session has no interrupted run to resume"), ExitRuntime)
 	}
 	runner.Sink = c.renderer(f.output)
 	if err = runner.Run(ctx, s); err != nil {
@@ -197,7 +200,13 @@ func (c CLI) status(ctx context.Context, args []string, summaryOnly bool) int {
 	if f.output == "json" {
 		return c.writeJSON(s)
 	}
-	fmt.Fprintf(c.Stdout, "Session: %s\nStatus: %s\nTurns: %d\nUpdated: %s\nGoal: %s\n", s.ID, s.Status, s.Turns, s.UpdatedAt.Format(time.RFC3339), s.Goal)
+	runStatus := "idle"
+	if run := s.ActiveRun(); run != nil {
+		runStatus = string(run.Status)
+	} else if len(s.Runs) > 0 {
+		runStatus = string(s.Runs[len(s.Runs)-1].Status)
+	}
+	fmt.Fprintf(c.Stdout, "Session: %s\nStatus: %s\nRun: %s\nTurns: %d\nUpdated: %s\nGoal: %s\n", s.ID, s.Status, runStatus, s.Turns, s.UpdatedAt.Format(time.RFC3339), s.Goal)
 	if s.LastError != "" {
 		fmt.Fprintln(c.Stdout, "Last error:", s.LastError)
 	}

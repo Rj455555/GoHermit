@@ -4,7 +4,7 @@ Read this file only when changing the Web console, provider availability, or aut
 
 ## User flow
 
-`Dashboard -> Provider Settings -> Run Agent`
+`Dashboard -> Provider Settings -> Agent Session`
 
 - Settings displays the full company/access catalog.
 - Run receives `available_companies`, which contains only supported access methods whose credentials are currently usable.

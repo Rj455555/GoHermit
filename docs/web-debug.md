@@ -1,6 +1,8 @@
 # Local Web and Docker debugging
 
-`hermit-web` is a local single-user console with Dashboard, Run Agent, and Provider Settings pages. Settings accepts provider credentials over the loopback-only origin; secrets are stored server-side and never returned to the browser. Run selects a company group, provider/access slug, model, and Agent profile, then streams structured Agent Core events over one POST response.
+`hermit-web` is a local single-user console with Dashboard, persistent Agent, and Provider Settings pages. Settings accepts provider credentials over the loopback-only origin; secrets are stored server-side and never returned to the browser. A Session fixes company, access, model, and Agent selection; each user message creates a Run. The browser reloads visible history and resumes structured SSE events with `after=<sequence>`.
+
+Session endpoints and recovery behavior are summarized in `docs/ai/harness.md`. The legacy one-shot `POST /api/run` remains for compatibility, but the Web UI uses `/api/sessions`.
 
 ## Start on the same machine
 
@@ -9,7 +11,7 @@ docker compose up --build -d
 open http://127.0.0.1:8787
 ```
 
-Compose defaults to `configs/codex.toml` and `./sandbox`. The config supplies startup defaults; the Web picker applies a validated per-run selection. Select another workspace without editing committed files:
+Compose defaults to `configs/codex.toml` and `./sandbox`. The config supplies startup defaults; the Web picker applies a validated per-Session selection. Select another workspace without editing committed files:
 
 ```bash
 GOHERMIT_CONFIG=./configs/deepseek.toml \

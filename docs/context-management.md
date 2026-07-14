@@ -2,7 +2,7 @@
 
 ## Layers
 
-Context is ordered as: system policy, workspace `AGENTS.md`, `.gohermit/memory/project.md`, recovered structured summary, current goal, and recent messages/tool results. The manager removes exact duplicate messages before budgeting.
+Context is rebuilt before every model call and ordered as: system policy, workspace `AGENTS.md`, `.gohermit/memory/project.md`, recovered Session summary, active Run state, current goal, and recent messages/tool results. The manager removes exact duplicates before budgeting.
 
 ## Budget
 
@@ -14,8 +14,10 @@ Tool output is first bounded at execution. Context construction then deduplicate
 
 ## Compression
 
-The structured summary contains only the current goal, completed work, modified files, commands, test results, confirmed decisions, current problems, remaining work, and recovery information. It does not contain chain-of-thought or secret material. v0.1 creates this summary deterministically from session facts; a future model-assisted compressor must preserve the same schema and safety rules.
+At the compression threshold, the current provider receives a bounded, no-tools request for JSON containing the fixed structured-summary headings. Invalid output or provider failure falls back to a deterministic summary. Neither path contains chain-of-thought, secrets, system/provider request bodies, or raw unbounded output.
+
+Verified Runs merge bounded facts into versioned `project.json` and generate the compact `project.md` view. Each fact records its source Run. Memory updates reject redacted secret-bearing facts and never copy the full conversation.
 
 ## Recovery
 
-Resume loads the summary and recent bounded messages, validates checkpoint/workspace/file state, and rebuilds current project rules and memory from disk. Full historical dialogue is intentionally unnecessary.
+Resume loads the summary and recent bounded messages, validates workspace identity, reconciles external Git/file changes, and rebuilds current rules and memory from disk. The visible transcript is available for UI history, but only the bounded recent window and summary enter model context.

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,13 @@ type Server struct {
 	Workspace     string
 	ConfigPath    string
 	active        atomic.Bool
+	store         *session.Store
+	runMu         sync.Mutex
+	activeSession string
+	activeRun     string
+	cancelRun     context.CancelFunc
+	subscribersMu sync.Mutex
+	subscribers   map[string]map[chan event.Event]struct{}
 	static        http.Handler
 	credentials   *modelauth.Store
 	logins        *modelauth.LoginManager
@@ -47,11 +55,26 @@ func New(workspace, configPath string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	conf, err := app.LoadConfig(workspace, configPath)
+	if err != nil {
+		return nil, err
+	}
+	store, err := session.NewStore(workspace, conf.Storage.Directory)
+	if err != nil {
+		return nil, err
+	}
+	if ids, listErr := store.List(); listErr == nil {
+		for _, id := range ids {
+			_, _ = store.Recover(context.Background(), id)
+		}
+	}
 	return &Server{
 		Workspace: workspace, ConfigPath: configPath,
 		static:      http.FileServer(http.FS(root)),
+		store:       store,
 		credentials: credentials,
 		logins:      modelauth.NewLoginManager(credentials),
+		subscribers: map[string]map[chan event.Event]struct{}{},
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
 			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models}, nil)
 		},
@@ -63,6 +86,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("POST /api/run", s.run)
+	mux.HandleFunc("POST /api/sessions", s.createSession)
+	mux.HandleFunc("GET /api/sessions", s.listSessions)
+	mux.HandleFunc("GET /api/sessions/{id}", s.getSession)
+	mux.HandleFunc("POST /api/sessions/{id}/runs", s.startSessionRun)
+	mux.HandleFunc("GET /api/sessions/{id}/events", s.sessionEvents)
+	mux.HandleFunc("POST /api/sessions/{id}/runs/{run}/cancel", s.cancelSessionRun)
+	mux.HandleFunc("POST /api/sessions/{id}/runs/{run}/resume", s.resumeSessionRun)
 	mux.HandleFunc("PUT /api/settings/providers/{provider}/api-key", s.saveAPIKey)
 	mux.HandleFunc("DELETE /api/settings/providers/{provider}/credentials", s.deleteCredentials)
 	mux.HandleFunc("POST /api/settings/providers/openai-codex/login", s.startCodexLogin)
@@ -278,6 +308,364 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	runtime.Runner.Sink = send
 	if err := runtime.Runner.Run(r.Context(), sess); err != nil && !errors.Is(err, context.Canceled) {
 		send(event.Event{Type: event.TaskFailed, Time: time.Now().UTC(), SessionID: sess.ID, Error: err.Error()})
+	}
+}
+
+func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	var request struct {
+		Title   string `json:"title"`
+		Company string `json:"company"`
+		Access  string `json:"access"`
+		Model   string `json:"model"`
+		Agent   string `json:"agent"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request: " + err.Error()})
+		return
+	}
+	selection := config.RuntimeSelection{Company: request.Company, Access: request.Access, Model: request.Model, Agent: request.Agent}
+	liveModels, err := s.validateSelection(r.Context(), selection)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	apiKey, err := s.resolveCredential(r.Context(), selection)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	runtime, err := s.build(r.Context(), s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	digest := session.ConfigDigest(runtime.Config)
+	runtime.Close()
+	title := strings.TrimSpace(request.Title)
+	if title == "" {
+		title = "New conversation"
+	}
+	sess, err := session.NewConversation(title, runtime.Workspace, digest, session.Selection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	sess.GitState = session.GitState(r.Context(), runtime.Workspace)
+	if err := s.store.Save(r.Context(), sess); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, sess)
+}
+
+func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := s.store.ListSummaries(r.Context(), limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": items})
+}
+
+func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
+	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	messages, err := s.store.Messages(sess.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": sess, "messages": messages})
+}
+
+func (s *Server) startSessionRun(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	var request struct {
+		Message string `json:"message"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request: " + err.Error()})
+		return
+	}
+	request.Message = strings.TrimSpace(request.Message)
+	if request.Message == "" || len(request.Message) > 16<<10 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "message must contain 1 to 16384 bytes"})
+		return
+	}
+	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	runID, err := s.launchSessionRun(sess, request.Message)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errRunActive) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": sess.ID, "run_id": runID})
+}
+
+func (s *Server) resumeSessionRun(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	sess, err := s.store.Recover(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	run := sess.ActiveRun()
+	if run == nil || run.ID != r.PathValue("run") || run.Status != session.RunInterrupted {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not interrupted or resumable"})
+		return
+	}
+	runID, err := s.launchSessionRun(sess, "")
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errRunActive) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": sess.ID, "run_id": runID})
+}
+
+var errRunActive = errors.New("another run is already active in this workspace")
+
+func (s *Server) launchSessionRun(sess *session.Session, message string) (string, error) {
+	selection := config.RuntimeSelection{Company: sess.Selection.Company, Access: sess.Selection.Access, Model: sess.Selection.Model, Agent: sess.Selection.Agent}
+	liveModels, err := s.validateSelection(context.Background(), selection)
+	if err != nil {
+		return "", err
+	}
+	apiKey, err := s.resolveCredential(context.Background(), selection)
+	if err != nil {
+		return "", err
+	}
+	s.runMu.Lock()
+	if !s.active.CompareAndSwap(false, true) {
+		s.runMu.Unlock()
+		return "", errRunActive
+	}
+	if message != "" {
+		run, runErr := sess.NewRun(message)
+		if runErr != nil {
+			s.active.Store(false)
+			s.runMu.Unlock()
+			return "", runErr
+		}
+		if sess.Title == "New conversation" {
+			sess.Title = compactTitle(message)
+		}
+		if runErr = s.store.AppendMessage(sess.ID, session.MessageRecord{RunID: run.ID, Role: "user", Content: message}); runErr != nil {
+			s.active.Store(false)
+			s.runMu.Unlock()
+			return "", runErr
+		}
+	}
+	run := sess.ActiveRun()
+	if run == nil {
+		s.active.Store(false)
+		s.runMu.Unlock()
+		return "", errors.New("session has no active run")
+	}
+	if err = s.store.Save(context.Background(), sess); err != nil {
+		s.active.Store(false)
+		s.runMu.Unlock()
+		return "", err
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.activeSession, s.activeRun, s.cancelRun = sess.ID, run.ID, cancel
+	runID := run.ID
+	s.runMu.Unlock()
+	go func() {
+		defer func() {
+			s.runMu.Lock()
+			s.activeSession, s.activeRun, s.cancelRun = "", "", nil
+			s.active.Store(false)
+			s.runMu.Unlock()
+		}()
+		runtime, buildErr := s.build(runCtx, s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
+		if buildErr != nil {
+			s.failLaunchedRun(sess, runID, buildErr)
+			return
+		}
+		defer runtime.Close()
+		runtime.Runner.Sink = s.publish
+		if runErr := runtime.Runner.Run(runCtx, sess); runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, context.DeadlineExceeded) {
+			// Runner persists and emits its own terminal error.
+			return
+		}
+	}()
+	return runID, nil
+}
+
+func compactTitle(message string) string {
+	message = strings.TrimSpace(strings.ReplaceAll(message, "\n", " "))
+	if len(message) > 80 {
+		return message[:80] + "…"
+	}
+	return message
+}
+
+func (s *Server) validateSelection(ctx context.Context, selection config.RuntimeSelection) ([]config.ModelOption, error) {
+	var liveModels []config.ModelOption
+	if selection.Access == "openai-codex" {
+		models, err := s.codexCatalog(ctx)
+		if err != nil {
+			return nil, errors.New("无法读取 Codex 账户的可用模型，请重新登录后再试")
+		}
+		liveModels = models
+	}
+	if _, _, err := config.ResolveSelectionWithModels(selection, liveModels); err != nil {
+		return nil, err
+	}
+	return liveModels, nil
+}
+
+func (s *Server) failLaunchedRun(sess *session.Session, runID string, cause error) {
+	if run := sess.ActiveRun(); run != nil && run.ID == runID {
+		now := time.Now().UTC()
+		run.Status = session.RunFailed
+		run.Error = cause.Error()
+		run.CompletedAt = &now
+		run.UpdatedAt = now
+		sess.ActiveRunID = ""
+		sess.LastError = cause.Error()
+		e := event.New(event.TaskFailed, sess.ID)
+		e.RunID = runID
+		e.Error = cause.Error()
+		e = s.store.BufferEvent(sess.ID, e)
+		_ = s.store.Save(context.Background(), sess)
+		s.publish(e)
+	}
+}
+
+func (s *Server) cancelSessionRun(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	s.runMu.Lock()
+	if s.activeSession != r.PathValue("id") || s.activeRun != r.PathValue("run") || s.cancelRun == nil {
+		s.runMu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not active"})
+		return
+	}
+	cancel := s.cancelRun
+	s.runMu.Unlock()
+	cancel()
+	writeJSON(w, http.StatusAccepted, map[string]any{"cancelled": true})
+}
+
+func (s *Server) sessionEvents(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.store.Load(r.Context(), r.PathValue("id")); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "streaming is unavailable"})
+		return
+	}
+	after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+	ch := s.subscribe(r.PathValue("id"))
+	defer s.unsubscribe(r.PathValue("id"), ch)
+	history, err := s.store.Events(r.PathValue("id"), after)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	last := after
+	for _, e := range history {
+		sendSSE(w, flusher, e)
+		if e.Sequence > last {
+			last = e.Sequence
+		}
+	}
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case e := <-ch:
+			if e.Sequence != 0 && e.Sequence <= last {
+				continue
+			}
+			sendSSE(w, flusher, e)
+			if e.Sequence > last {
+				last = e.Sequence
+			}
+		case <-ticker.C:
+			_, _ = fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+func sendSSE(w http.ResponseWriter, flusher http.Flusher, e event.Event) {
+	payload, _ := json.Marshal(e)
+	if e.Sequence > 0 {
+		_, _ = fmt.Fprintf(w, "id: %d\n", e.Sequence)
+	}
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Type, payload)
+	flusher.Flush()
+}
+
+func (s *Server) subscribe(sessionID string) chan event.Event {
+	ch := make(chan event.Event, 256)
+	s.subscribersMu.Lock()
+	if s.subscribers[sessionID] == nil {
+		s.subscribers[sessionID] = map[chan event.Event]struct{}{}
+	}
+	s.subscribers[sessionID][ch] = struct{}{}
+	s.subscribersMu.Unlock()
+	return ch
+}
+
+func (s *Server) unsubscribe(sessionID string, ch chan event.Event) {
+	s.subscribersMu.Lock()
+	delete(s.subscribers[sessionID], ch)
+	if len(s.subscribers[sessionID]) == 0 {
+		delete(s.subscribers, sessionID)
+	}
+	s.subscribersMu.Unlock()
+}
+
+func (s *Server) publish(e event.Event) {
+	s.subscribersMu.Lock()
+	defer s.subscribersMu.Unlock()
+	for ch := range s.subscribers[e.SessionID] {
+		select {
+		case ch <- e:
+		default:
+		}
 	}
 }
 

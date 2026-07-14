@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -24,6 +25,7 @@ type Config struct {
 	Stream                     bool
 	CheckpointEveryTurns       int
 	CheckpointOnToolCompletion bool
+	MaxVerificationAttempts    int
 }
 type Runner struct {
 	Provider model.Provider
@@ -43,32 +45,74 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 	}
 	runCtx, cancel := context.WithTimeout(ctx, r.Config.Timeout)
 	defer cancel()
-	s.Status = session.Running
-	r.emit(s, event.New(event.TaskStarted, s.ID), true)
-	messages := s.RecentMessages
-	if len(messages) == 0 {
-		var compressed bool
-		messages, compressed = r.Context.Build(s.Workspace, s.Goal, s.Summary, nil)
-		if compressed {
-			s.Summary = contextmgr.StructuredSummary(s)
+	r.Store.SeedEventSequence(s.ID, s.NextEventSequence)
+	active := s.ActiveRun()
+	if active == nil {
+		var err error
+		active, err = s.NewRun(s.Goal)
+		if err != nil {
+			return err
+		}
+		if err = r.Store.AppendMessage(s.ID, session.MessageRecord{RunID: active.ID, Role: model.RoleUser, Content: active.Message}); err != nil {
+			return err
 		}
 	}
-	for turn := s.Turns + 1; turn <= r.Config.MaxTurns; turn++ {
+	if active.Status != session.RunQueued && active.Status != session.RunInterrupted {
+		return fmt.Errorf("run %s cannot start from status %s", active.ID, active.Status)
+	}
+	active.Status = session.RunRunning
+	active.UpdatedAt = time.Now().UTC()
+	s.Status = session.Open
+	started := event.New(event.TaskStarted, s.ID)
+	started.RunID = active.ID
+	r.emit(s, started, true)
+	if s.WorkspaceChanged {
+		e := event.New(event.WorkspaceChanged, s.ID)
+		e.RunID = active.ID
+		e.Message = "workspace changed since the previous checkpoint; current state must be inspected and verified"
+		r.emit(s, e, true)
+		s.WorkspaceChanged = false
+	}
+	if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
+		return err
+	}
+	messages := append([]model.Message(nil), s.RecentMessages...)
+	if len(messages) == 0 || messages[len(messages)-1].Role != model.RoleUser || messages[len(messages)-1].Content != active.Message {
+		messages = append(messages, model.Message{Role: model.RoleUser, Content: active.Message})
+	}
+	maxVerification := r.Config.MaxVerificationAttempts
+	if maxVerification <= 0 {
+		maxVerification = 3
+	}
+	for runTurn := 1; runTurn <= r.Config.MaxTurns; runTurn++ {
 		if err := runCtx.Err(); err != nil {
 			return r.stop(runCtx, s, err)
 		}
-		s.Turns = turn
+		s.Turns++
+		turn := s.Turns
+		active.EndTurn = turn
+		active.UpdatedAt = time.Now().UTC()
 		e := event.New(event.TurnStarted, s.ID)
+		e.RunID = active.ID
 		e.Turn = turn
 		r.emit(s, e, true)
+		runState := r.runState(s, active)
+		assembled, compressed := r.Context.BuildRun(s.Workspace, active.Message, s.Summary, messages, runState)
+		if compressed {
+			r.compress(runCtx, s, active, messages)
+			messages = boundedMessages(messages)
+			assembled, _ = r.Context.BuildRun(s.Workspace, active.Message, s.Summary, messages, runState)
+		}
 		e = event.New(event.ModelStarted, s.ID)
+		e.RunID = active.ID
 		e.Turn = turn
 		r.emit(s, e, true)
-		response, err := r.Provider.Generate(runCtx, model.GenerateRequest{Model: r.Config.Model, Messages: messages, Tools: r.Executor.Registry.ModelDefinitions(), Stream: r.Config.Stream, OnStream: func(delta model.StreamEvent) {
+		response, err := r.Provider.Generate(runCtx, model.GenerateRequest{Model: r.Config.Model, Messages: assembled, Tools: r.Executor.Registry.ModelDefinitions(), Stream: r.Config.Stream, OnStream: func(delta model.StreamEvent) {
 			if delta.Delta == "" {
 				return
 			}
 			ev := event.New(event.ModelDelta, s.ID)
+			ev.RunID = active.ID
 			ev.Turn = turn
 			ev.Message = delta.Delta
 			r.emit(s, ev, false)
@@ -81,38 +125,46 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			return r.fail(runCtx, s, "model request failed", err)
 		}
 		e = event.New(event.ModelCompleted, s.ID)
+		e.RunID = active.ID
 		e.Turn = turn
 		e.Message = response.FinishReason
 		r.emit(s, e, true)
 		messages = append(messages, response.Message)
 		if len(response.Message.ToolCalls) == 0 {
-			s.Status = session.Completed
-			s.CompletedSteps = append(s.CompletedSteps, "Model completed the task")
-			s.PendingSteps = nil
-			s.RecentMessages = boundedMessages(messages)
-			s.Summary = contextmgr.StructuredSummary(s)
-			s.GitState = session.GitState(runCtx, s.Workspace)
-			done := event.New(event.TaskCompleted, s.ID)
-			done.Turn = turn
-			done.Message = response.Message.Content
-			r.Store.BufferEvent(s.ID, done)
-			if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
-				return err
+			active.Status = session.RunVerifying
+			ve := event.New(event.RunVerifying, s.ID)
+			ve.RunID = active.ID
+			ve.Turn = turn
+			r.emit(s, ve, true)
+			passed, reason := r.verifyCandidate(runCtx, s, active)
+			if !passed {
+				active.VerificationAttempts++
+				if active.VerificationAttempts >= maxVerification {
+					return r.fail(runCtx, s, "verification failed", errors.New(reason))
+				}
+				active.Status = session.RunRunning
+				messages = append(messages, model.Message{Role: model.RoleUser, Content: "Completion verification did not pass: " + reason + "\nInspect the current workspace, fix the problem, run the required verification, and only then provide the final answer."})
+				s.PendingSteps = []string{reason}
+				continue
 			}
-			if r.Sink != nil {
-				r.Sink(done)
-			}
-			return nil
+			return r.complete(runCtx, s, active, response.Message.Content, messages)
 		}
 		for _, call := range response.Message.ToolCalls {
 			e = event.New(event.ToolStarted, s.ID)
+			e.RunID = active.ID
 			e.Turn = turn
 			e.Tool = call.Name
 			e.Data = call.Arguments
 			r.emit(s, e, true)
+			startedAt := time.Now().UTC()
+			s.ToolCalls = appendBoundedTool(s.ToolCalls, session.ToolRecord{Time: startedAt, StartedAt: startedAt, RunID: active.ID, CallID: call.ID, Name: call.Name, Status: "started"}, 500)
+			if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
+				return err
+			}
 			result, _ := r.Executor.Execute(runCtx, tool.Call{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
 			if result.Error != nil && (result.Error.Code == "confirmation_required" || result.Error.Code == "blocked") {
 				pe := event.New(event.PermissionRequired, s.ID)
+				pe.RunID = active.ID
 				pe.Turn = turn
 				pe.Tool = call.Name
 				pe.Message = result.Error.Message
@@ -121,14 +173,32 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			content := tool.MarshalResult(result)
 			messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: call.ID, Content: content})
 			summary := summarizeResult(result)
-			s.ToolCalls = appendBoundedTool(s.ToolCalls, session.ToolRecord{Time: time.Now().UTC(), CallID: call.ID, Name: call.Name, Summary: summary, IsError: result.Error != nil}, 500)
+			completedAt := time.Now().UTC()
+			for i := len(s.ToolCalls) - 1; i >= 0; i-- {
+				if s.ToolCalls[i].CallID == call.ID && s.ToolCalls[i].RunID == active.ID {
+					s.ToolCalls[i].Summary = summary
+					s.ToolCalls[i].IsError = result.Error != nil
+					s.ToolCalls[i].Status = "completed"
+					s.ToolCalls[i].CompletedAt = &completedAt
+					break
+				}
+			}
 			e = event.New(event.ToolCompleted, s.ID)
+			e.RunID = active.ID
 			e.Turn = turn
 			e.Tool = call.Name
 			e.Message = summary
 			r.emit(s, e, true)
 			if defTool, ok := r.Executor.Registry.Get(call.Name); ok && defTool.Definition().MutatesWorkspace {
-				r.snapshotChanges(runCtx, s)
+				active.LastMutationTurn = turn
+				r.snapshotChanges(runCtx, s, active)
+			}
+			if call.Name == "test.run" {
+				passed := result.Error == nil
+				s.TestResults = append(s.TestResults, session.TestResult{Command: "go test", Passed: passed, Summary: summary, Time: completedAt, RunID: active.ID, Turn: turn})
+				if passed {
+					active.LastVerificationTurn = turn
+				}
 			}
 			s.RecentMessages = boundedMessages(messages)
 			s.Summary = contextmgr.StructuredSummary(s)
@@ -169,6 +239,122 @@ func appendBoundedTool(records []session.ToolRecord, r session.ToolRecord, max i
 	}
 	return records
 }
+
+func (r *Runner) runState(s *session.Session, run *session.Run) string {
+	return fmt.Sprintf("Run %s is %s. Turn %d. Last mutation turn: %d. Last verified turn: %d. Pending work: %s", run.ID, run.Status, s.Turns, run.LastMutationTurn, run.LastVerificationTurn, strings.Join(s.PendingSteps, "; "))
+}
+
+func (r *Runner) compress(ctx context.Context, s *session.Session, run *session.Run, messages []model.Message) {
+	deterministic := contextmgr.StructuredSummary(s)
+	request := []model.Message{
+		{Role: model.RoleSystem, Content: "Compress the visible coding-session facts into JSON only. Never include secrets, private reasoning, full prompts, or raw tool output. Return exactly {\"summary\":\"markdown using the headings Current goal, Completed work, Modified files, Commands run, Test results, Confirmed decisions, Current problems, Remaining work, Resume information\"}."},
+		{Role: model.RoleUser, Content: deterministic + "\n\nRecent visible context:\n" + visibleContext(messages)},
+	}
+	response, err := r.Provider.Generate(ctx, model.GenerateRequest{Model: r.Config.Model, Messages: request, Stream: false})
+	if err != nil {
+		s.Summary = deterministic
+		return
+	}
+	var payload struct {
+		Summary string `json:"summary"`
+	}
+	if json.Unmarshal([]byte(response.Message.Content), &payload) != nil || strings.TrimSpace(payload.Summary) == "" {
+		s.Summary = deterministic
+		return
+	}
+	payload.Summary = strings.TrimSpace(payload.Summary)
+	if len(payload.Summary) > 16<<10 {
+		payload.Summary = payload.Summary[:16<<10]
+	}
+	s.Summary = payload.Summary
+	run.UpdatedAt = time.Now().UTC()
+}
+
+func visibleContext(messages []model.Message) string {
+	start := max(0, len(messages)-12)
+	var b strings.Builder
+	for _, message := range messages[start:] {
+		if message.Role != model.RoleUser && message.Role != model.RoleAssistant {
+			continue
+		}
+		content := clip(message.Content, 1000)
+		if content != "" {
+			fmt.Fprintf(&b, "%s: %s\n", message.Role, content)
+		}
+	}
+	return b.String()
+}
+
+func (r *Runner) verifyCandidate(ctx context.Context, s *session.Session, run *session.Run) (bool, string) {
+	if run.LastMutationTurn == 0 {
+		return true, ""
+	}
+	cmd := exec.CommandContext(ctx, "git", "diff", "--check")
+	cmd.Dir = s.Workspace
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return false, "git diff --check failed: " + clip(strings.TrimSpace(string(output)), 500)
+	}
+	now := time.Now().UTC()
+	s.TestResults = append(s.TestResults, session.TestResult{Command: "git diff --check", Passed: true, Summary: "passed", Time: now, RunID: run.ID, Turn: s.Turns})
+	if documentationOnly(run.ModifiedFiles) {
+		run.LastVerificationTurn = s.Turns
+		return true, ""
+	}
+	for i := len(s.TestResults) - 1; i >= 0; i-- {
+		result := s.TestResults[i]
+		if result.RunID == run.ID && result.Passed && result.Command != "git diff --check" && result.Turn >= run.LastMutationTurn {
+			run.LastVerificationTurn = result.Turn
+			return true, ""
+		}
+	}
+	return false, "workspace code changed after the last successful test; run test.run and resolve any failures"
+}
+
+func documentationOnly(paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".md" && ext != ".txt" && ext != ".rst" && ext != ".adoc" {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Runner) complete(ctx context.Context, s *session.Session, run *session.Run, final string, messages []model.Message) error {
+	now := time.Now().UTC()
+	run.Status = session.RunCompleted
+	run.FinalMessage = final
+	run.CompletedAt = &now
+	run.UpdatedAt = now
+	s.ActiveRunID = ""
+	s.Status = session.Open
+	s.LastError = ""
+	s.CompletedSteps = append(s.CompletedSteps, "Run "+run.ID+" completed after verification")
+	s.PendingSteps = nil
+	s.RecentMessages = boundedMessages(messages)
+	r.compress(ctx, s, run, messages)
+	s.GitState = session.GitState(ctx, s.Workspace)
+	if strings.TrimSpace(final) != "" {
+		if err := r.Store.AppendMessage(s.ID, session.MessageRecord{RunID: run.ID, Role: model.RoleAssistant, Content: final, CreatedAt: now}); err != nil {
+			return err
+		}
+	}
+	if err := contextmgr.UpdateProjectMemory(s.Workspace, s, *run); err != nil {
+		return fmt.Errorf("update project memory: %w", err)
+	}
+	memoryEvent := event.New(event.MemoryUpdated, s.ID)
+	memoryEvent.RunID = run.ID
+	r.emit(s, memoryEvent, true)
+	done := event.New(event.TaskCompleted, s.ID)
+	done.RunID = run.ID
+	done.Turn = s.Turns
+	done.Message = final
+	r.emit(s, done, true)
+	return r.Store.Save(context.WithoutCancel(ctx), s)
+}
 func boundedMessages(messages []model.Message) []model.Message {
 	const max = 40
 	if len(messages) > max {
@@ -200,18 +386,28 @@ func clip(s string, n int) string {
 }
 func (r *Runner) emit(s *session.Session, e event.Event, persist bool) {
 	if persist && e.Type != event.ModelDelta {
-		r.Store.BufferEvent(s.ID, e)
+		e = r.Store.BufferEvent(s.ID, e)
 	}
 	if r.Sink != nil {
 		r.Sink(e)
 	}
 }
 func (r *Runner) fail(ctx context.Context, s *session.Session, message string, cause error) error {
-	s.Status = session.Failed
+	s.Status = session.Open
 	s.LastError = cause.Error()
+	runID := s.ActiveRunID
+	if run := s.ActiveRun(); run != nil {
+		now := time.Now().UTC()
+		run.Status = session.RunFailed
+		run.Error = cause.Error()
+		run.CompletedAt = &now
+		run.UpdatedAt = now
+		s.ActiveRunID = ""
+	}
 	s.GitState = session.GitState(context.WithoutCancel(ctx), s.Workspace)
 	s.Summary = contextmgr.StructuredSummary(s)
 	e := event.New(event.TaskFailed, s.ID)
+	e.RunID = runID
 	e.Message = message
 	e.Error = cause.Error()
 	r.Store.BufferEvent(s.ID, e)
@@ -222,15 +418,25 @@ func (r *Runner) fail(ctx context.Context, s *session.Session, message string, c
 	return cause
 }
 func (r *Runner) stop(ctx context.Context, s *session.Session, cause error) error {
-	s.Status = session.Cancelled
+	s.Status = session.Open
+	runID := s.ActiveRunID
 	if errors.Is(cause, context.DeadlineExceeded) {
 		s.LastError = "total execution timeout"
 	} else {
 		s.LastError = "cancelled"
 	}
+	if run := s.ActiveRun(); run != nil {
+		now := time.Now().UTC()
+		run.Status = session.RunCancelled
+		run.Error = s.LastError
+		run.CompletedAt = &now
+		run.UpdatedAt = now
+		s.ActiveRunID = ""
+	}
 	s.GitState = session.GitState(context.WithoutCancel(ctx), s.Workspace)
 	s.Summary = contextmgr.StructuredSummary(s)
 	e := event.New(event.TaskCancelled, s.ID)
+	e.RunID = runID
 	e.Error = s.LastError
 	r.Store.BufferEvent(s.ID, e)
 	_ = r.Store.Save(context.WithoutCancel(ctx), s)
@@ -239,7 +445,7 @@ func (r *Runner) stop(ctx context.Context, s *session.Session, cause error) erro
 	}
 	return cause
 }
-func (r *Runner) snapshotChanges(ctx context.Context, s *session.Session) {
+func (r *Runner) snapshotChanges(ctx context.Context, s *session.Session, run *session.Run) {
 	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1")
 	cmd.Dir = s.Workspace
 	b, err := cmd.Output()
@@ -260,5 +466,16 @@ func (r *Runner) snapshotChanges(ctx context.Context, s *session.Session) {
 			continue
 		}
 		_ = r.Store.SnapshotFile(s, path)
+		slashed := filepath.ToSlash(path)
+		found := false
+		for _, existing := range run.ModifiedFiles {
+			if existing == slashed {
+				found = true
+				break
+			}
+		}
+		if !found {
+			run.ModifiedFiles = append(run.ModifiedFiles, slashed)
+		}
 	}
 }

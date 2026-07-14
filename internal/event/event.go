@@ -18,6 +18,11 @@ const (
 	ToolCompleted      Type = "tool_completed"
 	PermissionRequired Type = "permission_required"
 	CheckpointSaved    Type = "checkpoint_saved"
+	RunVerifying       Type = "run_verifying"
+	RunInterrupted     Type = "run_interrupted"
+	WorkspaceChanged   Type = "workspace_changed"
+	MemoryUpdated      Type = "memory_updated"
+	SessionUpdated     Type = "session_updated"
 	TaskCompleted      Type = "task_completed"
 	TaskFailed         Type = "task_failed"
 	TaskCancelled      Type = "task_cancelled"
@@ -27,6 +32,8 @@ type Event struct {
 	Type      Type            `json:"type"`
 	Time      time.Time       `json:"time"`
 	SessionID string          `json:"session_id,omitempty"`
+	RunID     string          `json:"run_id,omitempty"`
+	Sequence  uint64          `json:"sequence,omitempty"`
 	Turn      int             `json:"turn,omitempty"`
 	Tool      string          `json:"tool,omitempty"`
 	Message   string          `json:"message,omitempty"`

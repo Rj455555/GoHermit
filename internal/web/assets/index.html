@@ -9,62 +9,81 @@
 <body>
   <div class="shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">G</span><div><strong>GoHermit</strong><small>Local Agent Console</small></div></div>
+      <div class="brand"><span class="brand-mark">G</span><div><strong>GoHermit</strong><small>Local Agent Harness</small></div></div>
       <nav aria-label="主导航">
-        <button class="nav-item active" data-page="dashboard" data-testid="nav-dashboard"><span>◫</span>概览</button>
-        <button class="nav-item" data-page="run" data-testid="nav-run"><span>▶</span>运行 Agent</button>
+        <button class="nav-item active" data-page="dashboard"><span>◉</span>概览</button>
+        <button class="nav-item" data-page="agent"><span>▶</span>Agent</button>
         <button class="nav-item" data-page="settings" data-testid="nav-settings"><span>⚙</span>模型接入</button>
       </nav>
       <div class="sidebar-status"><i id="health-dot"></i><span id="health">正在连接</span></div>
     </aside>
 
     <main>
-      <header class="topbar"><div><h1 id="page-title">概览</h1><p id="page-subtitle">查看服务和模型接入状态</p></div><span id="version" class="version">—</span></header>
+      <header class="topbar"><div><h1 id="page-title">概览</h1><p id="page-subtitle">查看工作区、会话和模型接入状态</p></div><span id="version" class="version">—</span></header>
 
       <section id="page-dashboard" class="page active">
-        <div class="metric-grid">
-          <article class="metric"><span>服务状态</span><strong id="metric-service">检查中</strong><small>本机 Docker 服务</small></article>
+        <div class="metric-grid four">
+          <article class="metric"><span>服务状态</span><strong id="metric-service">检查中</strong><small>本地单用户服务</small></article>
           <article class="metric"><span>可用接入</span><strong id="metric-providers">0</strong><small>已登录或已设置 Key</small></article>
-          <article class="metric"><span>运行状态</span><strong id="metric-run">空闲</strong><small>同一时间运行一个任务</small></article>
+          <article class="metric"><span>会话</span><strong id="metric-sessions">0</strong><small>保存在当前工作区</small></article>
+          <article class="metric"><span>运行状态</span><strong id="metric-run">空闲</strong><small>同一时间一个 Run</small></article>
         </div>
         <article class="panel">
-          <div class="panel-head"><div><h2>已连接的模型服务</h2><p>只有这里显示为可用的接入方式，才会出现在运行页面。</p></div><button class="secondary" data-go="settings">管理接入</button></div>
+          <div class="panel-head"><div><h2>最近会话</h2><p>重新打开会话即可继续对话，不会丢失已确认的上下文。</p></div><button class="secondary" data-go="agent">打开 Agent</button></div>
+          <div id="recent-sessions" class="session-cards"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><div><h2>已连接的模型服务</h2><p>只有可用的接入方式才会出现在新建会话中。</p></div><button class="secondary" data-go="settings">管理接入</button></div>
           <div id="connected-list" class="provider-list"></div>
         </article>
         <article class="panel compact"><h2>工作区</h2><code id="workspace">—</code></article>
       </section>
 
-      <section id="page-run" class="page">
-        <div id="run-empty" class="empty-state hidden">
-          <div class="empty-icon">⌁</div><h2>还没有可用的模型</h2>
+      <section id="page-agent" class="page wide">
+        <div id="agent-empty" class="empty-state hidden">
+          <div class="empty-icon">◎</div><h2>还没有可用的模型</h2>
           <p>先登录 Codex，或为一个 API 接入方式设置 Key。</p>
           <button class="primary" data-go="settings">前往模型接入</button>
         </div>
-        <div id="run-content">
-          <article class="panel">
-            <div class="panel-head"><div><h2>运行配置</h2><p>依次选择公司、接入方式、模型和 Agent。</p></div><span id="access-badge" class="status-badge ready">可用</span></div>
-            <div class="config-grid">
-              <label><span>公司</span><select id="company" data-testid="company-select"></select></label>
-              <label><span>接入方式</span><select id="access" data-testid="access-select"></select></label>
-              <label><span>模型</span><select id="model" data-testid="model-select"></select></label>
-              <label><span>Agent</span><select id="agent" data-testid="agent-select"></select></label>
+        <div id="agent-workspace" class="agent-layout">
+          <aside class="session-pane">
+            <button id="new-session" class="primary full">＋ 新建会话</button>
+            <div id="session-list" class="session-list"></div>
+          </aside>
+          <section class="conversation-pane">
+            <div id="new-session-form" class="new-session-card">
+              <div><h2>新建 Agent 会话</h2><p>模型与 Agent 在会话创建后固定，便于恢复和审计。</p></div>
+              <div class="config-grid">
+                <label><span>公司</span><select id="company"></select></label>
+                <label><span>接入方式</span><select id="access"></select></label>
+                <label><span>模型</span><select id="model"></select></label>
+                <label><span>Agent</span><select id="agent"></select></label>
+              </div>
+              <p id="access-note" class="note"></p>
+              <button id="create-session" class="primary">创建会话</button>
             </div>
-            <p id="access-note" class="note"></p>
-          </article>
-          <article class="panel composer">
-            <label for="task"><strong>任务</strong><span>告诉 Agent 需要完成什么</span></label>
-            <textarea id="task" maxlength="16384" placeholder="例如：检查项目结构，运行测试并修复失败用例。"></textarea>
-            <div class="actions"><span id="run-hint">密钥只在服务端使用。</span><button id="run" class="primary" data-testid="run-button">开始运行</button></div>
-          </article>
-          <article class="panel">
-            <div class="panel-head"><div><h2>实时事件</h2><p>Agent 的思考、工具调用和结果会显示在这里。</p></div><button id="clear" class="text-button">清空</button></div>
-            <div id="events" class="events"><p class="placeholder">尚未运行任务。</p></div>
-          </article>
+
+            <div id="conversation" class="conversation hidden">
+              <header class="conversation-head">
+                <div><h2 id="conversation-title">会话</h2><p id="conversation-meta"></p></div>
+                <span id="run-status" class="status-badge">空闲</span>
+              </header>
+              <div id="messages" class="messages"><p class="placeholder">发送第一条消息开始开发。</p></div>
+              <details class="activity-panel">
+                <summary>运行活动 <span id="activity-count">0</span></summary>
+                <div id="events" class="events"><p class="placeholder">还没有工具或验证事件。</p></div>
+              </details>
+              <div class="composer chat-composer">
+                <textarea id="task" maxlength="16384" placeholder="继续描述任务、补充要求，或让 Agent 检查当前进度…"></textarea>
+                <div class="actions"><span id="run-hint">消息和摘要只保存在当前工作区。</span><div class="button-row"><button id="resume-run" class="secondary hidden">恢复</button><button id="cancel-run" class="danger hidden">停止</button><button id="send" class="primary">发送</button></div></div>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
 
       <section id="page-settings" class="page">
-        <div class="intro"><h2>模型接入</h2><p>先接入服务，再到运行页面选择模型。API Key 保存在 GoHermit 的独立数据卷中，不写入项目或浏览器存储。</p></div>
+        <div class="intro"><h2>模型接入</h2><p>先接入服务，再创建 Agent 会话。API Key 只保存在 GoHermit 服务端，不写入项目或浏览器。</p></div>
         <div id="settings-list" class="settings-list"></div>
       </section>
     </main>

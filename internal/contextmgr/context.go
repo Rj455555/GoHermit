@@ -47,6 +47,12 @@ func EstimateTokens(text string) int {
 	return (len([]byte(text)) + 3) / 4
 }
 func (m *Manager) Build(workspace, goal, summary string, recent []model.Message) ([]model.Message, bool) {
+	return m.BuildRun(workspace, goal, summary, recent, "")
+}
+
+// BuildRun assembles fresh context for every model call. Persistent project
+// rules and the active run state are never displaced by old conversation.
+func (m *Manager) BuildRun(workspace, goal, summary string, recent []model.Message, runState string) ([]model.Message, bool) {
 	systemPrompt := m.cfg.SystemPrompt
 	if systemPrompt == "" {
 		systemPrompt = DefaultSystem
@@ -61,19 +67,36 @@ func (m *Manager) Build(workspace, goal, summary string, recent []model.Message)
 	if summary != "" {
 		layers = append(layers, model.Message{Role: model.RoleSystem, Content: "Recovered task state:\n" + summary})
 	}
+	if runState != "" {
+		layers = append(layers, model.Message{Role: model.RoleSystem, Content: "Active run state:\n" + runState})
+	}
 	layers = append(layers, model.Message{Role: model.RoleUser, Content: goal})
-	layers = append(layers, dedupe(recent)...)
+	baseCount := len(layers)
+	layers = dedupe(append(layers, recent...))
+	if baseCount > len(layers) {
+		baseCount = len(layers)
+	}
 	limit := m.cfg.MaxTokens - m.cfg.ReserveOutputTokens
 	compressed := tokens(layers) > int(float64(limit)*m.cfg.CompressionThreshold)
-	for tokens(layers) > limit && len(layers) > 2 {
-		layers = append(layers[:1], layers[2:]...)
+	hardLimit := int(float64(limit) * m.cfg.HardLimitThreshold)
+	if hardLimit <= 0 || hardLimit > limit {
+		hardLimit = limit
 	}
-	if tokens(layers) > limit {
-		last := &layers[len(layers)-1]
-		otherTokens := tokens(layers) - EstimateTokens(last.Content)
-		bytes := max(0, (limit-otherTokens)*4-3)
-		if len(last.Content) > bytes {
-			last.Content = last.Content[len(last.Content)-bytes:]
+	for tokens(layers) > hardLimit && len(layers) > baseCount {
+		layers = append(layers[:baseCount], layers[baseCount+1:]...)
+	}
+	for tokens(layers) > hardLimit && baseCount > 2 {
+		// Project rules, memory and old summaries may be clipped, but the system
+		// policy and current user goal remain present.
+		candidate := 1
+		if candidate >= len(layers)-1 {
+			break
+		}
+		if len(layers[candidate].Content) > 256 {
+			layers[candidate].Content = layers[candidate].Content[len(layers[candidate].Content)/2:]
+		} else {
+			layers = append(layers[:candidate], layers[candidate+1:]...)
+			baseCount--
 		}
 	}
 	return layers, compressed

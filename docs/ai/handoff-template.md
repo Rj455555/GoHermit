@@ -28,6 +28,13 @@ Use this template at the end of a development session. Remove empty optional sec
 - Working tree:
 - External state changed:
 
+## Harness state
+
+- Session/Run IDs used for live verification:
+- Last event sequence and terminal Run state:
+- Project memory updated:
+- Recovery or workspace-reconciliation notes:
+
 ## Remaining work
 
 - Known limitations:

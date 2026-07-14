@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -35,6 +36,18 @@ func (*scriptedProvider) Capabilities() model.Capabilities {
 type agentTool struct {
 	err   error
 	delay time.Duration
+}
+
+type namedAgentTool struct {
+	name    string
+	mutates bool
+}
+
+func (t namedAgentTool) Definition() tool.Definition {
+	return tool.Definition{Name: t.name, InputSchema: json.RawMessage(`{"type":"object"}`), MutatesWorkspace: t.mutates, DefaultTimeout: time.Second, MaxOutputBytes: 100}
+}
+func (t namedAgentTool) Execute(context.Context, tool.Call) (tool.Result, error) {
+	return tool.Result{Output: "ok"}, nil
 }
 
 func (t agentTool) Definition() tool.Definition {
@@ -73,6 +86,9 @@ func TestNormalStopAndToolResultReturned(t *testing.T) {
 		if n == 0 {
 			return toolResponse("c1"), nil
 		}
+		if n > 1 {
+			return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: `{}`}}, nil
+		}
 		found := false
 		for _, m := range r.Messages {
 			if m.Role == model.RoleTool && m.ToolCallID == "c1" {
@@ -88,7 +104,7 @@ func TestNormalStopAndToolResultReturned(t *testing.T) {
 	if err := runner.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}
-	if s.Status != session.Completed || s.Turns != 2 {
+	if s.Status != session.Open || s.Turns != 2 || len(s.Runs) != 1 || s.Runs[0].Status != session.RunCompleted {
 		t.Fatalf("session=%+v", s)
 	}
 }
@@ -101,8 +117,8 @@ func TestMaximumTurns(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "maximum turns") {
 		t.Fatalf("err=%v", err)
 	}
-	if s.Status != session.Failed || s.Turns != 2 {
-		t.Fatalf("status=%s turns=%d", s.Status, s.Turns)
+	if s.Status != session.Open || len(s.Runs) != 1 || s.Runs[0].Status != session.RunFailed || s.Turns != 2 {
+		t.Fatalf("session status=%s run=%+v turns=%d", s.Status, s.Runs, s.Turns)
 	}
 }
 func TestTotalTimeout(t *testing.T) {
@@ -115,14 +131,17 @@ func TestTotalTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout")
 	}
-	if s.Status != session.Failed && s.Status != session.Cancelled {
-		t.Fatalf("status=%s", s.Status)
+	if s.Status != session.Open || len(s.Runs) != 1 || s.Runs[0].Status != session.RunCancelled {
+		t.Fatalf("session status=%s runs=%+v", s.Status, s.Runs)
 	}
 }
 func TestToolErrorReturnedToModel(t *testing.T) {
 	p := &scriptedProvider{fn: func(n int, r model.GenerateRequest) (model.GenerateResponse, error) {
 		if n == 0 {
 			return toolResponse("bad"), nil
+		}
+		if n > 1 {
+			return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: `{}`}}, nil
 		}
 		last := r.Messages[len(r.Messages)-1].Content
 		if !strings.Contains(last, "tool_error") {
@@ -133,5 +152,47 @@ func TestToolErrorReturnedToModel(t *testing.T) {
 	runner, s := newRunner(t, p, 3, time.Second, agentTool{err: errors.New("boom")})
 	if err := runner.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMutationRequiresSuccessfulTestBeforeCompletion(t *testing.T) {
+	p := &scriptedProvider{fn: func(n int, r model.GenerateRequest) (model.GenerateResponse, error) {
+		switch n {
+		case 0:
+			return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{{ID: "write", Name: "workspace.mutate", Arguments: json.RawMessage(`{}`)}}}}, nil
+		case 1:
+			return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: "premature"}}, nil
+		case 2:
+			found := false
+			for _, message := range r.Messages {
+				if strings.Contains(message.Content, "run test.run") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("verification failure was not returned to the model")
+			}
+			return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{{ID: "test", Name: "test.run", Arguments: json.RawMessage(`{}`)}}}}, nil
+		default:
+			return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: "verified"}}, nil
+		}
+	}}
+	runner, s := newRunner(t, p, 6, 3*time.Second, agentTool{})
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = s.Workspace
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if err := runner.Executor.Registry.Register(namedAgentTool{name: "workspace.mutate", mutates: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Executor.Registry.Register(namedAgentTool{name: "test.run"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Runs) != 1 || s.Runs[0].Status != session.RunCompleted || s.Runs[0].VerificationAttempts != 1 || s.Runs[0].LastVerificationTurn < s.Runs[0].LastMutationTurn {
+		t.Fatalf("run=%+v", s.Runs)
 	}
 }

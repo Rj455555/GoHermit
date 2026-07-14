@@ -1,6 +1,6 @@
 # Next development plan
 
-This file starts after the `0.2.0-dev` provider and local Web milestone. Read it only when planning new work.
+This file starts after the `0.2.0-dev` provider, local Web, and persistent Agent Harness milestones. Read it only when planning new work. The Session/Run split, per-call context assembly, project memory, verification gate, recovery, and Session UI are implemented; do not plan them again.
 
 ## P0: stabilize the provider boundary
 
@@ -13,11 +13,11 @@ This file starts after the `0.2.0-dev` provider and local Web milestone. Read it
 
 Acceptance criteria: neutral Agent Core types remain vendor-free; unsupported capabilities fail during configuration rather than mid-task; secrets and private reasoning never appear in logs.
 
-## P1: interactive approval and recovery
+## P1: interactive approval
 
 1. Define a transport-neutral approval request/response contract.
 2. Let CLI and local Web approve one bounded action without turning the shell into an unrestricted terminal.
-3. Add crash/restart fixtures around pending approvals and completed tool calls.
+3. Add crash/restart fixtures around pending approvals while preserving the existing completed-tool replay guard.
 
 Acceptance criteria: non-interactive mode remains deny-by-default; approvals are scoped, expiring, auditable, and cannot bypass workspace policy.
 

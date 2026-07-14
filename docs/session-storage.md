@@ -2,7 +2,7 @@
 
 ## Schema
 
-`session.json` records schema version, ID, goal, status/timestamps, turn count, recent bounded messages, structured summary, bounded tool records, modified-file hashes, steps, tests, last error, workspace, Git-state digest, and configuration digest. `summary.md` is the human recovery view. `events.jsonl` is the batched event audit trail.
+Schema v2 separates a durable `open`/`archived` Session from its Runs. `session.json` records fixed provider/model/Agent selection, Run states, active Run, recent bounded messages, summary, tool lifecycles, file hashes, tests, workspace/Git digests, and the next event sequence. `messages.jsonl` stores only visible user/assistant messages. `events.jsonl` stores sequenced audit events. `summary.md` is the human recovery view.
 
 ## Checkpoint lifecycle
 
@@ -14,7 +14,7 @@ JSON and Markdown snapshots are encoded completely, written to a temporary sibli
 
 ## Versioning and migration
 
-v0.1 uses schema version `1` and rejects all other versions clearly. Future versions must add explicit, tested, one-way migration; silently interpreting unknown fields or versions is prohibited.
+Schema version `1` has an explicit, tested, one-way migration to version `2`. Unknown versions remain rejected; no version or unknown field is interpreted silently.
 
 ## Retention and logs
 
@@ -22,4 +22,4 @@ v0.1 uses schema version `1` and rejects all other versions clearly. Future vers
 
 ## Corruption and external changes
 
-Invalid JSON is reported as a corrupt checkpoint. Resume rejects a workspace mismatch and compares SHA-256 hashes for files changed by the agent; missing or externally changed files stop recovery with the exact path. Git state is recorded as an audit digest. Recovery never guesses through corruption.
+Invalid JSON is reported as a corrupt checkpoint and workspace mismatch is rejected. Changed file hashes or Git state set `workspace_changed`; the next Run receives reconciliation context and must re-verify. A tool persisted as `completed` is never replayed. A `started` tool without completion becomes `uncertain`, requiring state inspection and replanning.
