@@ -7,6 +7,8 @@
 - Added Responses API streaming and function calls with `store=false`, preserving only encrypted reasoning continuation between tool turns.
 - Added DeepSeek `reasoning_content` replay for thinking-mode tool-call compatibility, encrypted before session checkpointing.
 - Added a loopback-only local Web debugger, server-sent runtime events, Docker image, and Compose configuration.
+- Replaced the single debug form with Dashboard, Run Agent, and Provider Settings pages.
+- Added server-side API key storage, Codex device-code login, strict credential availability checks, and a credential-filtered run catalog.
 
 ## 0.1.0 - 2026-07-13
 

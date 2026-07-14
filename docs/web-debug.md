@@ -1,11 +1,10 @@
 # Local Web and Docker debugging
 
-`hermit-web` is a local single-user debugging surface. It selects a company group, a real provider/access slug, a model from that provider, and an Agent profile, then streams structured Agent Core events over one POST response. It does not accept API keys, base URLs, workspaces, or shell approvals from the browser.
+`hermit-web` is a local single-user console with Dashboard, Run Agent, and Provider Settings pages. Settings accepts provider credentials over the loopback-only origin; secrets are stored server-side and never returned to the browser. Run selects a company group, provider/access slug, model, and Agent profile, then streams structured Agent Core events over one POST response.
 
 ## Start on the same machine
 
 ```bash
-export OPENAI_API_KEY='...'
 docker compose up --build -d
 open http://127.0.0.1:8787
 ```
@@ -28,7 +27,9 @@ OpenAI expands to two provider rows, matching Hermes:
 - `openai-codex`: ChatGPT/Codex subscription login and the Codex backend.
 - `openai-api`: direct API billing through `OPENAI_API_KEY`.
 
-For Codex Plan, first sign in with Codex CLI on the Docker host. Compose mounts `${HOME}/.codex` read-only and the status card reports whether the login was detected. GoHermit never sends the Codex token to the browser and never modifies the CLI auth file.
+For Codex Plan, open Provider Settings and choose **Login Codex**. GoHermit starts the OpenAI device-code flow, polls it server-side, and saves the resulting tokens in the dedicated `gohermit-data` volume. Existing Codex CLI login remains a fallback: Compose mounts `${HOME}/.codex` read-only and never modifies it.
+
+For API providers, paste the key in Provider Settings. A configured environment variable remains supported and takes effect when no Web-managed key exists. Only access methods with usable credentials appear in Run Agent.
 
 Alibaba likewise exposes standard DashScope API and Alibaba Coding Plan as separate provider rows because their keys and endpoints differ.
 
@@ -51,7 +52,8 @@ Then open <http://127.0.0.1:8787> locally. Do not change the Compose bind to `0.
 
 ## Security boundaries
 
-- Model keys stay in container environment variables and are never returned by `/api/info`.
+- Web-managed credentials stay in `/data/auth.json` with mode `0600`; Compose persists `/data` in the `gohermit-data` volume.
+- Model keys and OAuth tokens are never returned by `/api/info` or any settings response.
 - The workspace and config path are fixed when the server starts; browser selections can only reference server-defined catalog entries.
 - Only one task may run at a time.
 - Request size and task length are bounded; disconnecting cancels the run.

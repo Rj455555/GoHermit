@@ -20,6 +20,7 @@ This is the preferred low-token path. Do not preload every ADR or topic document
 - `context.md`: current product boundary, code map, invariants, verified state, and known limitations.
 - `next-development-plan.md`: ordered work after the provider/Web milestone, with acceptance criteria.
 - `handoff-template.md`: compact factual format for ending an AI development session.
+- `console-credentials.md`: low-token map of the Web console, credential precedence, APIs, and security boundaries.
 
 ## General technical documentation
 

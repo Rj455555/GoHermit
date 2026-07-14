@@ -20,9 +20,9 @@ Legacy `codex`, `openai`, `openai-chat`, and `openai-compatible` TOML presets re
 
 ## Codex Plan
 
-The Codex Plan path mirrors Hermes's safe import rule: GoHermit reads `CODEX_HOME/auth.json`, requires a valid access token, refreshes an expiring access token in memory when a refresh token exists, and never rewrites the Codex CLI file. Requests use the Codex Responses endpoint plus the `originator`, Codex-shaped user agent, and JWT-derived `ChatGPT-Account-ID` headers.
+The Codex Plan path supports both GoHermit-managed device login and Hermes-style safe CLI import. Credential precedence is environment token, GoHermit credential store, then `CODEX_HOME/auth.json`. An expiring access token must refresh successfully before the access method is offered to Run. GoHermit never rewrites the Codex CLI file. Requests use the Codex Responses endpoint plus the `originator`, Codex-shaped user agent, and JWT-derived `ChatGPT-Account-ID` headers.
 
-On the host:
+Either log in from Web Provider Settings, or prepare the CLI fallback on the host:
 
 ```bash
 codex login

@@ -5,11 +5,11 @@ This file starts after the `0.2.0-dev` provider and local Web milestone. Read it
 ## P0: stabilize the provider boundary
 
 1. Add opt-in live smoke tests for each provider; keep paid calls outside the default test suite.
-2. Add Codex device-code login and status polling to the local Web surface; preserve the current read-only Codex CLI import path.
-3. Add live provider model discovery with a bounded cache and checked-in fallback, following Hermes's catalog order without copying its Python runtime.
-4. Add capability flags for reasoning effort, images, structured output, and provider-specific limits.
-5. Add contract fixtures captured from sanitized official API examples so protocol drift is easy to detect.
-6. Decide whether provider profiles should support ordered fallback. Do not add fallback until cost, retry, and audit semantics are specified.
+2. Add live provider model discovery with a bounded cache and checked-in fallback, following Hermes's catalog order without copying its Python runtime.
+3. Add capability flags for reasoning effort, images, structured output, and provider-specific limits.
+4. Add contract fixtures captured from sanitized official API examples so protocol drift is easy to detect.
+5. Decide whether provider profiles should support ordered fallback. Do not add fallback until cost, retry, and audit semantics are specified.
+6. Add credential-store encryption or OS keychain integration before any non-local deployment is considered.
 
 Acceptance criteria: neutral Agent Core types remain vendor-free; unsupported capabilities fail during configuration rather than mid-task; secrets and private reasoning never appear in logs.
 

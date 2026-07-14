@@ -12,6 +12,8 @@ import (
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	root := t.TempDir()
+	t.Setenv("GOHERMIT_AUTH_STORE", filepath.Join(root, "credentials.json"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
 	if err := os.WriteFile(filepath.Join(root, "hermit.toml"), []byte("[model]\nprovider = \"codex\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -20,6 +22,32 @@ func testServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	return server
+}
+
+func TestAPIKeySettingsControlAvailableCatalogWithoutLeakingSecret(t *testing.T) {
+	server := testServer(t)
+	handler := server.Handler()
+	request := httptest.NewRequest(http.MethodGet, "/api/info", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if strings.Contains(response.Body.String(), `"available_companies":[{"id":"deepseek"`) {
+		t.Fatal("unconfigured provider appeared in runnable catalog")
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/api/settings/providers/deepseek/api-key", strings.NewReader(`{"api_key":"secret-key"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "secret-key") {
+		t.Fatalf("save status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/info", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !strings.Contains(response.Body.String(), `"id":"deepseek"`) || !strings.Contains(response.Body.String(), `"configured":true`) || strings.Contains(response.Body.String(), "secret-key") {
+		t.Fatalf("info did not reflect safe configured status: %s", response.Body.String())
+	}
 }
 
 func TestHealthAndInfoDoNotExposeKeys(t *testing.T) {
@@ -66,7 +94,7 @@ func TestStaticIndexHasSecurityHeaders(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "GoHermit") || !strings.Contains(response.Body.String(), "company-select") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "GoHermit") || !strings.Contains(response.Body.String(), "nav-settings") {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("X-Frame-Options") != "DENY" {

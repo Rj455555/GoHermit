@@ -29,7 +29,7 @@ func TestResolveCodexImportsCLIAuthAndBuildsHeaders(t *testing.T) {
 	if credentials.Token != token || credentials.Headers["ChatGPT-Account-ID"] != "acct_test" || credentials.Headers["originator"] != "codex_cli_rs" {
 		t.Fatalf("credentials=%+v", credentials)
 	}
-	configured, _ := CodexStatus()
+	configured, _ := CodexStatus(t.Context(), nil)
 	if !configured {
 		t.Fatal("Codex CLI auth should be configured")
 	}

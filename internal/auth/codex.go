@@ -32,26 +32,32 @@ type codexTokens struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-// CodexStatus reports whether a usable Codex account login can be found.
-func CodexStatus() (bool, string) {
-	if strings.TrimSpace(os.Getenv("GOHERMIT_CODEX_ACCESS_TOKEN")) != "" {
-		return true, "environment"
-	}
-	tokens, path, err := readCodexCLIAuth()
+// CodexStatus validates the account login, including refreshing an expired token.
+func CodexStatus(ctx context.Context, store *Store) (bool, string) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	credentials, err := ResolveCodexWithStore(ctx, store)
 	if err != nil {
-		return false, "Run `codex login` on the host and mount CODEX_HOME read-only."
+		return false, err.Error()
 	}
-	if tokenExpiring(tokens.AccessToken, 0) && tokens.RefreshToken == "" {
-		return false, "Codex login is expired; run `codex login` again."
-	}
-	return true, path
+	return true, credentials.Source
 }
 
 // ResolveCodex imports Codex CLI auth and refreshes an expiring token in memory.
 func ResolveCodex(ctx context.Context) (CodexCredentials, error) {
+	return ResolveCodexWithStore(ctx, nil)
+}
+
+// ResolveCodexWithStore resolves Web-managed credentials before falling back to Codex CLI auth.
+func ResolveCodexWithStore(ctx context.Context, store *Store) (CodexCredentials, error) {
 	accessToken := strings.TrimSpace(os.Getenv("GOHERMIT_CODEX_ACCESS_TOKEN"))
 	source := "environment"
 	var refreshToken string
+	if accessToken == "" && store != nil {
+		if tokens, ok := store.codexTokens(); ok {
+			accessToken, refreshToken, source = tokens.AccessToken, tokens.RefreshToken, "GoHermit settings"
+		}
+	}
 	if accessToken == "" {
 		tokens, path, err := readCodexCLIAuth()
 		if err != nil {
@@ -68,7 +74,18 @@ func ResolveCodex(ctx context.Context) (CodexCredentials, error) {
 			return CodexCredentials{}, err
 		}
 		accessToken = refreshed.AccessToken
+		refreshToken = refreshed.RefreshToken
+		if store != nil && source == "GoHermit settings" {
+			if err = store.saveCodex(refreshed); err != nil {
+				return CodexCredentials{}, fmt.Errorf("save refreshed Codex login: %w", err)
+			}
+		}
 	}
+	return CodexCredentials{Token: accessToken, Headers: CodexHeaders(accessToken), Source: source}, nil
+}
+
+// CodexHeaders returns the headers required by the ChatGPT Codex backend.
+func CodexHeaders(accessToken string) map[string]string {
 	headers := map[string]string{
 		"User-Agent": "codex_cli_rs/0.0.0 (GoHermit)",
 		"originator": "codex_cli_rs",
@@ -76,7 +93,7 @@ func ResolveCodex(ctx context.Context) (CodexCredentials, error) {
 	if accountID := codexAccountID(accessToken); accountID != "" {
 		headers["ChatGPT-Account-ID"] = accountID
 	}
-	return CodexCredentials{Token: accessToken, Headers: headers, Source: source}, nil
+	return headers
 }
 
 func readCodexCLIAuth() (codexTokens, string, error) {

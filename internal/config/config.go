@@ -158,6 +158,21 @@ func CompanyPresets() []CompanyPreset {
 	return out
 }
 
+// AccessProfile resolves an authentication method by company and access ID.
+func AccessProfile(companyID, accessID string) (AccessPreset, bool) {
+	for _, company := range companyPresets {
+		if company.ID != companyID {
+			continue
+		}
+		for _, access := range company.Access {
+			if access.ID == accessID {
+				return access, true
+			}
+		}
+	}
+	return AccessPreset{}, false
+}
+
 // AgentPresets returns the available single-agent behavior profiles.
 func AgentPresets() []AgentPreset {
 	out := make([]AgentPreset, len(agentPresets))

@@ -3,47 +3,73 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>GoHermit Lab</title>
+  <title>GoHermit</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <main>
-    <header>
-      <div><span class="eyebrow">LOCAL AGENT LAB</span><h1>GoHermit</h1></div>
-      <span id="health" class="pill muted">连接中</span>
-    </header>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">G</span><div><strong>GoHermit</strong><small>Local Agent Console</small></div></div>
+      <nav aria-label="主导航">
+        <button class="nav-item active" data-page="dashboard" data-testid="nav-dashboard"><span>◫</span>概览</button>
+        <button class="nav-item" data-page="run" data-testid="nav-run"><span>▶</span>运行 Agent</button>
+        <button class="nav-item" data-page="settings" data-testid="nav-settings"><span>⚙</span>模型接入</button>
+      </nav>
+      <div class="sidebar-status"><i id="health-dot"></i><span id="health">正在连接</span></div>
+    </aside>
 
-    <section class="config-card">
-      <div class="section-title">
-        <div><span class="step">01</span><h2>选择运行配置</h2></div>
-        <span class="section-help">厂商 → 接入方式 → 模型 → Agent</span>
-      </div>
-      <div class="config-grid">
-        <label><span>模型厂商</span><select id="company" data-testid="company-select"></select></label>
-        <label><span>接入方式</span><select id="access" data-testid="access-select"></select></label>
-        <label><span>模型</span><select id="model" data-testid="model-select"></select></label>
-        <label><span>Agent</span><select id="agent" data-testid="agent-select"></select></label>
-      </div>
-      <div class="selection-status">
-        <div><span class="label">通道</span><strong id="channel">—</strong></div>
-        <div><span class="label">协议</span><strong id="protocol">—</strong></div>
-        <div><span class="label">认证</span><strong id="key">—</strong></div>
-        <p id="access-note">正在读取服务端能力。</p>
-      </div>
-    </section>
+    <main>
+      <header class="topbar"><div><h1 id="page-title">概览</h1><p id="page-subtitle">查看服务和模型接入状态</p></div><span id="version" class="version">—</span></header>
 
-    <section class="composer">
-      <div class="section-title"><div><span class="step">02</span><h2>交给 Agent</h2></div></div>
-      <label class="sr-only" for="task">开发任务</label>
-      <textarea id="task" maxlength="16384" placeholder="例如：检查项目结构，运行测试并修复失败用例。"></textarea>
-      <div class="actions"><span id="hint">配置来自浏览器，密钥始终只在服务端读取。</span><button id="run">开始运行</button></div>
-    </section>
+      <section id="page-dashboard" class="page active">
+        <div class="metric-grid">
+          <article class="metric"><span>服务状态</span><strong id="metric-service">检查中</strong><small>本机 Docker 服务</small></article>
+          <article class="metric"><span>可用接入</span><strong id="metric-providers">0</strong><small>已登录或已设置 Key</small></article>
+          <article class="metric"><span>运行状态</span><strong id="metric-run">空闲</strong><small>同一时间运行一个任务</small></article>
+        </div>
+        <article class="panel">
+          <div class="panel-head"><div><h2>已连接的模型服务</h2><p>只有这里显示为可用的接入方式，才会出现在运行页面。</p></div><button class="secondary" data-go="settings">管理接入</button></div>
+          <div id="connected-list" class="provider-list"></div>
+        </article>
+        <article class="panel compact"><h2>工作区</h2><code id="workspace">—</code></article>
+      </section>
 
-    <section class="activity">
-      <div class="activity-title"><div><span class="step">03</span><h2>实时事件</h2></div><button id="clear" class="ghost">清空</button></div>
-      <div id="events" class="events"><p class="empty">尚未运行任务。</p></div>
-    </section>
-  </main>
+      <section id="page-run" class="page">
+        <div id="run-empty" class="empty-state hidden">
+          <div class="empty-icon">⌁</div><h2>还没有可用的模型</h2>
+          <p>先登录 Codex，或为一个 API 接入方式设置 Key。</p>
+          <button class="primary" data-go="settings">前往模型接入</button>
+        </div>
+        <div id="run-content">
+          <article class="panel">
+            <div class="panel-head"><div><h2>运行配置</h2><p>依次选择公司、接入方式、模型和 Agent。</p></div><span id="access-badge" class="status-badge ready">可用</span></div>
+            <div class="config-grid">
+              <label><span>公司</span><select id="company" data-testid="company-select"></select></label>
+              <label><span>接入方式</span><select id="access" data-testid="access-select"></select></label>
+              <label><span>模型</span><select id="model" data-testid="model-select"></select></label>
+              <label><span>Agent</span><select id="agent" data-testid="agent-select"></select></label>
+            </div>
+            <p id="access-note" class="note"></p>
+          </article>
+          <article class="panel composer">
+            <label for="task"><strong>任务</strong><span>告诉 Agent 需要完成什么</span></label>
+            <textarea id="task" maxlength="16384" placeholder="例如：检查项目结构，运行测试并修复失败用例。"></textarea>
+            <div class="actions"><span id="run-hint">密钥只在服务端使用。</span><button id="run" class="primary" data-testid="run-button">开始运行</button></div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><h2>实时事件</h2><p>Agent 的思考、工具调用和结果会显示在这里。</p></div><button id="clear" class="text-button">清空</button></div>
+            <div id="events" class="events"><p class="placeholder">尚未运行任务。</p></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="page-settings" class="page">
+        <div class="intro"><h2>模型接入</h2><p>先接入服务，再到运行页面选择模型。API Key 保存在 GoHermit 的独立数据卷中，不写入项目或浏览器存储。</p></div>
+        <div id="settings-list" class="settings-list"></div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
   <script src="/app.js" defer></script>
 </body>
 </html>

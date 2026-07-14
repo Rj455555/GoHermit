@@ -13,10 +13,12 @@ services:
       DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
       ALIBABA_CODING_PLAN_API_KEY: "${ALIBABA_CODING_PLAN_API_KEY:-}"
       CODEX_HOME: "/codex"
+      GOHERMIT_AUTH_STORE: "/data/auth.json"
     volumes:
       - "${GOHERMIT_WORKSPACE:-./sandbox}:/workspace"
       - "${GOHERMIT_CONFIG:-./configs/codex.toml}:/config/hermit.toml:ro"
       - "${HOME}/.codex:/codex:ro"
+      - "gohermit-data:/data"
     init: true
     restart: unless-stopped
     security_opt:
@@ -28,3 +30,6 @@ services:
       interval: 15s
       timeout: 3s
       retries: 3
+
+volumes:
+  gohermit-data:

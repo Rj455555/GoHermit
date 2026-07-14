@@ -50,6 +50,7 @@ type Runtime struct {
 // RuntimeOptions contains validated, non-secret per-run overrides.
 type RuntimeOptions struct {
 	Selection *config.RuntimeSelection
+	APIKey    string
 }
 
 func (r *Runtime) Close() {
@@ -293,7 +294,7 @@ func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, 
 		conf.Model.BaseURL = preset.BaseURL
 		conf.Model.Name = preset.Model
 		conf.Model.APIKeyEnv = preset.APIKeyEnv
-		conf.Model.APIKey = ""
+		conf.Model.APIKey = strings.TrimSpace(options.APIKey)
 		conf.Agent.Profile = profile.ID
 		if err = conf.Validate(); err != nil {
 			return nil, err
@@ -366,6 +367,9 @@ func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, 
 
 func NewProvider(conf config.Config) (model.Provider, error) {
 	if conf.Model.Provider == "openai-codex" {
+		if strings.TrimSpace(conf.Model.APIKey) != "" {
+			return model.NewResponsesProvider(model.ResponsesConfig{BaseURL: conf.Model.BaseURL, APIKey: conf.Model.APIKey, Headers: modelauth.CodexHeaders(conf.Model.APIKey), Timeout: conf.Model.RequestTimeout.Value(), MaxRetries: conf.Model.MaxRetries})
+		}
 		credentials, err := modelauth.ResolveCodex(context.Background())
 		if err != nil {
 			return nil, err

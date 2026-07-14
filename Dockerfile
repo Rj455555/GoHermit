@@ -8,7 +8,8 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/hermit ./cmd/hermi
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/hermit-web ./cmd/hermit-web
 
 FROM ${GO_IMAGE}
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git && rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /data && chown 501:20 /data
 COPY --from=build /out/hermit /usr/local/bin/hermit
 COPY --from=build /out/hermit-web /usr/local/bin/hermit-web
 ENV HOME=/tmp/gohermit GOCACHE=/tmp/go-cache
