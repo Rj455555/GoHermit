@@ -64,9 +64,10 @@ GoHermit `0.4.0-dev` is a foreground, local-first, single-owner coding harness. 
 ## Current verified state
 
 - The v0.2 Harness baseline passed normal tests, race tests, vet, CLI/Web builds, and cross-builds on the Mac development host before v0.3 work began.
-- For v0.3, focused team, Owner Profile, Session migration, context, Worker replay, and Web API tests passed before Windows Application Control began blocking newly built unsigned test executables. The current tree compiles those packages with Go 1.24.8.
-- After the latest v0.3 safety fixes, all 19 packages compile, `go vet ./...` passes, and Windows amd64, Linux amd64, and Darwin arm64 CLI/Web builds pass with Go 1.24.8.
-- Mac formatting inspection, `go test ./...`, `go test -race ./...`, vet, native/cross-builds, Compose validation, Docker rebuild, health/API, and static workbench acceptance pass. A real Codex Team Mission remains an explicit opt-in smoke; push status is tracked in `docs/ai/handoff-v0.3.md`.
+- The v0.3 Personal Agent Team and Owner Profile milestone passed normal/race tests, vet, native/cross-builds, Compose validation, Docker acceptance, and recovery tests; its frozen record is `docs/ai/handoff-v0.3.md`.
+- For v0.4, Plan state-machine, schema migration, single-Agent lifecycle, Team lifecycle, verifier-failure, cancellation/interruption, SSE ordering, and persistence tests pass.
+- The v0.4 tree passes Mac formatting inspection, frontend JavaScript syntax, `go test ./...`, `go test -race ./...`, vet, native CLI/Web builds, and Linux amd64 plus Windows amd64 CLI/Web cross-builds.
+- Compose validation, Docker rebuild, container health, `/api/health`, `/api/info`, and static Live Plan asset acceptance pass. The local workbench reports `0.4.0-dev`; exact repository/deployment state is in `docs/ai/handoff-v0.4.md`.
 - Python and Node echo plugin lifecycles are covered by tests; restricted roles additionally filter plugin tools by declared permission and mutation flag.
 - Chat Completions and Responses HTTP behavior are tested with local servers, including reasoning continuation; no paid API call is part of the test suite.
 - Docker Compose binds the Web surface to host loopback, mounts Codex CLI auth read-only, and persists Web-managed credentials in a dedicated data volume.
