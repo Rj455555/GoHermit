@@ -25,12 +25,12 @@ Updated 2026-07-16. This file records the exact milestone state.
 ## Pending verification and release work
 
 - Run one explicit Codex live Team smoke only with the owner's approval/account; it is never a default test. That smoke should exercise a new Team Session, per-role activity, Lead-only final response, follow-up, cancel or interruption, refresh/SSE replay, and resume.
-- Push the amended milestone commit and update the intended pull request.
+- Merge/update the stacked branch after PR #1 changes; PR #2 intentionally targets the v0.2 feature branch so its diff stays limited to v0.3.
 
 ## Repository and external state
 
 - Branch: `agent/personal-team-v0.3`, based on `4d987c7`.
-- The milestone commit is present locally and on the Mac worktree; this handoff update is folded into it before push.
+- The branch is pushed and tracked by draft PR #2: `https://github.com/Rj455555/GoHermit/pull/2`.
 - The Mac repository switched to the v0.3 branch and its loopback Docker service was rebuilt. A hidden Windows SSH-tunnel helper now reconnects port 8787 automatically.
 - `sandbox/.gohermit/` is runtime data and must remain untracked.
 
