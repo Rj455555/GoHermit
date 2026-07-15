@@ -19,6 +19,7 @@ type Config struct {
 	CompressionThreshold, HardLimitThreshold float64
 	ReserveOutputTokens                      int
 	SystemPrompt                             string
+	OwnerProfile                             string
 }
 type Manager struct{ cfg Config }
 
@@ -32,8 +33,14 @@ func New(c Config) (*Manager, error) {
 // PromptForProfile returns the durable behavior prompt for a validated agent profile.
 func PromptForProfile(profile string) string {
 	switch profile {
+	case "lead", "team":
+		return DefaultSystem + " Act as the single owner-facing Lead Agent. Coordinate from structured handoffs, do not modify files, and report verified outcomes and unresolved risks concisely."
+	case "explorer":
+		return DefaultSystem + " Act as a read-only Explorer. Inspect the workspace and return a compact evidence-backed implementation brief for another agent."
 	case "review":
 		return DefaultSystem + " Act as a code reviewer. Inspect evidence and report prioritized findings. Do not modify files or execute mutating commands."
+	case "verifier":
+		return DefaultSystem + " Act as an independent Verifier. Do not modify implementation files. Run relevant deterministic tests after the final mutation and report explicit pass or fail evidence."
 	case "devops":
 		return DefaultSystem + " Focus on builds, tests, Git state, deployment configuration, and operational diagnosis. Make only workspace-scoped changes required by the task."
 	default:
@@ -58,6 +65,9 @@ func (m *Manager) BuildRun(workspace, goal, summary string, recent []model.Messa
 		systemPrompt = DefaultSystem
 	}
 	layers := []model.Message{{Role: model.RoleSystem, Content: systemPrompt}}
+	if profile := strings.TrimSpace(m.cfg.OwnerProfile); profile != "" {
+		layers = append(layers, model.Message{Role: model.RoleSystem, Content: profile})
+	}
 	if b, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md")); err == nil {
 		layers = append(layers, model.Message{Role: model.RoleSystem, Content: "Project rules:\n" + string(b)})
 	}
@@ -100,6 +110,12 @@ func (m *Manager) BuildRun(workspace, goal, summary string, recent []model.Messa
 		}
 	}
 	return layers, compressed
+}
+
+// SetOwnerProfile attaches bounded, explicit single-owner context to this
+// runtime. Runtime instances are not shared between concurrent Runs.
+func (m *Manager) SetOwnerProfile(profile string) {
+	m.cfg.OwnerProfile = strings.TrimSpace(profile)
 }
 func dedupe(in []model.Message) []model.Message {
 	seen := map[string]bool{}

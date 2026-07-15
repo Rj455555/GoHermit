@@ -40,8 +40,9 @@ func ClassifyShell(command string) Decision {
 	}
 	fields := strings.Fields(trimmed)
 	for _, arg := range fields[1:] {
-		clean := filepath.Clean(strings.Trim(arg, `"'`))
-		if filepath.IsAbs(clean) || windowsDrive.MatchString(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, `..\`) {
+		raw := strings.Trim(arg, `"'`)
+		clean := filepath.Clean(raw)
+		if strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, `\`) || filepath.IsAbs(clean) || windowsDrive.MatchString(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, `..\`) {
 			return Decision{Blocked, "path may escape workspace"}
 		}
 	}

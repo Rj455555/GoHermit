@@ -24,6 +24,10 @@ The Web API reports only authentication type, configured/not-configured state, a
 
 The Web surface has no user authentication and must remain bound to host loopback or accessed through an SSH tunnel. Same-origin checks, request limits, a restrictive content security policy, one active run, fixed server-side workspace/config, dropped container capabilities, and no Docker socket reduce its local attack surface. They do not make it suitable for public exposure or hostile repositories.
 
+Owner Profile data is separate from credentials and workspace/project memory. It is bounded, atomically mode-0600 written outside the repository, rejects common credential/token patterns, and enters model context only as a compact explicit profile plus confirmed facts. The owner can view, edit, and forget facts through same-origin APIs.
+
+Multi-agent execution does not expand the workspace boundary. Roles receive fixed tool policies; Explorer, Reviewer, and Lead are read-only, Verifier adds only the bounded test runner, and one Mission writer lease serializes Builder/Operator mutation. Restricted roles receive only plugin tools declared `read` and non-mutating. Agents persist structured Handoffs instead of free-form conversations. Operator remains disabled by default and does not authorize commit, push, deploy, or external messaging.
+
 ## Plugins
 
 Plugins may access anything allowed to their OS process. GoHermit limits messages, time, concurrency, stdout protocol, and lifecycle, but does not sandbox filesystem or network access. Keep plugin entries disabled until reviewed; use an OS sandbox for hostile plugins.

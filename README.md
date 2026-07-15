@@ -2,11 +2,11 @@
 
 GoHermit is a lightweight, local-first AI coding-agent runtime written in Go. It reads a workspace, calls an OpenAI-compatible model, executes bounded tools, runs tests, and persists auditable sessions that can be resumed after interruption.
 
-GoHermit is not a hosted service, a multi-agent orchestrator, a workflow engine, or a port of Hermes/OpenClaw. Its provider catalog adapts Hermes's canonical-provider, display-group, and auth-type split while keeping a small provider-neutral Go core.
+GoHermit is not a hosted service, a general-purpose multi-agent platform, an unbounded workflow engine, or a port of Hermes/OpenClaw. Its provider catalog adapts Hermes's canonical-provider, display-group, and auth-type split while keeping a small provider-neutral Go core.
 
 ## Status
 
-The main branch is now `0.2.0-dev`. It adds OpenAI Codex Plan and direct API paths, DeepSeek and Qwen providers, selectable single-agent profiles, durable multi-turn Sessions, verified project memory, plus a local-only Web console and Docker packaging. It remains single-user and foreground; there is no daemon, telemetry, automatic Git push, or cloud deployment.
+The current development version is `0.3.0-dev`. It adds a private Personal Agent Team above the durable v0.2 Harness: Lead, Explorer, Builder, Reviewer, repair Builder, and Verifier collaborate through bounded Handoffs, stable recoverable Worker Sessions, one workspace writer, and independent verification. An explicit Owner Profile provides cross-project preferences without putting personal data or secrets in repositories. The service remains single-owner, local-only, foreground, and free of telemetry or automatic Git push.
 
 ## Build and install
 
@@ -30,7 +30,7 @@ hermit config validate
 hermit run --workspace /path/to/project "inspect the project and fix failing tests"
 ```
 
-Sessions are written to `.gohermit/sessions/<session-id>/` in the workspace. The Web console keeps one Session across follow-up messages; every message creates a bounded, verified Run.
+Sessions are written to `.gohermit/sessions/<session-id>/` in the workspace. The Web console keeps one Session across follow-up messages; every message creates a bounded, verified Run. Team Runs add a Mission and hidden role-specific execution Sessions. Owner preferences use `GOHERMIT_OWNER_STORE` outside the workspace (Compose uses `/data/owner.json`).
 
 ## Commands
 
@@ -58,7 +58,7 @@ docker compose up --build -d
 open http://127.0.0.1:8787
 ```
 
-The Compose port is published only on loopback. The page selects company, access path, model, and Agent when creating a Session, then supports continued conversation, event replay, cancellation, and interrupted-run recovery. API keys remain server-side. Codex Plan imports an existing Codex CLI login from the host's `${HOME}/.codex` read-only mount. See [local Web and Docker guide](docs/web-debug.md).
+The Compose port is published only on loopback. The page selects company, access path, model, and either a single Agent or Personal Agent Team when creating a Session, then supports continued conversation, team activity, event replay, cancellation, and interrupted-run recovery. API keys remain server-side. Codex Plan imports an existing Codex CLI login from the host's `${HOME}/.codex` read-only mount. See [local Web and Docker guide](docs/web-debug.md).
 
 Configured plugins are opt-in:
 
@@ -76,13 +76,15 @@ Discovered tools are exposed as `plugin.python-echo.echo`.
 
 All built-in file operations are constrained to the resolved workspace. Absolute paths, `..` traversal, Windows drive paths, symlink escapes, credential-like files, `.git` writes, and `.gohermit` writes are rejected. Shell execution uses a narrow read/build allowlist; other commands return `permission_required` or `blocked` and are not run in non-interactive mode.
 
-External plugins are separate processes and form an explicit trust boundary. Only configure plugins you trust: the operating system, not GoHermit, ultimately controls what their process can access.
+External plugins are separate processes and form an explicit trust boundary. Read-only team roles only receive plugin tools declared `read` and non-mutating, but the plugin process itself still has its operating-system privileges. Only configure plugins you trust.
 
 ## Documentation
 
 - [AI documentation and low-token reading index](docs/ai/README.md)
 - [AI context and code map](docs/ai/context.md)
 - [Agent Harness quick reference](docs/ai/harness.md)
+- [Personal Agent Team quick reference](docs/ai/team.md)
+- [Current v0.3 implementation handoff](docs/ai/handoff-v0.3.md)
 - [Next development plan](docs/ai/next-development-plan.md)
 - [Architecture](docs/architecture.md)
 - [Project structure](docs/project-structure.md)

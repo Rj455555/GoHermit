@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +21,9 @@ import (
 	modelauth "github.com/Rj455555/GoHermit/internal/auth"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
+	"github.com/Rj455555/GoHermit/internal/owner"
 	"github.com/Rj455555/GoHermit/internal/session"
+	"github.com/Rj455555/GoHermit/internal/team"
 )
 
 //go:embed assets/*
@@ -39,11 +42,13 @@ type Server struct {
 	subscribers   map[string]map[chan event.Event]struct{}
 	static        http.Handler
 	credentials   *modelauth.Store
+	owner         *owner.Store
 	logins        *modelauth.LoginManager
 	build         func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error)
 	codexModelsMu sync.Mutex
 	codexModels   []config.ModelOption
 	codexModelsAt time.Time
+	teamWorker    team.Worker
 }
 
 func New(workspace, configPath string) (*Server, error) {
@@ -52,6 +57,10 @@ func New(workspace, configPath string) (*Server, error) {
 		return nil, err
 	}
 	credentials, err := modelauth.NewStore("")
+	if err != nil {
+		return nil, err
+	}
+	ownerStore, err := owner.NewStore("")
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +82,7 @@ func New(workspace, configPath string) (*Server, error) {
 		static:      http.FileServer(http.FS(root)),
 		store:       store,
 		credentials: credentials,
+		owner:       ownerStore,
 		logins:      modelauth.NewLoginManager(credentials),
 		subscribers: map[string]map[chan event.Event]struct{}{},
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
@@ -85,6 +95,10 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/info", s.info)
+	mux.HandleFunc("GET /api/owner", s.getOwner)
+	mux.HandleFunc("PUT /api/owner", s.saveOwner)
+	mux.HandleFunc("PUT /api/owner/facts/{id}", s.saveOwnerFact)
+	mux.HandleFunc("DELETE /api/owner/facts/{id}", s.deleteOwnerFact)
 	mux.HandleFunc("POST /api/run", s.run)
 	mux.HandleFunc("POST /api/sessions", s.createSession)
 	mux.HandleFunc("GET /api/sessions", s.listSessions)
@@ -103,6 +117,73 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": app.Version, "active": s.active.Load()})
+}
+
+func (s *Server) getOwner(w http.ResponseWriter, _ *http.Request) {
+	profile, err := s.owner.Load()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) saveOwner(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	var profile owner.Profile
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&profile); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid owner profile: " + err.Error()})
+		return
+	}
+	if err := s.owner.Save(profile); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	profile, _ = s.owner.Load()
+	writeJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) saveOwnerFact(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	var request struct {
+		Category  string `json:"category"`
+		Value     string `json:"value"`
+		Source    string `json:"source"`
+		Confirmed bool   `json:"confirmed"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid owner fact: " + err.Error()})
+		return
+	}
+	profile, err := s.owner.UpsertFact(owner.Fact{ID: r.PathValue("id"), Category: request.Category, Value: request.Value, Source: request.Source, Confirmed: request.Confirmed})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) deleteOwnerFact(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	profile, err := s.owner.ForgetFact(r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
 }
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +224,11 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		currentConfigured, _, _ = s.accessStatus(r.Context(), config.AccessPreset{ID: "openai-codex", AuthType: "oauth_external"})
 	}
 	selection := normalizeSelection(conf.CurrentSelection(), availableCompanies)
+	ownerProfile, ownerErr := s.owner.Load()
+	ownerStatus := map[string]any{"configured": false}
+	if ownerErr == nil {
+		ownerStatus = map[string]any{"configured": owner.Markdown(ownerProfile) != "", "display_name": ownerProfile.Identity.DisplayName}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":   app.Version,
 		"workspace": s.Workspace,
@@ -151,7 +237,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			"model": conf.Model.Name, "api_key_env": conf.Model.APIKeyEnv, "api_key_configured": currentConfigured,
 		},
 		"selection": selection, "companies": companies, "available_companies": availableCompanies, "agents": config.AgentPresets(),
-		"auth_status": authStatus, "active": s.active.Load(),
+		"auth_status": authStatus, "active": s.active.Load(), "owner": ownerStatus,
 	})
 }
 
@@ -274,6 +360,10 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	if selection.Agent == "team" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "the team profile requires the Session/Run API"})
+		return
+	}
 	apiKey, err := s.resolveCredential(r.Context(), selection)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -284,6 +374,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	s.applyOwner(runtime)
 	defer runtime.Close()
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -490,6 +581,15 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 		s.runMu.Unlock()
 		return "", errors.New("session has no active run")
 	}
+	if selection.Agent == "team" && (sess.Mission == nil || sess.Mission.RunID != run.ID) {
+		mission, missionErr := team.DefaultMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget())
+		if missionErr != nil {
+			s.active.Store(false)
+			s.runMu.Unlock()
+			return "", missionErr
+		}
+		sess.Mission = mission
+	}
 	if err = s.store.Save(context.Background(), sess); err != nil {
 		s.active.Store(false)
 		s.runMu.Unlock()
@@ -506,11 +606,16 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 			s.active.Store(false)
 			s.runMu.Unlock()
 		}()
+		if selection.Agent == "team" {
+			s.runTeam(runCtx, sess, runID, selection, apiKey, liveModels)
+			return
+		}
 		runtime, buildErr := s.build(runCtx, s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
 		if buildErr != nil {
 			s.failLaunchedRun(sess, runID, buildErr)
 			return
 		}
+		s.applyOwner(runtime)
 		defer runtime.Close()
 		runtime.Runner.Sink = s.publish
 		if runErr := runtime.Runner.Run(runCtx, sess); runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, context.DeadlineExceeded) {
@@ -519,6 +624,166 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 		}
 	}()
 	return runID, nil
+}
+
+func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID string, selection config.RuntimeSelection, apiKey string, liveModels []config.ModelOption) {
+	run := sess.ActiveRun()
+	if run == nil || run.ID != runID || sess.Mission == nil {
+		s.failLaunchedRun(sess, runID, errors.New("team mission is missing"))
+		return
+	}
+	now := time.Now().UTC()
+	run.Status, run.UpdatedAt = session.RunRunning, now
+	started := event.New(event.TaskStarted, sess.ID)
+	started.RunID, started.MissionID, started.AgentID = runID, sess.Mission.ID, string(team.RoleLead)
+	started = s.store.BufferEvent(sess.ID, started)
+	s.publish(started)
+	profile, _ := s.owner.Load()
+	var worker team.Worker = &app.TeamWorker{
+		Workspace: s.Workspace, ConfigPath: s.ConfigPath, Selection: selection, APIKey: apiKey, Models: liveModels,
+		OwnerContext: owner.Markdown(profile), ParentSessionID: sess.ID, ParentRunID: runID, ParentStore: s.store, Sink: s.publish,
+	}
+	if s.teamWorker != nil {
+		worker = s.teamWorker
+	}
+	coordinator := &team.Coordinator{
+		Worker: worker,
+		Sink: func(teamEvent team.TeamEvent) {
+			runtimeEvent := event.New(teamEventType(teamEvent.Type), sess.ID)
+			runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.WorkItemID = runID, sess.Mission.ID, teamEvent.WorkItemID
+			runtimeEvent.AgentID, runtimeEvent.Message = string(teamEvent.Role), teamEvent.Message
+			runtimeEvent = s.store.BufferEvent(sess.ID, runtimeEvent)
+			s.publish(runtimeEvent)
+		},
+		Checkpoint: func(mission *team.Mission) error {
+			sess.Mission = mission
+			if active := sess.ActiveRun(); active != nil && active.ID == runID {
+				active.ModelCalls = mission.Usage.ModelCalls
+				active.TotalTokens = mission.Usage.Tokens
+				active.UpdatedAt = mission.UpdatedAt
+			}
+			sess.GitState = session.GitState(ctx, s.Workspace)
+			return s.store.Save(context.WithoutCancel(ctx), sess)
+		},
+	}
+	err := coordinator.Run(ctx, sess.Mission)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			s.finishTeamCancelled(sess, run, err)
+			return
+		}
+		s.failLaunchedRun(sess, runID, err)
+		return
+	}
+	final := finalTeamHandoff(sess.Mission)
+	now = time.Now().UTC()
+	run.Status, run.FinalMessage, run.CompletedAt, run.UpdatedAt = session.RunCompleted, final.Summary, &now, now
+	run.ModelCalls, run.TotalTokens = sess.Mission.Usage.ModelCalls, sess.Mission.Usage.Tokens
+	run.ModifiedFiles = missionModifiedFiles(sess.Mission)
+	for _, handoff := range sess.Mission.Handoffs {
+		for _, check := range handoff.Checks {
+			sess.TestResults = append(sess.TestResults, session.TestResult{Command: check.Command, Passed: check.Passed, Summary: check.Summary, Time: handoff.CreatedAt, RunID: runID})
+		}
+	}
+	sess.ActiveRunID, sess.LastError = "", ""
+	sess.CompletedSteps = append(sess.CompletedSteps, "Personal Agent Team completed mission "+sess.Mission.ID)
+	if final.Summary == "" {
+		final.Summary = "团队任务已完成并通过独立验证。"
+		run.FinalMessage = final.Summary
+	}
+	_ = s.store.AppendMessage(sess.ID, session.MessageRecord{RunID: runID, Role: "assistant", Content: final.Summary})
+	completed := event.New(event.TaskCompleted, sess.ID)
+	completed.RunID, completed.MissionID, completed.AgentID, completed.Message = runID, sess.Mission.ID, string(team.RoleLead), final.Summary
+	completed = s.store.BufferEvent(sess.ID, completed)
+	_ = s.store.Save(context.Background(), sess)
+	s.publish(completed)
+}
+
+func (s *Server) finishTeamCancelled(sess *session.Session, run *session.Run, cause error) {
+	now := time.Now().UTC()
+	status, eventType := session.RunCancelled, event.TaskCancelled
+	if errors.Is(cause, context.DeadlineExceeded) {
+		status, eventType = session.RunInterrupted, event.RunInterrupted
+		if sess.Mission != nil && sess.Mission.Status != team.Interrupted {
+			sess.Mission.Interrupt(cause.Error())
+		}
+	} else if sess.Mission != nil {
+		sess.Mission.Cancel(cause.Error())
+	}
+	run.Status, run.Error, run.UpdatedAt = status, cause.Error(), now
+	if sess.Mission != nil {
+		run.ModelCalls, run.TotalTokens = sess.Mission.Usage.ModelCalls, sess.Mission.Usage.Tokens
+	}
+	if status == session.RunInterrupted {
+		run.CompletedAt = nil
+	} else {
+		run.CompletedAt = &now
+		sess.ActiveRunID = ""
+	}
+	runtimeEvent := event.New(eventType, sess.ID)
+	runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.Error = run.ID, sess.Mission.ID, cause.Error()
+	runtimeEvent = s.store.BufferEvent(sess.ID, runtimeEvent)
+	_ = s.store.Save(context.Background(), sess)
+	s.publish(runtimeEvent)
+}
+
+func teamEventType(value team.TeamEventType) event.Type {
+	switch value {
+	case team.MissionStarted:
+		return event.MissionStarted
+	case team.MissionFinished:
+		return event.MissionCompleted
+	case team.MissionFailed:
+		return event.MissionFailed
+	case team.WorkItemStarted:
+		return event.WorkItemStarted
+	case team.WorkItemDone:
+		return event.WorkItemCompleted
+	case team.WorkItemFailed:
+		return event.WorkItemFailed
+	default:
+		return event.SessionUpdated
+	}
+}
+
+func finalTeamHandoff(mission *team.Mission) team.Handoff {
+	if mission == nil {
+		return team.Handoff{}
+	}
+	for i := len(mission.Handoffs) - 1; i >= 0; i-- {
+		if mission.Handoffs[i].Role == team.RoleLead {
+			return mission.Handoffs[i]
+		}
+	}
+	return team.Handoff{}
+}
+
+func missionModifiedFiles(mission *team.Mission) []string {
+	seen := map[string]bool{}
+	var files []string
+	if mission == nil {
+		return files
+	}
+	for _, handoff := range mission.Handoffs {
+		for _, file := range handoff.ModifiedFiles {
+			if file != "" && !seen[file] {
+				seen[file] = true
+				files = append(files, file)
+			}
+		}
+	}
+	sort.Strings(files)
+	return files
+}
+
+func (s *Server) applyOwner(runtime *app.Runtime) {
+	if runtime == nil || runtime.Runner == nil || runtime.Runner.Context == nil {
+		return
+	}
+	profile, err := s.owner.Load()
+	if err == nil {
+		runtime.Runner.Context.SetOwnerProfile(owner.Markdown(profile))
+	}
 }
 
 func compactTitle(message string) string {
@@ -590,6 +855,9 @@ func (s *Server) sessionEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+	if lastEventID, parseErr := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64); parseErr == nil && lastEventID > after {
+		after = lastEventID
+	}
 	ch := s.subscribe(r.PathValue("id"))
 	defer s.unsubscribe(r.PathValue("id"), ch)
 	history, err := s.store.Events(r.PathValue("id"), after)

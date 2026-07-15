@@ -5,7 +5,8 @@
 - Unit tests cover configuration, context budgets, policy, redaction, registry/executor, and provider conversion.
 - Component tests use temporary workspaces, symlinks, Git commands, HTTP servers, session files, and real Python plugin processes.
 - Agent tests inject deterministic providers/tools to cover turns, timeouts, completion, and error feedback.
-- Harness tests cover schema v1-to-v2 migration, Session/Run transitions, message/event history, external-change reconciliation, per-call context, project-memory redaction, mutation verification gates, and Session API/SSE replay.
+- Harness tests cover schema v1/v2-to-v3 migration, Session/Run transitions, message/event history, external-change reconciliation, per-call context, project-memory redaction, mutation verification gates, and Session API/SSE replay.
+- Team tests cover dependency order, structured Handoffs, parallel readers, the single writer lease, terminal batch failure, model budgets, Verifier gating, stable hidden Worker replay protection, parent Session completion, Owner Profile secret rejection, Owner Web APIs, and restricted plugin-tool filtering.
 - CLI build and smoke commands verify packaging and exit behavior.
 
 ## Commands

@@ -14,6 +14,8 @@ Agent loop ── Context manager
     └── Session store ── atomic JSON / batched JSONL ── .gohermit
 ```
 
+For a Team Run, a presentation-neutral Coordinator sits above the existing Agent loop. It schedules dependency-ready WorkItems, gives each role only its dependency Handoffs, checkpoints the parent Mission, and uses stable hidden child Sessions for the existing Runner. Parallel read-only work is allowed; a Mission-wide lease permits one workspace writer. Only the Lead Handoff becomes a visible assistant message.
+
 Dependencies point inward: `cmd` depends on `internal/app`; app assembles domain packages; agent depends on provider/tool/session abstractions; infrastructure packages implement them. Agent never imports the CLI.
 
 ## Agent loop
@@ -41,12 +43,12 @@ The registry rejects duplicate names. The executor resolves the tool, applies a 
 
 ## Session flow
 
-A Session is a durable conversation; each user message creates a Run with its own status and verification state. Visible user/assistant messages and sequenced events are append-only JSONL, while bounded recovery state is atomically replaced in `session.json`. Schema v1 migrates explicitly to v2. Workspace identity mismatch fails closed; external file/Git changes trigger reconciliation instead of discarding the Session. Started-but-unfinished tools become uncertain and are never blindly replayed.
+A Session is a durable conversation; each user message creates a Run with its own status and verification state. Visible user/assistant messages and sequenced events are append-only JSONL, while bounded recovery state is atomically replaced in `session.json`. Schema v1 and v2 migrate explicitly to v3. Team Missions add WorkItems and Handoffs; each WorkItem binds a stable hidden execution Session so recovery reuses completed results and resumes interrupted Runner state. Workspace identity mismatch fails closed; external file/Git changes trigger reconciliation instead of discarding the Session. Started-but-unfinished tools become uncertain and are never blindly replayed.
 
 ## Cancellation and errors
 
-One parent context covers the task. Model calls, tools, Git checks, tests, and plugins derive bounded child contexts. Cancellation moves the session to `cancelled`, saves a final summary, emits `task_cancelled`, and exits with code 130. Ordinary runtime errors move it to `failed`. Tool errors remain inside the loop so the model may repair or choose another action.
+One parent context covers the active Run. Model calls, tools, Git checks, tests, and plugins derive bounded child contexts. Explicit cancellation makes the Run terminal `cancelled`; a timeout or process stop leaves it `interrupted` and resumable. The Session remains `open`. Ordinary runtime errors move the Run to `failed`. Tool errors remain inside the loop so the model may repair or choose another action.
 
 ## Plugin boundary
 
-Plugins are configured child processes, not Go `.so` modules. Stdout is reserved for one JSON-RPC object per line; stderr is bounded diagnostic output. The supervisor multiplexes request IDs, limits message size/concurrency, detects invalid JSON and abnormal exit, forwards cancellation, and kills a process that cannot shut down before its deadline. A plugin crash cannot crash Agent Core.
+Plugins are configured child processes, not Go `.so` modules. Stdout is reserved for one JSON-RPC object per line; stderr is bounded diagnostic output. The supervisor multiplexes request IDs, limits message size/concurrency, detects invalid JSON and abnormal exit, forwards cancellation, and kills a process that cannot shut down before its deadline. Restricted roles register only plugin tools declared read-only and non-mutating. A plugin crash cannot crash Agent Core.

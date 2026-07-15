@@ -6,12 +6,73 @@ let eventSource = null;
 let lastSequence = 0;
 let streamingBubble = null;
 let loginTimer = null;
+let connectionState = 'connecting';
+let reconnecting = false;
+let ownerProfile = null;
 
 async function request(url, options) {
-  const response = await fetch(url, options);
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || '请求失败');
-  return data;
+  try {
+    const response = await fetch(url, options);
+    setConnectivity('online');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || '请求失败');
+    return data;
+  } catch (error) {
+    if (error instanceof TypeError) {
+      setConnectivity('offline');
+      throw new Error('无法连接 GoHermit 服务；Mac mini 可能离线或 SSH 隧道已断开');
+    }
+    throw error;
+  }
+}
+
+function setConnectivity(state) {
+  connectionState = state;
+  const online = state === 'online';
+  const reconnectingNow = state === 'reconnecting';
+  const busy = online && catalog && catalog.active;
+  $('#offline-banner').classList.toggle('hidden', online || reconnectingNow);
+  $('#retry-connection').disabled = reconnectingNow;
+  $('#service-status').textContent = online ? (busy ? 'Agent 运行中' : '服务正常') : (reconnectingNow ? '正在重新连接' : '连接异常');
+  $('#service-dot').className = online ? (busy ? 'busy' : 'ready') : (reconnectingNow ? 'busy' : 'error');
+  $('#health-dot').className = `health-dot ${online ? (busy ? 'busy' : 'ready') : (reconnectingNow ? 'busy' : 'error')}`;
+  $('#health-dot').title = online ? (busy ? 'Agent 运行中' : '服务正常') : (reconnectingNow ? '正在重新连接' : '服务离线');
+  $('#new-task').disabled = !online;
+  for (const control of document.querySelectorAll('#new-task-options select')) control.disabled = !online;
+  if (!online) {
+    $('#task').disabled = true;
+    $('#send').disabled = true;
+    $('#composer-note').textContent = reconnectingNow ? '正在重新连接服务…' : '服务离线；输入内容不会发送，恢复连接后可继续。';
+    setRunStatus(current ? '状态未知' : '离线', 'error');
+  } else {
+    $('#composer-note').textContent = '模型可能出错，请检查重要改动。';
+    if (catalog) renderCatalog();
+    if (current) renderRunState();
+  }
+}
+
+async function checkHealth(manual = false) {
+  if (reconnecting) return;
+  reconnecting = true;
+  const wasOffline = connectionState !== 'online';
+  if (manual) setConnectivity('reconnecting');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    const response = await fetch('/api/health', {cache: 'no-store', signal: controller.signal});
+    if (!response.ok) throw new Error('health check failed');
+    setConnectivity('online');
+    if (wasOffline) {
+      await loadInfo();
+      await loadSessions();
+      toast('GoHermit 已重新连接');
+    }
+  } catch (_) {
+    setConnectivity('offline');
+  } finally {
+    clearTimeout(timer);
+    reconnecting = false;
+  }
 }
 
 function toast(message, error = false) {
@@ -64,14 +125,14 @@ function renderCatalog() {
   setOptions($('#company'), available, selection.company, item => item.label);
   setOptions($('#agent'), catalog.agents || [], selection.agent, item => item.label);
   fillAccess(selection.access, selection.model);
-  const enabled = available.length > 0;
+  const enabled = connectionState === 'online' && available.length > 0;
   $('#task').disabled = !enabled;
   $('#send').disabled = !enabled;
   $('#task').placeholder = enabled ? '描述任务，或继续当前会话…' : '请先在设置中接入一个模型';
 }
 
 function renderSelectionHint() {
-  if (!catalog || current) return;
+  if (!catalog || current || connectionState !== 'online') return;
   const company = selectedCompany();
   const access = selectedAccess();
   const agent = selectedAgent();
@@ -160,6 +221,7 @@ function showNewTask(focus = true) {
   $('#welcome').classList.remove('hidden');
   $('#thread').classList.add('empty-thread');
   $('#messages').replaceChildren();
+  $('#team-panel').classList.add('hidden');
   resetActivity();
   $('#new-task-options').classList.remove('hidden');
   $('#session-model').classList.add('hidden');
@@ -199,6 +261,7 @@ async function openSession(id) {
   $('#session-model').classList.remove('hidden');
   renderThreadIdentity();
   renderMessages(current.messages || []);
+  renderMission();
   resetActivity();
   renderRunState();
   lastSequence = 0;
@@ -225,6 +288,49 @@ function renderMessages(messages) {
   root.replaceChildren();
   for (const message of messages) addMessage(message.role, message.content, false);
   requestAnimationFrame(() => { $('#thread').scrollTop = $('#thread').scrollHeight; });
+}
+
+function roleLabel(role) {
+  return ({lead: 'Lead', explorer: 'Explorer', builder: 'Builder', reviewer: 'Reviewer', verifier: 'Verifier', operator: 'Operator'})[role] || role;
+}
+
+function renderMission() {
+  const panel = $('#team-panel');
+  const mission = current && current.session.mission;
+  if (!mission) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  $('#team-summary').textContent = ({queued: '等待开始', running: '团队正在协作', completed: '已完成', failed: '执行失败', interrupted: '可恢复'})[mission.status] || mission.status;
+  const usage = mission.usage || {};
+  const budget = mission.budget || {};
+  $('#team-budget').textContent = `${usage.model_calls || 0}/${budget.max_model_calls || '—'} 次模型调用`;
+  const root = $('#team-members');
+  root.replaceChildren();
+  for (const item of mission.work_items || []) {
+    const card = document.createElement('div');
+    card.className = `team-member ${item.status || 'queued'}`;
+    card.dataset.workItem = item.id;
+    card.innerHTML = '<i></i><div><strong></strong><span></span></div>';
+    card.querySelector('strong').textContent = roleLabel(item.role);
+    card.querySelector('span').textContent = `${item.title} · ${statusText(item.status)}`;
+    root.append(card);
+  }
+}
+
+function renderMissionEvent(type, runtimeEvent) {
+  if (!type.startsWith('work_item_') && !type.startsWith('mission_')) return;
+  if (type.startsWith('mission_')) {
+    $('#team-summary').textContent = eventLabel(type);
+    return;
+  }
+  const card = [...document.querySelectorAll('.team-member')].find(node => node.dataset.workItem === runtimeEvent.work_item_id);
+  if (!card) return;
+  const state = type === 'work_item_started' ? 'running' : (type === 'work_item_completed' ? 'completed' : 'failed');
+  card.className = `team-member ${state}`;
+  const detail = card.querySelector('span');
+  if (detail) detail.textContent = `${runtimeEvent.message || runtimeEvent.work_item_id} · ${statusText(state)}`;
 }
 
 function addMessage(role, content, scroll = true) {
@@ -293,6 +399,8 @@ async function sendMessage() {
     current.session.runs = current.session.runs || [];
     current.session.runs.push({id: result.run_id, status: 'queued', message});
     renderRunState();
+    current = await request(`/api/sessions/${id}`);
+    renderMission();
     await loadInfo();
   } catch (error) {
     toast(error.message, true);
@@ -306,10 +414,11 @@ function connectEvents(sessionID) {
   closeEvents();
   eventSource = new EventSource(`/api/sessions/${sessionID}/events?after=${lastSequence}`);
   eventSource.sessionID = sessionID;
-  const types = ['task_started', 'turn_started', 'model_started', 'model_delta', 'model_completed', 'tool_started', 'tool_completed', 'permission_required', 'checkpoint_saved', 'run_verifying', 'run_interrupted', 'workspace_changed', 'memory_updated', 'session_updated', 'task_completed', 'task_failed', 'task_cancelled'];
+  const types = ['task_started', 'turn_started', 'model_started', 'model_delta', 'model_completed', 'tool_started', 'tool_completed', 'permission_required', 'checkpoint_saved', 'run_verifying', 'run_interrupted', 'workspace_changed', 'memory_updated', 'session_updated', 'mission_started', 'mission_completed', 'mission_failed', 'work_item_started', 'work_item_completed', 'work_item_failed', 'task_completed', 'task_failed', 'task_cancelled'];
   for (const type of types) eventSource.addEventListener(type, source => consumeEvent(type, source));
   eventSource.onerror = () => {
     if (current && current.session.id === sessionID) $('#composer-note').textContent = '事件连接正在重试…';
+    checkHealth();
   };
 }
 
@@ -330,7 +439,9 @@ function consumeEvent(type, sourceEvent) {
     return;
   }
   if (type === 'model_started') streamingBubble = null;
-  addActivity(type, runtimeEvent.error || runtimeEvent.message || runtimeEvent.tool || '');
+  const agent = runtimeEvent.agent_id ? `${roleLabel(runtimeEvent.agent_id)} · ` : '';
+  addActivity(type, agent + (runtimeEvent.error || runtimeEvent.message || runtimeEvent.tool || ''));
+  renderMissionEvent(type, runtimeEvent);
   if (type === 'task_started') setBusyState('运行中', 'running');
   if (type === 'run_verifying') setBusyState('验证中', 'running');
   if (['task_completed', 'task_failed', 'task_cancelled'].includes(type)) {
@@ -374,7 +485,7 @@ function eventIcon(type) {
 }
 
 function eventLabel(type) {
-  return ({task_started: '开始运行', turn_started: '新一轮', model_started: '模型处理中', model_completed: '模型响应完成', tool_started: '调用工具', tool_completed: '工具完成', permission_required: '需要权限', checkpoint_saved: '已保存状态', run_verifying: '验证改动', run_interrupted: '运行中断', workspace_changed: '工作区已变化', memory_updated: '项目记忆已更新', task_completed: '任务完成', task_failed: '任务失败', task_cancelled: '任务已停止'})[type] || type;
+  return ({task_started: '开始运行', turn_started: '新一轮', model_started: '模型处理中', model_completed: '模型响应完成', tool_started: '调用工具', tool_completed: '工具完成', permission_required: '需要权限', checkpoint_saved: '已保存状态', run_verifying: '验证改动', run_interrupted: '运行中断', workspace_changed: '工作区已变化', memory_updated: '项目记忆已更新', mission_started: '团队任务开始', mission_completed: '团队任务完成', mission_failed: '团队任务失败', work_item_started: 'Agent 开始工作', work_item_completed: 'Agent 完成交接', work_item_failed: 'Agent 执行失败', task_completed: '任务完成', task_failed: '任务失败', task_cancelled: '任务已停止'})[type] || type;
 }
 
 function setBusyState(text, state) {
@@ -390,6 +501,7 @@ async function refreshCurrent() {
   current = await request(`/api/sessions/${id}`);
   renderThreadIdentity();
   renderMessages(current.messages || []);
+  renderMission();
   renderRunState();
   $('#composer-note').textContent = '模型可能出错，请检查重要改动。';
   await loadSessions(false);
@@ -415,10 +527,14 @@ async function resumeRun() {
   } catch (error) { toast(error.message, true); }
 }
 
-function openSettings() {
+async function openSettings() {
   $('#settings-drawer').classList.remove('hidden');
   $('#drawer-backdrop').classList.remove('hidden');
   $('#settings-button').classList.add('active');
+  try {
+    ownerProfile = await request('/api/owner');
+    renderOwner();
+  } catch (error) { toast(error.message, true); }
 }
 
 function closeSettings() {
@@ -439,6 +555,72 @@ function renderSettings() {
     for (const access of company.access) group.append(accessCard(company, access));
     root.append(group);
   }
+}
+
+function renderOwner() {
+  if (!ownerProfile) return;
+  const identity = ownerProfile.identity || {};
+  const preferences = ownerProfile.preferences || {};
+  $('#owner-name').value = identity.display_name || '';
+  $('#owner-language').value = identity.language || '';
+  $('#owner-timezone').value = identity.timezone || '';
+  $('#owner-communication').value = preferences.communication || '';
+  $('#owner-coding').value = preferences.coding || '';
+  $('#owner-verification').value = preferences.verification || '';
+  const root = $('#owner-facts');
+  root.replaceChildren();
+  for (const fact of ownerProfile.facts || []) {
+    const card = document.createElement('div');
+    card.className = 'owner-fact';
+    card.innerHTML = '<div><strong></strong><span></span></div><button>忘记</button>';
+    card.querySelector('strong').textContent = `${fact.category}${fact.confirmed ? ' · 已确认' : ''}`;
+    card.querySelector('span').textContent = fact.value;
+    card.querySelector('button').addEventListener('click', () => forgetFact(fact.id));
+    root.append(card);
+  }
+  if (!root.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'owner-empty';
+    empty.textContent = '还没有长期记忆。只保存你明确确认的事实。';
+    root.append(empty);
+  }
+}
+
+async function saveOwner() {
+  const existing = ownerProfile || {};
+  const payload = {
+    schema_version: existing.schema_version || 1,
+    identity: {display_name: $('#owner-name').value.trim(), language: $('#owner-language').value.trim(), timezone: $('#owner-timezone').value.trim()},
+    preferences: {...(existing.preferences || {}), communication: $('#owner-communication').value.trim(), coding: $('#owner-coding').value.trim(), verification: $('#owner-verification').value.trim()},
+    environments: existing.environments || [], facts: existing.facts || []
+  };
+  try {
+    ownerProfile = await request('/api/owner', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+    renderOwner();
+    toast('个人配置已保存');
+  } catch (error) { toast(error.message, true); }
+}
+
+async function addOwnerFact() {
+  const category = $('#fact-category').value.trim();
+  const value = $('#fact-value').value.trim();
+  if (!category || !value) { toast('请填写分类和记忆内容', true); return; }
+  const id = `fact-${Date.now()}`;
+  try {
+    ownerProfile = await request(`/api/owner/facts/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({category, value, source: 'owner-settings', confirmed: true})});
+    $('#fact-category').value = '';
+    $('#fact-value').value = '';
+    renderOwner();
+    toast('长期记忆已添加');
+  } catch (error) { toast(error.message, true); }
+}
+
+async function forgetFact(id) {
+  try {
+    ownerProfile = await request(`/api/owner/facts/${id}`, {method: 'DELETE'});
+    renderOwner();
+    toast('长期记忆已删除');
+  } catch (error) { toast(error.message, true); }
 }
 
 function accessCard(company, access) {
@@ -562,6 +744,9 @@ $('#settings-close').addEventListener('click', closeSettings);
 $('#drawer-backdrop').addEventListener('click', closeSettings);
 $('#sidebar-open').addEventListener('click', openMobileSidebar);
 $('#sidebar-close').addEventListener('click', closeMobileSidebar);
+$('#retry-connection').addEventListener('click', () => checkHealth(true));
+$('#save-owner').addEventListener('click', saveOwner);
+$('#add-fact').addEventListener('click', addOwnerFact);
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape') return;
   closeSettings();
@@ -573,8 +758,8 @@ document.addEventListener('keydown', event => {
     await loadInfo();
     await loadSessions();
   } catch (error) {
-    $('#service-status').textContent = '连接异常';
-    $('#service-dot').className = 'error';
+    setConnectivity('offline');
     toast(error.message, true);
   }
+  setInterval(checkHealth, 5000);
 })();

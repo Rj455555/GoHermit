@@ -46,6 +46,16 @@ func RegisterReadOnly(r *core.Registry, w *Workspace, timeout time.Duration, max
 	return register(r, w, timeout, maxStdout, maxStderr, false, true)
 }
 
+// RegisterVerification installs read-only inspection plus the bounded test
+// runner. It deliberately excludes file writes, patches, and general shell.
+func RegisterVerification(r *core.Registry, w *Workspace, timeout time.Duration, maxStdout, maxStderr int) error {
+	if err := register(r, w, timeout, maxStdout, maxStderr, false, true); err != nil {
+		return err
+	}
+	maxOutput := maxStdout + maxStderr
+	return r.Register(functionTool{def("test.run", "Run Go tests in the workspace", schema(`"package":{"type":"string"}`, ``), core.PermissionExecute, false, timeout, maxOutput), w.testRun(false)})
+}
+
 func register(r *core.Registry, w *Workspace, timeout time.Duration, maxStdout, maxStderr int, allowNetwork, readOnly bool) error {
 	if maxStdout <= 0 || maxStderr <= 0 {
 		return errors.New("stdout and stderr limits must be positive")

@@ -162,6 +162,34 @@ func TestSchemaV1MigrationAndVisibleHistory(t *testing.T) {
 	}
 }
 
+func TestSchemaV2MigrationKeepsSingleAgentSession(t *testing.T) {
+	root := t.TempDir()
+	store, _ := NewStore(root, ".gohermit")
+	s, _ := New("v2 goal", root, "digest")
+	if err := store.Save(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".gohermit", "sessions", s.ID, "session.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err = json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["schema_version"] = float64(2)
+	delete(document, "mission")
+	raw, _ = json.Marshal(document)
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), s.ID)
+	if err != nil || loaded.SchemaVersion != SchemaVersion || loaded.Mission != nil {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+}
+
 func TestEventSequenceAndMessageHistory(t *testing.T) {
 	root := t.TempDir()
 	store, _ := NewStore(root, ".gohermit")

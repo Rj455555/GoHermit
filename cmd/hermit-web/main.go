@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/Rj455555/GoHermit/internal/app"
 	webui "github.com/Rj455555/GoHermit/internal/web"
 )
 
@@ -23,7 +24,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	fmt.Printf("GoHermit Web %s listening on http://%s\n", "0.2.0-dev", *listen)
+	fmt.Printf("GoHermit Web %s listening on http://%s\n", app.Version, *listen)
 	if err := webui.ListenAndServe(ctx, *listen, server); err != nil {
 		log.Fatal(err)
 	}

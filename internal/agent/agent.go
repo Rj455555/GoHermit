@@ -124,6 +124,10 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			s.LastError = err.Error()
 			return r.fail(runCtx, s, "model request failed", err)
 		}
+		active.ModelCalls++
+		active.PromptTokens += response.Usage.PromptTokens
+		active.CompletionTokens += response.Usage.CompletionTokens
+		active.TotalTokens += response.Usage.TotalTokens
 		e = event.New(event.ModelCompleted, s.ID)
 		e.RunID = active.ID
 		e.Turn = turn
@@ -255,6 +259,10 @@ func (r *Runner) compress(ctx context.Context, s *session.Session, run *session.
 		s.Summary = deterministic
 		return
 	}
+	run.ModelCalls++
+	run.PromptTokens += response.Usage.PromptTokens
+	run.CompletionTokens += response.Usage.CompletionTokens
+	run.TotalTokens += response.Usage.TotalTokens
 	var payload struct {
 		Summary string `json:"summary"`
 	}
