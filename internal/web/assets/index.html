@@ -55,6 +55,11 @@
           <p>GoHermit 会读取项目、修改代码、运行测试，并保存可恢复的工作状态。</p>
         </div>
         <div id="messages" class="messages"></div>
+        <details id="plan-panel" class="plan-panel hidden" open>
+          <summary><div><strong>执行计划</strong><span id="plan-current">等待开始</span></div><span id="plan-progress-text">0 / 0</span></summary>
+          <div class="plan-progress"><i id="plan-progress-bar"></i></div>
+          <ol id="plan-steps" class="plan-steps"></ol>
+        </details>
         <section id="team-panel" class="team-panel hidden" aria-label="Agent 团队">
           <header><div><strong>Personal Agent Team</strong><span id="team-summary">等待任务</span></div><span id="team-budget"></span></header>
           <div id="team-members" class="team-members"></div>

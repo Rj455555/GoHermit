@@ -118,7 +118,7 @@ func workerResult(child *session.Session, assignment team.Assignment, prompt str
 
 func (w *TeamWorker) relay(assignment team.Assignment, runtimeEvent event.Event) {
 	switch runtimeEvent.Type {
-	case event.TaskStarted, event.TaskCompleted, event.TaskFailed, event.TaskCancelled, event.RunInterrupted, event.ModelDelta:
+	case event.TaskStarted, event.TaskCompleted, event.TaskFailed, event.TaskCancelled, event.RunInterrupted, event.ModelDelta, event.PlanCreated, event.PlanUpdated:
 		return
 	}
 	runtimeEvent.SessionID = w.ParentSessionID

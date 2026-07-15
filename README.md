@@ -6,7 +6,7 @@ GoHermit is not a hosted service, a general-purpose multi-agent platform, an unb
 
 ## Status
 
-The current development version is `0.3.0-dev`. It adds a private Personal Agent Team above the durable v0.2 Harness: Lead, Explorer, Builder, Reviewer, repair Builder, and Verifier collaborate through bounded Handoffs, stable recoverable Worker Sessions, one workspace writer, and independent verification. An explicit Owner Profile provides cross-project preferences without putting personal data or secrets in repositories. The service remains single-owner, local-only, foreground, and free of telemetry or automatic Git push.
+The current development version is `0.4.0-dev`. Every Run now exposes a durable Cursor-style Live Plan: a bounded checkbox list shows the current phase, completed work, failures, and progress in real time and survives refresh, SSE reconnect, and process recovery. The private Personal Agent Team and Owner Profile from v0.3 remain the execution and personalization foundation. The service remains single-owner, local-only, foreground, and free of telemetry or automatic Git push.
 
 ## Build and install
 
@@ -31,6 +31,8 @@ hermit run --workspace /path/to/project "inspect the project and fix failing tes
 ```
 
 Sessions are written to `.gohermit/sessions/<session-id>/` in the workspace. The Web console keeps one Session across follow-up messages; every message creates a bounded, verified Run. Team Runs add a Mission and hidden role-specific execution Sessions. Owner preferences use `GOHERMIT_OWNER_STORE` outside the workspace (Compose uses `/data/owner.json`).
+
+Each new Run also owns a public execution Plan. Single Agents track analysis, execution, verification, and reporting; Team Runs track the six real role WorkItems. Plan snapshots contain public status and bounded summaries only, never private reasoning or full model prompts.
 
 ## Commands
 
@@ -84,7 +86,8 @@ External plugins are separate processes and form an explicit trust boundary. Rea
 - [AI context and code map](docs/ai/context.md)
 - [Agent Harness quick reference](docs/ai/harness.md)
 - [Personal Agent Team quick reference](docs/ai/team.md)
-- [Current v0.3 implementation handoff](docs/ai/handoff-v0.3.md)
+- [Live Plan quick reference](docs/ai/plan-mode.md)
+- [Current v0.4 implementation handoff](docs/ai/handoff-v0.4.md)
 - [Next development plan](docs/ai/next-development-plan.md)
 - [Architecture](docs/architecture.md)
 - [Project structure](docs/project-structure.md)

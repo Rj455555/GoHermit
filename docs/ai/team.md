@@ -4,7 +4,7 @@ Read this file for Owner Profile, Mission, WorkItem, Handoff, role policy, team 
 
 ## Product boundary
 
-GoHermit v0.3 remains a local, single-owner service. It is not a general multi-user or free-form multi-agent platform. One owner-facing Session contains Runs. A Run selected with Agent `team` owns one Mission. A Mission contains bounded dependency-ordered WorkItems and structured Handoffs.
+GoHermit v0.4 remains a local, single-owner service. It is not a general multi-user or free-form multi-agent platform. One owner-facing Session contains Runs. A Run selected with Agent `team` owns one Mission and one public Live Plan. A Mission contains bounded dependency-ordered WorkItems and structured Handoffs.
 
 Only Lead produces the visible final answer. Worker private reasoning, full prompts, stream chunks, and arbitrary agent chat are never stored or shown. Read-only WorkItems may run concurrently; one workspace has one writer lease.
 
@@ -24,7 +24,7 @@ The Lead WorkItem cannot start without at least one explicit successful Verifier
 
 ## Persistence and recovery
 
-Session schema v3 adds `mission`. Each WorkItem gets a deterministic hidden `execution_session_id`. Hidden Worker Sessions use the normal Runner checkpoint and completed-tool replay guard but do not appear in the owner's Session list.
+Session schema v4 stores the parent `mission` plus each Run's optional Live Plan. Each WorkItem gets a deterministic hidden `execution_session_id`. Hidden Worker Sessions use the normal Runner checkpoint and completed-tool replay guard but do not appear in the owner's Session list.
 
 Coordinator checkpoints immediately after assigning an execution Session and starting a WorkItem. On restart, parent and child running state becomes `interrupted`. Resume reloads the same child Session. A completed child result is converted to the missing Handoff without another model call; an interrupted child resumes through the existing Runner.
 
@@ -53,7 +53,7 @@ Context order is system/role policy → Owner Profile → project `AGENTS.md` �
 
 Existing Session/Run endpoints remain unchanged. Team selection uses `agent: "team"`. Session detail includes `session.mission`.
 
-Team events add `mission_id`, `work_item_id`, and `agent_id`: `mission_started`, `mission_completed`, `mission_failed`, `work_item_started`, `work_item_completed`, and `work_item_failed`. Worker model deltas and child terminal events are not relayed into the owner conversation.
+Team events add `mission_id`, `work_item_id`, and `agent_id`: `mission_started`, `mission_completed`, `mission_failed`, `work_item_started`, `work_item_completed`, and `work_item_failed`. Those real WorkItem transitions update the Run's public Plan; hidden Worker Plan events, model deltas, and terminal events are not relayed into the owner conversation.
 
 Owner endpoints:
 

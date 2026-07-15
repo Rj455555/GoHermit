@@ -21,10 +21,11 @@ import (
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/storage"
+	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 type Status string
 
@@ -60,24 +61,25 @@ type Selection struct {
 }
 
 type Run struct {
-	ID                   string     `json:"id"`
-	Message              string     `json:"message"`
-	Status               RunStatus  `json:"status"`
-	StartedAt            time.Time  `json:"started_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
-	CompletedAt          *time.Time `json:"completed_at,omitempty"`
-	StartTurn            int        `json:"start_turn"`
-	EndTurn              int        `json:"end_turn,omitempty"`
-	LastMutationTurn     int        `json:"last_mutation_turn,omitempty"`
-	LastVerificationTurn int        `json:"last_verification_turn,omitempty"`
-	VerificationAttempts int        `json:"verification_attempts,omitempty"`
-	ModelCalls           int        `json:"model_calls,omitempty"`
-	PromptTokens         int        `json:"prompt_tokens,omitempty"`
-	CompletionTokens     int        `json:"completion_tokens,omitempty"`
-	TotalTokens          int        `json:"total_tokens,omitempty"`
-	ModifiedFiles        []string   `json:"modified_files,omitempty"`
-	FinalMessage         string     `json:"final_message,omitempty"`
-	Error                string     `json:"error,omitempty"`
+	ID                   string         `json:"id"`
+	Message              string         `json:"message"`
+	Status               RunStatus      `json:"status"`
+	StartedAt            time.Time      `json:"started_at"`
+	UpdatedAt            time.Time      `json:"updated_at"`
+	CompletedAt          *time.Time     `json:"completed_at,omitempty"`
+	StartTurn            int            `json:"start_turn"`
+	EndTurn              int            `json:"end_turn,omitempty"`
+	LastMutationTurn     int            `json:"last_mutation_turn,omitempty"`
+	LastVerificationTurn int            `json:"last_verification_turn,omitempty"`
+	VerificationAttempts int            `json:"verification_attempts,omitempty"`
+	ModelCalls           int            `json:"model_calls,omitempty"`
+	PromptTokens         int            `json:"prompt_tokens,omitempty"`
+	CompletionTokens     int            `json:"completion_tokens,omitempty"`
+	TotalTokens          int            `json:"total_tokens,omitempty"`
+	Plan                 *taskplan.Plan `json:"plan,omitempty"`
+	ModifiedFiles        []string       `json:"modified_files,omitempty"`
+	FinalMessage         string         `json:"final_message,omitempty"`
+	Error                string         `json:"error,omitempty"`
 }
 
 type MessageRecord struct {
@@ -257,6 +259,11 @@ func (s *Store) Save(ctx context.Context, session *Session) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	for i := range session.Runs {
+		if err := taskplan.Validate(session.Runs[i].Plan); err != nil {
+			return fmt.Errorf("invalid run plan: %w", err)
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if seq := s.sequences[session.ID]; seq > session.NextEventSequence {
@@ -349,7 +356,7 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	if err = json.Unmarshal(b, &header); err != nil {
 		return nil, fmt.Errorf("corrupt checkpoint: %w", err)
 	}
-	if header.SchemaVersion != 1 && header.SchemaVersion != 2 && header.SchemaVersion != SchemaVersion {
+	if header.SchemaVersion != 1 && header.SchemaVersion != 2 && header.SchemaVersion != 3 && header.SchemaVersion != SchemaVersion {
 		return nil, fmt.Errorf("unsupported session schema version %d", header.SchemaVersion)
 	}
 	var out Session
@@ -362,6 +369,13 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 		migrateV1(&out)
 	} else if out.SchemaVersion == 2 {
 		migrateV2(&out)
+	} else if out.SchemaVersion == 3 {
+		migrateV3(&out)
+	}
+	for i := range out.Runs {
+		if err = taskplan.Validate(out.Runs[i].Plan); err != nil {
+			return nil, fmt.Errorf("corrupt run plan: %w", err)
+		}
 	}
 	current, _ := filepath.Abs(s.workspace)
 	saved, _ := filepath.Abs(out.Workspace)
@@ -534,6 +548,13 @@ func migrateV1(s *Session) {
 }
 
 func migrateV2(s *Session) {
+	s.SchemaVersion = SchemaVersion
+	if s.ModifiedFiles == nil {
+		s.ModifiedFiles = map[string]string{}
+	}
+}
+
+func migrateV3(s *Session) {
 	s.SchemaVersion = SchemaVersion
 	if s.ModifiedFiles == nil {
 		s.ModifiedFiles = map[string]string{}

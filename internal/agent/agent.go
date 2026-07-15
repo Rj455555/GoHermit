@@ -15,6 +15,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/session"
+	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/tool"
 )
 
@@ -60,12 +61,25 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 	if active.Status != session.RunQueued && active.Status != session.RunInterrupted {
 		return fmt.Errorf("run %s cannot start from status %s", active.ID, active.Status)
 	}
+	planCreated := false
+	if active.Plan == nil {
+		plan, err := taskplan.DefaultSingle(active.ID)
+		if err != nil {
+			return err
+		}
+		active.Plan = plan
+		planCreated = true
+	}
 	active.Status = session.RunRunning
 	active.UpdatedAt = time.Now().UTC()
 	s.Status = session.Open
 	started := event.New(event.TaskStarted, s.ID)
 	started.RunID = active.ID
 	r.emit(s, started, true)
+	if planCreated {
+		r.emitPlan(s, active, event.PlanCreated, "", "执行计划已创建")
+	}
+	r.preparePlan(s, active)
 	if s.WorkspaceChanged {
 		e := event.New(event.WorkspaceChanged, s.ID)
 		e.RunID = active.ID
@@ -135,6 +149,9 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 		r.emit(s, e, true)
 		messages = append(messages, response.Message)
 		if len(response.Message.ToolCalls) == 0 {
+			r.planComplete(s, active, "analyze", "上下文分析完成")
+			r.planComplete(s, active, "execute", "执行阶段完成")
+			r.planStart(s, active, "verify", "正在验证完成条件")
 			active.Status = session.RunVerifying
 			ve := event.New(event.RunVerifying, s.ID)
 			ve.RunID = active.ID
@@ -143,6 +160,7 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			passed, reason := r.verifyCandidate(runCtx, s, active)
 			if !passed {
 				active.VerificationAttempts++
+				r.planNote(s, active, "verify", "验证未通过，正在修复后重试："+reason)
 				if active.VerificationAttempts >= maxVerification {
 					return r.fail(runCtx, s, "verification failed", errors.New(reason))
 				}
@@ -153,6 +171,8 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			}
 			return r.complete(runCtx, s, active, response.Message.Content, messages)
 		}
+		r.planComplete(s, active, "analyze", "上下文分析完成")
+		r.planStart(s, active, "execute", "正在执行任务")
 		for _, call := range response.Message.ToolCalls {
 			e = event.New(event.ToolStarted, s.ID)
 			e.RunID = active.ID
@@ -332,6 +352,12 @@ func documentationOnly(paths []string) bool {
 }
 
 func (r *Runner) complete(ctx context.Context, s *session.Session, run *session.Run, final string, messages []model.Message) error {
+	r.planComplete(s, run, "verify", "验证已通过")
+	r.planStart(s, run, "report", "正在整理交付结果")
+	r.planComplete(s, run, "report", "结果已整理并交付")
+	if run.Plan == nil || run.Plan.Status != taskplan.Completed {
+		return r.fail(ctx, s, "live plan did not reach completion", errors.New("live plan completion gate failed"))
+	}
 	now := time.Now().UTC()
 	run.Status = session.RunCompleted
 	run.FinalMessage = final
@@ -400,11 +426,83 @@ func (r *Runner) emit(s *session.Session, e event.Event, persist bool) {
 		r.Sink(e)
 	}
 }
+
+func (r *Runner) preparePlan(s *session.Session, run *session.Run) {
+	if run == nil || run.Plan == nil || run.Plan.Status != taskplan.Active {
+		return
+	}
+	if current := run.Plan.Current(); current != nil {
+		r.planNote(s, run, current.ID, "正在从中断点恢复此步骤")
+		return
+	}
+	if next := run.Plan.NextPending(); next != nil {
+		r.planStart(s, run, next.ID, "正在处理此步骤")
+	}
+}
+
+func (r *Runner) planStart(s *session.Session, run *session.Run, id, detail string) {
+	if run == nil || run.Plan == nil {
+		return
+	}
+	changed, err := run.Plan.Start(id, detail)
+	if err == nil && changed {
+		r.emitPlan(s, run, event.PlanUpdated, id, detail)
+	}
+}
+
+func (r *Runner) planComplete(s *session.Session, run *session.Run, id, detail string) {
+	if run == nil || run.Plan == nil {
+		return
+	}
+	changed, err := run.Plan.Complete(id, detail)
+	if err == nil && changed {
+		r.emitPlan(s, run, event.PlanUpdated, id, detail)
+	}
+}
+
+func (r *Runner) planNote(s *session.Session, run *session.Run, id, detail string) {
+	if run == nil || run.Plan == nil {
+		return
+	}
+	changed, err := run.Plan.Note(id, detail)
+	if err == nil && changed {
+		r.emitPlan(s, run, event.PlanUpdated, id, detail)
+	}
+}
+
+func (r *Runner) planFailCurrent(s *session.Session, run *session.Run, detail string) {
+	if run == nil || run.Plan == nil || run.Plan.Status != taskplan.Active {
+		return
+	}
+	step := run.Plan.Current()
+	if step == nil {
+		step = run.Plan.NextPending()
+	}
+	if step == nil {
+		return
+	}
+	changed, err := run.Plan.Fail(step.ID, detail)
+	if err == nil && changed {
+		r.emitPlan(s, run, event.PlanUpdated, step.ID, detail)
+	}
+}
+
+func (r *Runner) emitPlan(s *session.Session, run *session.Run, eventType event.Type, stepID, message string) {
+	data, err := json.Marshal(map[string]any{"plan": run.Plan})
+	if err != nil {
+		return
+	}
+	e := event.New(eventType, s.ID)
+	e.RunID, e.PlanStepID, e.Message, e.Data = run.ID, stepID, message, data
+	r.emit(s, e, true)
+}
+
 func (r *Runner) fail(ctx context.Context, s *session.Session, message string, cause error) error {
 	s.Status = session.Open
 	s.LastError = cause.Error()
 	runID := s.ActiveRunID
 	if run := s.ActiveRun(); run != nil {
+		r.planFailCurrent(s, run, cause.Error())
 		now := time.Now().UTC()
 		run.Status = session.RunFailed
 		run.Error = cause.Error()
@@ -434,6 +532,11 @@ func (r *Runner) stop(ctx context.Context, s *session.Session, cause error) erro
 		s.LastError = "cancelled"
 	}
 	if run := s.ActiveRun(); run != nil {
+		if run.Plan != nil {
+			if changed, stepID := run.Plan.Cancel("运行已停止"); changed {
+				r.emitPlan(s, run, event.PlanUpdated, stepID, "运行已停止")
+			}
+		}
 		now := time.Now().UTC()
 		run.Status = session.RunCancelled
 		run.Error = s.LastError

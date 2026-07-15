@@ -21,6 +21,13 @@
 - Add server-validated per-role model overrides after capability and fallback semantics are specified.
 - Add interactive approval before enabling Operator actions.
 
+## v0.4 live plan
+
+- Persist an owner-facing checklist on every Run and update it from real Agent/Team lifecycle events.
+- Restore Plan revision and current step across refresh, SSE reconnect, timeout, and process recovery.
+- Keep Plan content bounded and separate from model private reasoning.
+- Refine deterministic phase titles into task-specific substeps only when each substep has an auditable execution mapping.
+
 ## Deferred
 
 Vector/embedding memory, browser automation, MCP, marketplace, public/hosted UI, accounts, collaboration, cloud sync, telemetry, analytics, schedulers, daemons, automatic unapproved push/deploy, Kubernetes SDK integration, Go `.so` plugins, and a general workflow engine remain deferred. They require separate evidence and architecture decisions.

@@ -4,7 +4,7 @@ This is the compact handoff for coding agents. Read `AGENTS.md` first, then this
 
 ## Product in one paragraph
 
-GoHermit `0.3.0-dev` is a foreground, local-first, single-owner coding harness. The CLI and local Web console share one runtime assembly. A durable Session contains multiple user-message Runs, visible history, bounded context, verified project memory, and crash recovery. A Run may use the original single Agent or a Personal Agent Team whose Mission delegates bounded WorkItems to Lead, Explorer, Builder, Reviewer, repair Builder, and Verifier through structured Handoffs. Explicit Owner Profile data lives outside repositories and enters every Worker context. The Hermes-derived catalog keeps provider slug, company, authentication, model, and Agent/team selection separate.
+GoHermit `0.4.0-dev` is a foreground, local-first, single-owner coding harness. A durable Session contains multiple user-message Runs, visible history, bounded context, verified project memory, crash recovery, and a public Live Plan whose checkbox phases update from real execution facts. A Run may use the original single Agent or a Personal Agent Team whose Mission delegates bounded WorkItems through structured Handoffs. Explicit Owner Profile data lives outside repositories and enters every Worker context.
 
 ## Shortest useful reading path
 
@@ -12,14 +12,15 @@ GoHermit `0.3.0-dev` is a foreground, local-first, single-owner coding harness. 
 2. Read the target package and its `_test.go` files.
 3. For Session/Run, context, memory, recovery, or Web conversation work, read `docs/ai/harness.md`.
 4. For Owner Profile, Mission, WorkItem, role policy, Handoff, or team UI, read `docs/ai/team.md`.
-5. Read only the matching topic document:
+5. For Live Plan/checklist/progress/recovery work, read `docs/ai/plan-mode.md`.
+6. Read only the matching topic document:
    - agent/model flow: `docs/architecture.md`
    - context: `docs/context-management.md`
    - session/storage: `docs/session-storage.md`
    - plugin changes: `docs/plugin-protocol.md`
    - filesystem/shell/credentials: `docs/security-model.md`
-6. Read a specific ADR only when changing that decision boundary.
-7. Read `docs/ai/next-development-plan.md` for planned work.
+7. Read a specific ADR only when changing that decision boundary.
+8. Read `docs/ai/next-development-plan.md` for planned work.
 
 ## Code map
 
@@ -32,6 +33,7 @@ GoHermit `0.3.0-dev` is a foreground, local-first, single-owner coding harness. 
 | credentials/device login | `internal/auth` | `docs/ai/console-credentials.md`, Compose data volume |
 | local Web/SSE | `internal/web`, `cmd/hermit-web` | Web tests, `docs/web-debug.md` |
 | team orchestration | `internal/team`, `internal/app/team_worker.go` | `docs/ai/team.md`, ADR 0008 |
+| Live Plan/checklist | `internal/taskplan`, Plan updates in agent/Web | `docs/ai/plan-mode.md`, ADR 0009 |
 | owner preferences/memory | `internal/owner` | owner APIs and context manager |
 | Docker packaging | `Dockerfile`, `compose.yaml` | Web/Docker guide |
 | tool registry/timeouts | `internal/tool/tool.go` | executor tests |
@@ -57,6 +59,7 @@ GoHermit `0.3.0-dev` is a foreground, local-first, single-owner coding harness. 
 - GoHermit never commits, pushes, opens PRs, changes system settings, or emits telemetry by itself. Docker packaging is an operator-started local debug surface.
 - Team agents communicate durably only through bounded Handoffs; read-only agents may run concurrently, but one workspace has one writer.
 - A Team Run cannot reach Lead completion without independent post-repair Verifier evidence.
+- Live Plan revisions come only from real lifecycle transitions; at most one step is current, and no Plan contains private reasoning or fabricated progress.
 
 ## Current verified state
 
@@ -77,7 +80,7 @@ GoHermit `0.3.0-dev` is a foreground, local-first, single-owner coding harness. 
 
 - Shell/test execution and configured plugins are not OS sandboxes; repository code and plugins must be trusted.
 - Plugin streaming events are deferred beyond protocol v1.
-- Session storage is schema v3 with explicit v1 and v2 migrations; unknown versions still fail closed.
+- Session storage is schema v4 with explicit v1, v2, and v3 migrations; unknown versions still fail closed.
 - Permission-required events are non-interactive in v0.1.0.
 - Codex device login uses OpenAI's device flow and stores tokens only in the server-side credential store. Revocation is detected when a refresh is required; there is no proactive remote token introspection.
 - The Web surface is single-user and unauthenticated; public exposure is unsupported.

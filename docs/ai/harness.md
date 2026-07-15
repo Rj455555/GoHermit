@@ -22,14 +22,14 @@ Tool calls persist `started` before execution and `completed` afterward. Recover
 
 ## Storage and memory
 
-Schema v3 lives under `.gohermit/sessions/<session-id>/`:
+Schema v4 lives under `.gohermit/sessions/<session-id>/` and stores each Run's bounded public Live Plan:
 
 - `session.json`: bounded current state, Runs, summary, recent model messages, digests.
 - `messages.jsonl`: user-visible user/assistant transcript only.
 - `events.jsonl`: persisted events with monotonic `sequence`; stream deltas are never stored.
 - `summary.md`: compact recovery view.
 
-Schema v1 and v2 are migrated explicitly on load. Unknown versions and corrupt data fail closed. Workspace path mismatches fail; file/Git changes set `workspace_changed` and require reconciliation instead of rejecting recovery. Team Runs add a Mission and stable hidden Worker Sessions; see `docs/ai/team.md`.
+Schema v1, v2, and v3 are migrated explicitly on load. Unknown versions, invalid Plans, and corrupt data fail closed. Workspace path mismatches fail; file/Git changes set `workspace_changed` and require reconciliation instead of rejecting recovery. Team Runs add a Mission and stable hidden Worker Sessions; see `docs/ai/team.md` and `docs/ai/plan-mode.md`.
 
 Verified Runs update versioned `.gohermit/memory/project.json` and its compact `project.md` view. Memory contains bounded architecture facts, conventions, verified commands, decisions, issues, and source Run IDs. Secrets, private reasoning, full provider requests, raw tool output, and stream chunks are excluded.
 

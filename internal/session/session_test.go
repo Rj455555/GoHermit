@@ -12,6 +12,7 @@ import (
 
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
+	"github.com/Rj455555/GoHermit/internal/taskplan"
 )
 
 func TestSaveLoadAndExternalChange(t *testing.T) {
@@ -187,6 +188,43 @@ func TestSchemaV2MigrationKeepsSingleAgentSession(t *testing.T) {
 	loaded, err := store.Load(context.Background(), s.ID)
 	if err != nil || loaded.SchemaVersion != SchemaVersion || loaded.Mission != nil {
 		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+}
+
+func TestSchemaV3MigrationAddsOptionalRunPlans(t *testing.T) {
+	root := t.TempDir()
+	store, _ := NewStore(root, ".gohermit")
+	s, _ := New("v3 goal", root, "digest")
+	run, err := s.NewRun("continue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Save(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".gohermit", "sessions", s.ID, "session.json")
+	raw, _ := os.ReadFile(path)
+	var document map[string]any
+	_ = json.Unmarshal(raw, &document)
+	document["schema_version"] = float64(3)
+	raw, _ = json.Marshal(document)
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), s.ID)
+	if err != nil || loaded.SchemaVersion != SchemaVersion || len(loaded.Runs) != 1 || loaded.Runs[0].ID != run.ID || loaded.Runs[0].Plan != nil {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+}
+
+func TestSaveRejectsInvalidRunPlan(t *testing.T) {
+	root := t.TempDir()
+	store, _ := NewStore(root, ".gohermit")
+	s, _ := New("goal", root, "digest")
+	run, _ := s.NewRun("work")
+	run.Plan = &taskplan.Plan{SchemaVersion: taskplan.SchemaVersion, ID: "broken", Status: taskplan.Completed}
+	if err := store.Save(context.Background(), s); err == nil || !strings.Contains(err.Error(), "plan") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

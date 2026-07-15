@@ -1,15 +1,16 @@
 # Next development plan
 
-This file starts after the `0.3.0-dev` Personal Agent Team milestone. Session/Run, Owner Profile, Mission/WorkItem/Handoff, the default six-stage team workflow, stable Worker recovery, one-writer policy, Verifier gate, and team Web UI are implemented; do not plan them again.
+This file starts after the `0.4.0-dev` Live Plan milestone. Session/Run, Owner Profile, the default Personal Agent Team, stable Worker recovery, one-writer policy, Verifier gate, and durable owner-facing checkbox Plan are implemented; do not plan them again.
 
-## P0: live team evaluation and repair policy
+## P0: task-specific Plan refinement and team evaluation
 
-1. Add an explicit opt-in live smoke test that runs one small Team Mission with Codex; keep paid calls outside default tests.
-2. Build checked-in deterministic repository fixtures that score handoff quality, edits, review findings, verification, model calls, tokens, recovery, and final owner summary.
-3. Replace the fixed single repair pass with a bounded review/repair loop driven by structured issue severity, capped by Mission budget.
+1. Build checked-in deterministic repository fixtures that score Plan fidelity, Handoff quality, edits, review findings, verification, recovery, and final owner summary.
+2. Let Explorer propose bounded task-specific substeps only through a validated structure that maps every substep to one or more real WorkItems; preserve completed IDs/revisions during refinement.
+3. Replace the fixed single repair pass with a bounded review/repair loop driven by structured issue severity and reflected honestly in the Plan.
 4. Use provider token counters consistently, including failed and summary calls, and surface per-role usage in the UI.
+5. Keep one explicit opt-in live smoke that runs a small Codex Team Mission; paid calls stay outside default tests.
 
-Acceptance: quality changes are measured; a failed Verifier never reaches Lead; raw prompts, private reasoning, and unbounded output remain absent from storage.
+Acceptance: a Plan never claims completion before its mapped execution facts; refinement cannot rewrite completed history; a failed Verifier never reaches Lead; raw prompts, private reasoning, and unbounded output remain absent from storage.
 
 ## P1: per-role model policy
 

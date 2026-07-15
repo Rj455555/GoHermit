@@ -23,6 +23,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/owner"
 	"github.com/Rj455555/GoHermit/internal/session"
+	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
 )
 
@@ -590,6 +591,22 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 		}
 		sess.Mission = mission
 	}
+	var createdPlanEvent event.Event
+	if run.Plan == nil {
+		var planErr error
+		if selection.Agent == "team" {
+			run.Plan, planErr = taskplan.DefaultTeam(run.ID)
+		} else {
+			run.Plan, planErr = taskplan.DefaultSingle(run.ID)
+		}
+		if planErr != nil {
+			s.active.Store(false)
+			s.runMu.Unlock()
+			return "", planErr
+		}
+		createdPlanEvent = s.planRuntimeEvent(sess.ID, run, event.PlanCreated, "", "执行计划已创建")
+		createdPlanEvent = s.store.BufferEvent(sess.ID, createdPlanEvent)
+	}
 	if err = s.store.Save(context.Background(), sess); err != nil {
 		s.active.Store(false)
 		s.runMu.Unlock()
@@ -599,6 +616,9 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 	s.activeSession, s.activeRun, s.cancelRun = sess.ID, run.ID, cancel
 	runID := run.ID
 	s.runMu.Unlock()
+	if createdPlanEvent.Type != "" {
+		s.publish(createdPlanEvent)
+	}
 	go func() {
 		defer func() {
 			s.runMu.Lock()
@@ -654,6 +674,12 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 			runtimeEvent.AgentID, runtimeEvent.Message = string(teamEvent.Role), teamEvent.Message
 			runtimeEvent = s.store.BufferEvent(sess.ID, runtimeEvent)
 			s.publish(runtimeEvent)
+			if changed, stepID, detail := syncTeamPlan(run.Plan, teamEvent, sess.Mission); changed {
+				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, stepID, detail)
+				planEvent.MissionID = sess.Mission.ID
+				planEvent = s.store.BufferEvent(sess.ID, planEvent)
+				s.publish(planEvent)
+			}
 		},
 		Checkpoint: func(mission *team.Mission) error {
 			sess.Mission = mission
@@ -673,6 +699,10 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 			return
 		}
 		s.failLaunchedRun(sess, runID, err)
+		return
+	}
+	if run.Plan == nil || run.Plan.Status != taskplan.Completed {
+		s.failLaunchedRun(sess, runID, errors.New("team live plan completion gate failed"))
 		return
 	}
 	final := finalTeamHandoff(sess.Mission)
@@ -707,8 +737,24 @@ func (s *Server) finishTeamCancelled(sess *session.Session, run *session.Run, ca
 		if sess.Mission != nil && sess.Mission.Status != team.Interrupted {
 			sess.Mission.Interrupt(cause.Error())
 		}
+		if run.Plan != nil && run.Plan.Current() != nil {
+			if changed, noteErr := run.Plan.Note(run.Plan.Current().ID, "运行已中断，可从当前步骤恢复"); noteErr == nil && changed {
+				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, run.Plan.Current().ID, "运行已中断，可恢复")
+				planEvent.MissionID = sess.Mission.ID
+				planEvent = s.store.BufferEvent(sess.ID, planEvent)
+				s.publish(planEvent)
+			}
+		}
 	} else if sess.Mission != nil {
 		sess.Mission.Cancel(cause.Error())
+		if run.Plan != nil {
+			if changed, stepID := run.Plan.Cancel("任务已由用户停止"); changed {
+				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, stepID, "任务已停止")
+				planEvent.MissionID = sess.Mission.ID
+				planEvent = s.store.BufferEvent(sess.ID, planEvent)
+				s.publish(planEvent)
+			}
+		}
 	}
 	run.Status, run.Error, run.UpdatedAt = status, cause.Error(), now
 	if sess.Mission != nil {
@@ -744,6 +790,66 @@ func teamEventType(value team.TeamEventType) event.Type {
 	default:
 		return event.SessionUpdated
 	}
+}
+
+func (s *Server) planRuntimeEvent(sessionID string, run *session.Run, eventType event.Type, stepID, message string) event.Event {
+	runtimeEvent := event.New(eventType, sessionID)
+	runtimeEvent.RunID, runtimeEvent.PlanStepID, runtimeEvent.Message = run.ID, stepID, message
+	runtimeEvent.Data, _ = json.Marshal(map[string]any{"plan": run.Plan})
+	return runtimeEvent
+}
+
+func syncTeamPlan(plan *taskplan.Plan, teamEvent team.TeamEvent, mission *team.Mission) (bool, string, string) {
+	if plan == nil || plan.Status != taskplan.Active {
+		return false, "", ""
+	}
+	stepID, detail := teamEvent.WorkItemID, teamEvent.Message
+	var changed bool
+	var err error
+	switch teamEvent.Type {
+	case team.WorkItemStarted:
+		changed, err = plan.Start(stepID, detail)
+	case team.WorkItemDone:
+		if teamEvent.Role == team.RoleVerifier && !verifierHandoffPassed(mission, stepID) {
+			detail = "独立验证未通过"
+			changed, err = plan.Fail(stepID, detail)
+		} else {
+			changed, err = plan.Complete(stepID, detail)
+		}
+	case team.WorkItemFailed:
+		changed, err = plan.Fail(stepID, detail)
+	case team.MissionFailed:
+		if stepID == "" {
+			if current := plan.Current(); current != nil {
+				stepID = current.ID
+			} else if next := plan.NextPending(); next != nil {
+				stepID = next.ID
+			}
+		}
+		if stepID != "" {
+			changed, err = plan.Fail(stepID, detail)
+		}
+	}
+	return err == nil && changed, stepID, detail
+}
+
+func verifierHandoffPassed(mission *team.Mission, workItemID string) bool {
+	if mission == nil {
+		return false
+	}
+	for i := len(mission.Handoffs) - 1; i >= 0; i-- {
+		handoff := mission.Handoffs[i]
+		if handoff.WorkItemID != workItemID || handoff.Role != team.RoleVerifier || len(handoff.Checks) == 0 {
+			continue
+		}
+		for _, check := range handoff.Checks {
+			if !check.Passed {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func finalTeamHandoff(mission *team.Mission) team.Handoff {
@@ -811,6 +917,19 @@ func (s *Server) validateSelection(ctx context.Context, selection config.Runtime
 
 func (s *Server) failLaunchedRun(sess *session.Session, runID string, cause error) {
 	if run := sess.ActiveRun(); run != nil && run.ID == runID {
+		if run.Plan != nil && run.Plan.Status == taskplan.Active {
+			step := run.Plan.Current()
+			if step == nil {
+				step = run.Plan.NextPending()
+			}
+			if step != nil {
+				if changed, planErr := run.Plan.Fail(step.ID, cause.Error()); planErr == nil && changed {
+					planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, step.ID, cause.Error())
+					planEvent = s.store.BufferEvent(sess.ID, planEvent)
+					s.publish(planEvent)
+				}
+			}
+		}
 		now := time.Now().UTC()
 		run.Status = session.RunFailed
 		run.Error = cause.Error()
