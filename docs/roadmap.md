@@ -14,6 +14,13 @@
 - Harden the local Web debugger with cancellation, permission, and reconnect tests.
 - Add reproducible container/CLI release CI and opt-in live-provider smoke tests.
 
+## v0.3 personal team
+
+- Evaluate the Personal Agent Team against deterministic repository fixtures and one opt-in live smoke task.
+- Add bounded review/repair iteration and accurate per-role token/cost accounting.
+- Add server-validated per-role model overrides after capability and fallback semantics are specified.
+- Add interactive approval before enabling Operator actions.
+
 ## Deferred
 
-Multi-agent orchestration, vector/embedding memory, browser automation, MCP, marketplace, public/hosted UI, accounts, collaboration, cloud sync, telemetry, analytics, schedulers, daemons, auto-push, auto-deploy, Kubernetes SDK integration, Go `.so` plugins, and a general workflow engine remain deferred. They require separate evidence and architecture decisions.
+Vector/embedding memory, browser automation, MCP, marketplace, public/hosted UI, accounts, collaboration, cloud sync, telemetry, analytics, schedulers, daemons, automatic unapproved push/deploy, Kubernetes SDK integration, Go `.so` plugins, and a general workflow engine remain deferred. They require separate evidence and architecture decisions.

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	core "github.com/Rj455555/GoHermit/internal/tool"
+	v1 "github.com/Rj455555/GoHermit/protocol/plugin/v1"
 )
 
 func python(t *testing.T) string {
@@ -58,6 +59,31 @@ func TestPythonEchoLifecycle(t *testing.T) {
 	defer stop()
 	if err = p.Shutdown(shutdownCtx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRegisterToolsWithPolicyExcludesMutatingPluginTools(t *testing.T) {
+	registry := core.NewRegistry()
+	client := &Client{cfg: Config{DefaultTimeout: time.Second, MaxMessageBytes: 4096}}
+	definitions := []v1.ToolDefinition{
+		{Name: "inspect", InputSchema: json.RawMessage(`{"type":"object"}`), Permission: "read"},
+		{Name: "write", InputSchema: json.RawMessage(`{"type":"object"}`), Permission: "write", MutatesWorkspace: true},
+		{Name: "suspicious", InputSchema: json.RawMessage(`{"type":"object"}`), Permission: "read", MutatesWorkspace: true},
+	}
+	readOnly := func(definition core.Definition) bool {
+		return definition.Permission == core.PermissionRead && !definition.MutatesWorkspace
+	}
+	if err := registerToolDefinitions(registry, "fixture", client, definitions, readOnly); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Get("plugin.fixture.inspect"); !ok {
+		t.Fatal("read-only plugin tool was not registered")
+	}
+	if _, ok := registry.Get("plugin.fixture.write"); ok {
+		t.Fatal("write plugin tool crossed the read-only role boundary")
+	}
+	if _, ok := registry.Get("plugin.fixture.suspicious"); ok {
+		t.Fatal("mutating plugin tool crossed the read-only role boundary")
 	}
 }
 

@@ -15,12 +15,14 @@ import (
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/session"
+	"github.com/Rj455555/GoHermit/internal/team"
 )
 
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("GOHERMIT_AUTH_STORE", filepath.Join(root, "credentials.json"))
+	t.Setenv("GOHERMIT_OWNER_STORE", filepath.Join(root, "owner.json"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
 	if err := os.WriteFile(filepath.Join(root, "hermit.toml"), []byte("[model]\nprovider = \"codex\"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -30,6 +32,83 @@ func testServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	return server
+}
+
+type webTeamWorker struct{}
+
+func (webTeamWorker) Execute(_ context.Context, assignment team.Assignment) (team.Result, error) {
+	handoff := team.Handoff{ID: "handoff-" + assignment.WorkItem.ID, WorkItemID: assignment.WorkItem.ID, Role: assignment.WorkItem.Role, Summary: "completed " + assignment.WorkItem.ID}
+	if assignment.WorkItem.Role == team.RoleVerifier {
+		handoff.Checks = []team.Check{{Command: "go test ./...", Passed: true, Summary: "ok"}}
+	}
+	return team.Result{Handoff: handoff, ModelCalls: 1, Tokens: 100}, nil
+}
+
+func TestTeamRunCompletesParentSessionWithVisibleLeadHandoff(t *testing.T) {
+	server := testServer(t)
+	server.teamWorker = webTeamWorker{}
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Team task", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := sess.NewRun("build the requested change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.Mission, err = team.DefaultMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	server.runTeam(context.Background(), sess, run.ID, config.RuntimeSelection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent}, "test-key", nil)
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ActiveRunID != "" || loaded.Runs[0].Status != session.RunCompleted || loaded.Mission == nil || loaded.Mission.Status != team.Completed || len(loaded.TestResults) != 1 {
+		t.Fatalf("loaded=%+v", loaded)
+	}
+	messages, err := server.store.Messages(sess.ID)
+	if err != nil || len(messages) != 1 || messages[0].Role != "assistant" {
+		t.Fatalf("messages=%+v err=%v", messages, err)
+	}
+}
+
+func TestOwnerProfileAPI(t *testing.T) {
+	server := testServer(t)
+	handler := server.Handler()
+	request := httptest.NewRequest(http.MethodPut, "/api/owner", strings.NewReader(`{"identity":{"display_name":"Yuanxin","language":"Chinese"},"preferences":{"verification":"run tests"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Yuanxin") {
+		t.Fatalf("save status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/api/owner/facts/macmini", strings.NewReader(`{"category":"environment","value":"macmini is the development host","confirmed":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "macmini") {
+		t.Fatalf("fact status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/info", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"owner":{"configured":true,"display_name":"Yuanxin"}`) {
+		t.Fatalf("info status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodDelete, "/api/owner/facts/macmini", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "development host") {
+		t.Fatalf("delete status=%d body=%s", response.Code, response.Body.String())
+	}
 }
 
 func TestAPIKeySettingsControlAvailableCatalogWithoutLeakingSecret(t *testing.T) {
@@ -170,5 +249,61 @@ func TestPersistentSessionAPIAndEventReplay(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "id: "+strconv.FormatUint(e.Sequence, 10)) || !strings.Contains(response.Body.String(), "task_started") {
 		t.Fatalf("events status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	ctx, cancel = context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	request = httptest.NewRequest(http.MethodGet, "/api/sessions/"+created.ID+"/events?after=0", nil).WithContext(ctx)
+	request.Header.Set("Last-Event-ID", strconv.FormatUint(e.Sequence, 10))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "task_started") {
+		t.Fatalf("Last-Event-ID replayed an acknowledged event: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTeamCancellationAndTimeoutHaveDistinctRecoverySemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		cause         error
+		wantRun       session.RunStatus
+		wantMission   team.Status
+		wantActiveRun bool
+		wantCompleted bool
+	}{
+		{name: "owner cancellation is terminal", cause: context.Canceled, wantRun: session.RunCancelled, wantMission: team.Cancelled, wantCompleted: true},
+		{name: "timeout is resumable", cause: context.DeadlineExceeded, wantRun: session.RunInterrupted, wantMission: team.Interrupted, wantActiveRun: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := testServer(t)
+			sess, err := session.NewConversation("team", server.Workspace, "config", session.Selection{Agent: "team"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := sess.NewRun("build it")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess.Mission, err = team.DefaultMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess.Mission.Status = team.Running
+			if err = server.store.Save(context.Background(), sess); err != nil {
+				t.Fatal(err)
+			}
+			server.finishTeamCancelled(sess, run, tc.cause)
+			loaded, err := server.store.Load(context.Background(), sess.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotRun := loaded.Runs[len(loaded.Runs)-1]
+			if gotRun.Status != tc.wantRun || loaded.Mission.Status != tc.wantMission {
+				t.Fatalf("run=%s mission=%s", gotRun.Status, loaded.Mission.Status)
+			}
+			if (loaded.ActiveRunID != "") != tc.wantActiveRun || (gotRun.CompletedAt != nil) != tc.wantCompleted {
+				t.Fatalf("active=%q completed=%v", loaded.ActiveRunID, gotRun.CompletedAt)
+			}
+		})
 	}
 }

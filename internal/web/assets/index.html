@@ -31,6 +31,10 @@
     </aside>
 
     <main class="workspace">
+      <div id="offline-banner" class="offline-banner hidden" role="alert">
+        <span><strong>服务离线</strong> 无法连接 GoHermit；Mac mini 可能休眠或 SSH 隧道已断开。</span>
+        <button id="retry-connection" class="small-button">重新连接</button>
+      </div>
       <header class="thread-header">
         <button id="sidebar-open" class="icon-button mobile-only" aria-label="打开任务列表">☰</button>
         <div class="thread-identity">
@@ -51,6 +55,10 @@
           <p>GoHermit 会读取项目、修改代码、运行测试，并保存可恢复的工作状态。</p>
         </div>
         <div id="messages" class="messages"></div>
+        <section id="team-panel" class="team-panel hidden" aria-label="Agent 团队">
+          <header><div><strong>Personal Agent Team</strong><span id="team-summary">等待任务</span></div><span id="team-budget"></span></header>
+          <div id="team-members" class="team-members"></div>
+        </section>
         <details id="activity-panel" class="activity-panel hidden">
           <summary><span class="activity-chevron">›</span> 运行活动 <span id="activity-count" class="activity-count">0</span></summary>
           <div id="events" class="events"></div>
@@ -80,7 +88,22 @@
 
     <div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
     <aside id="settings-drawer" class="settings-drawer hidden" aria-label="设置">
-      <header class="drawer-head"><div><h2>设置</h2><p>模型接入与凭据</p></div><button id="settings-close" class="icon-button" aria-label="关闭设置">×</button></header>
+      <header class="drawer-head"><div><h2>设置</h2><p>你的 Agent 与模型接入</p></div><button id="settings-close" class="icon-button" aria-label="关闭设置">×</button></header>
+      <section class="owner-settings">
+        <div class="settings-intro"><strong>你的 Agent</strong><p>这些资料保存在仓库外，只向你的 Worker 提供已确认偏好，不保存密钥。</p></div>
+        <div class="owner-grid">
+          <label>称呼<input id="owner-name" maxlength="120" placeholder="例如：Yuanxin"></label>
+          <label>语言<input id="owner-language" maxlength="120" placeholder="例如：中文"></label>
+          <label>时区<input id="owner-timezone" maxlength="120" placeholder="Asia/Shanghai"></label>
+          <label class="wide">沟通偏好<textarea id="owner-communication" maxlength="8192" placeholder="回答风格、汇报频率…"></textarea></label>
+          <label class="wide">开发偏好<textarea id="owner-coding" maxlength="8192" placeholder="代码风格、常用技术、工作方式…"></textarea></label>
+          <label class="wide">验证要求<textarea id="owner-verification" maxlength="8192" placeholder="完成前必须运行哪些检查…"></textarea></label>
+        </div>
+        <button id="save-owner" class="small-button primary owner-save">保存个人配置</button>
+        <div class="memory-head"><strong>长期记忆</strong><span>可查看、确认和忘记</span></div>
+        <div id="owner-facts" class="owner-facts"></div>
+        <div class="fact-add"><input id="fact-category" maxlength="120" placeholder="分类"><input id="fact-value" maxlength="8192" placeholder="需要记住的事实"><button id="add-fact" class="small-button">添加</button></div>
+      </section>
       <div class="settings-intro"><strong>模型接入</strong><p>未登录或未设置 Key 的接入方式不会出现在新任务中。凭据只保存在服务端。</p></div>
       <div id="settings-list" class="settings-list"></div>
     </aside>

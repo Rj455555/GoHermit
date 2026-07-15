@@ -26,19 +26,28 @@ const (
 	TaskCompleted      Type = "task_completed"
 	TaskFailed         Type = "task_failed"
 	TaskCancelled      Type = "task_cancelled"
+	MissionStarted     Type = "mission_started"
+	MissionCompleted   Type = "mission_completed"
+	MissionFailed      Type = "mission_failed"
+	WorkItemStarted    Type = "work_item_started"
+	WorkItemCompleted  Type = "work_item_completed"
+	WorkItemFailed     Type = "work_item_failed"
 )
 
 type Event struct {
-	Type      Type            `json:"type"`
-	Time      time.Time       `json:"time"`
-	SessionID string          `json:"session_id,omitempty"`
-	RunID     string          `json:"run_id,omitempty"`
-	Sequence  uint64          `json:"sequence,omitempty"`
-	Turn      int             `json:"turn,omitempty"`
-	Tool      string          `json:"tool,omitempty"`
-	Message   string          `json:"message,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	Data      json.RawMessage `json:"data,omitempty"`
+	Type       Type            `json:"type"`
+	Time       time.Time       `json:"time"`
+	SessionID  string          `json:"session_id,omitempty"`
+	RunID      string          `json:"run_id,omitempty"`
+	MissionID  string          `json:"mission_id,omitempty"`
+	WorkItemID string          `json:"work_item_id,omitempty"`
+	AgentID    string          `json:"agent_id,omitempty"`
+	Sequence   uint64          `json:"sequence,omitempty"`
+	Turn       int             `json:"turn,omitempty"`
+	Tool       string          `json:"tool,omitempty"`
+	Message    string          `json:"message,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
 }
 
 type Sink func(Event)

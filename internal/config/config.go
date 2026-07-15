@@ -92,6 +92,8 @@ type AgentPreset struct {
 	Label       string `json:"label"`
 	Description string `json:"description"`
 	ReadOnly    bool   `json:"read_only"`
+	ToolPolicy  string `json:"tool_policy"`
+	Internal    bool   `json:"-"`
 }
 
 // RuntimeSelection is the non-secret selection accepted by the local Web UI.
@@ -146,9 +148,13 @@ var companyPresets = []CompanyPreset{
 }
 
 var agentPresets = []AgentPreset{
-	{ID: "coding", Label: "Development Agent", Description: "读取、修改和测试代码，直到完成开发任务。", ReadOnly: false},
-	{ID: "review", Label: "Code Review Agent", Description: "只读检查代码并输出分级问题，不修改工作区。", ReadOnly: true},
-	{ID: "devops", Label: "DevOps Agent", Description: "在安全策略内诊断构建、测试、Git 与本地运行问题。", ReadOnly: false},
+	{ID: "team", Label: "Personal Agent Team", Description: "由 Lead、Explorer、Builder、Reviewer 和 Verifier 协作完成任务。", ReadOnly: true, ToolPolicy: "team"},
+	{ID: "coding", Label: "Development Agent", Description: "读取、修改和测试代码，直到完成开发任务。", ReadOnly: false, ToolPolicy: "full"},
+	{ID: "review", Label: "Code Review Agent", Description: "只读检查代码并输出分级问题，不修改工作区。", ReadOnly: true, ToolPolicy: "read"},
+	{ID: "devops", Label: "DevOps Agent", Description: "在安全策略内诊断构建、测试、Git 与本地运行问题。", ReadOnly: false, ToolPolicy: "full"},
+	{ID: "lead", Label: "Lead Agent", Description: "规划并汇总结构化团队交接。", ReadOnly: true, ToolPolicy: "read", Internal: true},
+	{ID: "explorer", Label: "Explorer Agent", Description: "只读检查项目与约束。", ReadOnly: true, ToolPolicy: "read", Internal: true},
+	{ID: "verifier", Label: "Verifier Agent", Description: "只读检查并运行确定性测试。", ReadOnly: true, ToolPolicy: "verify", Internal: true},
 }
 
 // CompanyPresets returns a copy of the Web-facing provider hierarchy.
@@ -180,10 +186,14 @@ func AccessProfile(companyID, accessID string) (AccessPreset, bool) {
 	return AccessPreset{}, false
 }
 
-// AgentPresets returns the available single-agent behavior profiles.
+// AgentPresets returns owner-selectable single-Agent and Team profiles.
 func AgentPresets() []AgentPreset {
-	out := make([]AgentPreset, len(agentPresets))
-	copy(out, agentPresets)
+	out := make([]AgentPreset, 0, len(agentPresets))
+	for _, profile := range agentPresets {
+		if !profile.Internal {
+			out = append(out, profile)
+		}
+	}
 	return out
 }
 
@@ -399,7 +409,7 @@ func (c Config) Validate() error {
 	}
 	_, profileOK := AgentProfile(c.Agent.Profile)
 	if !profileOK {
-		problems = append(problems, "agent.profile must be coding, review, or devops")
+		problems = append(problems, "agent.profile must be team, coding, review, devops, or an internal team role")
 	}
 	if _, ok := modelPresets[c.Model.Provider]; !ok {
 		problems = append(problems, "model.provider is not registered")

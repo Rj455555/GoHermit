@@ -25,7 +25,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/tool/builtin"
 )
 
-const Version = "0.2.0-dev"
+const Version = "0.3.0-dev"
 const (
 	ExitOK        = 0
 	ExitRuntime   = 1
@@ -118,6 +118,9 @@ func (c CLI) runTask(ctx context.Context, args []string) int {
 		return c.reportError(err, ExitConfig)
 	}
 	defer cleanup()
+	if conf.Agent.Profile == "team" {
+		return c.reportError(errors.New("the team profile currently requires the Web Session API"), ExitUsage)
+	}
 	s, err := session.New(fs.Arg(0), workspace, session.ConfigDigest(conf))
 	if err != nil {
 		return c.reportError(err, ExitRuntime)
@@ -153,6 +156,9 @@ func (c CLI) resume(ctx context.Context, args []string) int {
 	s, err := store.Recover(ctx, fs.Arg(0))
 	if err != nil {
 		return c.reportError(err, ExitRuntime)
+	}
+	if s.Selection.Agent == "team" || s.Mission != nil {
+		return c.reportError(errors.New("team runs must be resumed through the Web Session API"), ExitUsage)
 	}
 	if run := s.ActiveRun(); run == nil || run.Status != session.RunInterrupted {
 		return c.reportError(errors.New("session has no interrupted run to resume"), ExitRuntime)
@@ -328,9 +334,12 @@ func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, 
 	}
 	registry := tool.NewRegistry()
 	profile, _ := config.AgentProfile(conf.Agent.Profile)
-	if profile.ReadOnly {
+	switch profile.ToolPolicy {
+	case "verify":
+		err = builtin.RegisterVerification(registry, ws, conf.Tools.DefaultTimeout.Value(), conf.Tools.MaxStdoutBytes, conf.Tools.MaxStderrBytes)
+	case "read", "team":
 		err = builtin.RegisterReadOnly(registry, ws, conf.Tools.DefaultTimeout.Value(), conf.Tools.MaxStdoutBytes, conf.Tools.MaxStderrBytes)
-	} else {
+	default:
 		err = builtin.RegisterAll(registry, ws, conf.Tools.DefaultTimeout.Value(), conf.Tools.MaxStdoutBytes, conf.Tools.MaxStderrBytes, conf.Permissions.AllowNetwork)
 	}
 	if err != nil {
@@ -355,7 +364,13 @@ func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, 
 				return nil, fmt.Errorf("start plugin %s: %w", process.Name, startErr)
 			}
 			clients = append(clients, client)
-			if startErr = plugin.RegisterTools(ctx, registry, process.Name, client); startErr != nil {
+			var allowPluginTool func(tool.Definition) bool
+			if profile.ToolPolicy == "read" || profile.ToolPolicy == "verify" || profile.ToolPolicy == "team" {
+				allowPluginTool = func(definition tool.Definition) bool {
+					return definition.Permission == tool.PermissionRead && !definition.MutatesWorkspace
+				}
+			}
+			if startErr = plugin.RegisterToolsWithPolicy(ctx, registry, process.Name, client, allowPluginTool); startErr != nil {
 				cleanup()
 				return nil, fmt.Errorf("register plugin %s: %w", process.Name, startErr)
 			}

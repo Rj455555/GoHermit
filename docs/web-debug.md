@@ -1,6 +1,6 @@
 # Local Web and Docker debugging
 
-`hermit-web` is a local single-user, Codex-style workbench: a compact tool rail, persistent task list, conversation/execution canvas, pinned composer, and a Settings drawer. Settings accepts provider credentials over the loopback-only origin; secrets are stored server-side and never returned to the browser. A Session fixes company, access, model, and Agent selection; each user message creates a Run. The browser reloads the selected Session and resumes structured SSE events with `after=<sequence>`.
+`hermit-web` is a local single-owner, Codex-style workbench: a compact tool rail, persistent task list, conversation/execution canvas, pinned composer, and a Settings drawer. Settings manages the Owner Profile plus provider credentials; both remain server-side and credentials are never returned to the browser. A Session fixes company, access, model, and single Agent or Personal Agent Team selection; each user message creates a Run. Team Runs show per-role WorkItem status and bounded usage. The browser reloads the selected Session and resumes structured SSE events with `after=<sequence>`.
 
 Session endpoints and recovery behavior are summarized in `docs/ai/harness.md`. The legacy one-shot `POST /api/run` remains for compatibility, but the Web UI uses `/api/sessions`.
 
@@ -52,9 +52,18 @@ ssh -N -L 8787:127.0.0.1:8787 macmini
 
 Then open <http://127.0.0.1:8787> locally. Do not change the Compose bind to `0.0.0.0` unless an authenticated reverse proxy and network policy are added first.
 
+On Windows, `scripts/connect-web.ps1` keeps the SSH tunnel alive and retries after the Mac mini wakes or reconnects:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\connect-web.ps1
+```
+
+The Web heartbeat reports **服务离线** and disables sending while the tunnel is unavailable. When health recovers it reloads provider status, Sessions, and the selected conversation automatically.
+
 ## Security boundaries
 
 - Web-managed credentials stay in `/data/auth.json` with mode `0600`; Compose persists `/data` in the `gohermit-data` volume.
+- Owner Profile data stays in `/data/owner.json`, is editable/forgettable, rejects credential patterns, and is never placed in the workspace.
 - Model keys and OAuth tokens are never returned by `/api/info` or any settings response.
 - The workspace and config path are fixed when the server starts; browser selections can only reference server-defined catalog entries.
 - Only one task may run at a time.

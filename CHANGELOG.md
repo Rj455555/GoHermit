@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0-dev
+
+- Added the single-owner Personal Agent Team: Lead, Explorer, Builder, Reviewer, repair Builder, and Verifier execute a bounded dependency workflow.
+- Added Mission, WorkItem, Agent, Handoff, model-budget, and execution-session state with schema v2-to-v3 migration.
+- Added stable hidden Worker Sessions so interrupted team work resumes without replaying completed model or tool work.
+- Added parallel read-only work with a single workspace-writer lease and an independent verification gate before Lead completion.
+- Added an explicit Owner Profile and confirmed personal memory outside repositories, with Web APIs to view, edit, and forget facts and secret-pattern rejection.
+- Added owner context to every Worker while preserving project memory as a separate workspace-scoped layer.
+- Added honest offline/reconnecting Web states, a five-second health heartbeat, automatic Session reload after recovery, and a reconnecting Windows SSH tunnel script.
+- Added a team activity panel, per-role status cards, usage budget display, and personal settings to the Codex-style Web workbench.
+- Restricted read-only team roles to plugin tools declared read-only and non-mutating; team runs now fail closed on unsupported CLI and legacy one-shot entry points.
+- Separated terminal owner cancellation from resumable interruption and ensured failed parallel batches cannot leave phantom running WorkItems.
+
 ## 0.2.0-dev
 
 - Added provider presets inspired by Hermes: Codex/OpenAI Responses, DeepSeek, Qwen, OpenAI Chat Completions, and custom OpenAI-compatible endpoints.

@@ -1,45 +1,44 @@
 # Next development plan
 
-This file starts after the `0.2.0-dev` provider, local Web, and persistent Agent Harness milestones. Read it only when planning new work. The Session/Run split, per-call context assembly, project memory, verification gate, recovery, and Session UI are implemented; do not plan them again.
+This file starts after the `0.3.0-dev` Personal Agent Team milestone. Session/Run, Owner Profile, Mission/WorkItem/Handoff, the default six-stage team workflow, stable Worker recovery, one-writer policy, Verifier gate, and team Web UI are implemented; do not plan them again.
 
-## P0: stabilize the provider boundary
+## P0: live team evaluation and repair policy
 
-1. Add opt-in live smoke tests for each provider; keep paid calls outside the default test suite.
-2. Add live provider model discovery with a bounded cache and checked-in fallback, following Hermes's catalog order without copying its Python runtime.
-3. Add capability flags for reasoning effort, images, structured output, and provider-specific limits.
-4. Add contract fixtures captured from sanitized official API examples so protocol drift is easy to detect.
-5. Decide whether provider profiles should support ordered fallback. Do not add fallback until cost, retry, and audit semantics are specified.
-6. Add credential-store encryption or OS keychain integration before any non-local deployment is considered.
+1. Add an explicit opt-in live smoke test that runs one small Team Mission with Codex; keep paid calls outside default tests.
+2. Build checked-in deterministic repository fixtures that score handoff quality, edits, review findings, verification, model calls, tokens, recovery, and final owner summary.
+3. Replace the fixed single repair pass with a bounded review/repair loop driven by structured issue severity, capped by Mission budget.
+4. Use provider token counters consistently, including failed and summary calls, and surface per-role usage in the UI.
 
-Acceptance criteria: neutral Agent Core types remain vendor-free; unsupported capabilities fail during configuration rather than mid-task; secrets and private reasoning never appear in logs.
+Acceptance: quality changes are measured; a failed Verifier never reaches Lead; raw prompts, private reasoning, and unbounded output remain absent from storage.
 
-## P1: interactive approval
+## P1: per-role model policy
 
-1. Define a transport-neutral approval request/response contract.
-2. Let CLI and local Web approve one bounded action without turning the shell into an unrestricted terminal.
-3. Add crash/restart fixtures around pending approvals while preserving the existing completed-tool replay guard.
+1. Add a Team Template editor that chooses one default model plus optional role overrides.
+2. Add provider capability flags and reject unsupported role/model combinations at Session creation.
+3. Specify cost, retry, fallback, and audit semantics before adding ordered provider fallback.
 
-Acceptance criteria: non-interactive mode remains deny-by-default; approvals are scoped, expiring, auditable, and cannot bypass workspace policy.
+Acceptance: selection remains server-validated and credential-filtered; Agent Core and team domain remain vendor-neutral.
 
-## P2: context quality and evaluation
+## P2: interactive approval and Operator
 
-1. Replace approximate-only compression decisions with provider token counters where available.
-2. Add deterministic repository-task fixtures and score completion, edits, tests, turns, tokens, and recovery behavior.
-3. Tune recent-message retention and structured summaries from evaluation data.
+1. Define a transport-neutral, scoped, expiring approval request/response contract.
+2. Enable Operator only for explicitly approved deploy, commit, push, or external side effects.
+3. Add crash/restart tests around pending approval and preserve completed-tool replay protection.
 
-Acceptance criteria: quality changes are measured against checked-in fixtures; raw prompts, reasoning, and unbounded tool output are not retained.
+Acceptance: unattended mode denies approval-required work; approval cannot bypass workspace, credential, or shell policy.
 
-## P3: plugin protocol v2 proposal
+## P3: isolated writer worktrees
 
-Draft, do not implement first: streaming notifications, cancellation IDs, capability negotiation, and compatibility rules. Preserve protocol v1 until v2 has conformance tests for GoHermit plus the Python and Node examples.
+Draft an ADR before implementation. Add temporary Git worktrees only after merge ownership, conflict handling, cleanup, recovery, ignored files, submodules, and user changes have deterministic tests. Until then, keep one writer.
+
+## P4: personal background service
+
+After approval semantics are complete, design an optional local daemon, task inbox, schedule, and notifications. It must remain single-owner and local by default, with explicit action scopes and no silent deployment or messaging.
 
 ## Explicitly deferred
 
 - Public or multi-user hosting
-- Accounts, organization policy, and cloud secret management
-- Multi-agent orchestration
-- Background daemon and scheduler
-- Automatic commit, push, or pull-request creation
+- Organization accounts and cloud secret management
+- Unbounded autonomous agent creation or free-form agent chat
+- Automatic commit, push, deploy, or pull-request creation without approval
 - Telemetry or remote control plane
-
-Any of these changes requires its own threat model and ADR before implementation.

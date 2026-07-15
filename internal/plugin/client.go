@@ -312,10 +312,20 @@ func (t remoteTool) Execute(ctx context.Context, call core.Call) (core.Result, e
 
 // RegisterTools discovers and registers namespaced tools from a plugin.
 func RegisterTools(ctx context.Context, registry *core.Registry, namespace string, client *Client) error {
+	return RegisterToolsWithPolicy(ctx, registry, namespace, client, nil)
+}
+
+// RegisterToolsWithPolicy applies the caller's role boundary after discovery.
+// A nil policy preserves the existing behavior and registers every valid tool.
+func RegisterToolsWithPolicy(ctx context.Context, registry *core.Registry, namespace string, client *Client, allow func(core.Definition) bool) error {
 	definitions, err := client.Tools(ctx)
 	if err != nil {
 		return err
 	}
+	return registerToolDefinitions(registry, namespace, client, definitions, allow)
+}
+
+func registerToolDefinitions(registry *core.Registry, namespace string, client *Client, definitions []v1.ToolDefinition, allow func(core.Definition) bool) error {
 	for _, remote := range definitions {
 		if remote.Name == "" || !json.Valid(remote.InputSchema) {
 			return errors.New("plugin returned an invalid tool definition")
@@ -332,7 +342,11 @@ func RegisterTools(ctx context.Context, registry *core.Registry, namespace strin
 			timeout = time.Duration(remote.TimeoutMS) * time.Millisecond
 		}
 		name := "plugin." + namespace + "." + remote.Name
-		adapter := remoteTool{client: client, remote: remote.Name, def: core.Definition{Name: name, Description: remote.Description, InputSchema: remote.InputSchema, Permission: permission, MutatesWorkspace: remote.MutatesWorkspace, DefaultTimeout: timeout, MaxOutputBytes: client.cfg.MaxMessageBytes}}
+		definition := core.Definition{Name: name, Description: remote.Description, InputSchema: remote.InputSchema, Permission: permission, MutatesWorkspace: remote.MutatesWorkspace, DefaultTimeout: timeout, MaxOutputBytes: client.cfg.MaxMessageBytes}
+		if allow != nil && !allow(definition) {
+			continue
+		}
+		adapter := remoteTool{client: client, remote: remote.Name, def: definition}
 		if err := registry.Register(adapter); err != nil {
 			return err
 		}

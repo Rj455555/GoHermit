@@ -14,6 +14,7 @@ services:
       ALIBABA_CODING_PLAN_API_KEY: "${ALIBABA_CODING_PLAN_API_KEY:-}"
       CODEX_HOME: "/codex"
       GOHERMIT_AUTH_STORE: "/data/auth.json"
+      GOHERMIT_OWNER_STORE: "/data/owner.json"
     volumes:
       - "${GOHERMIT_WORKSPACE:-./sandbox}:/workspace"
       - "${GOHERMIT_CONFIG:-./configs/codex.toml}:/config/hermit.toml:ro"

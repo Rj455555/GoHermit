@@ -2,7 +2,7 @@
 
 ## Schema
 
-Schema v2 separates a durable `open`/`archived` Session from its Runs. `session.json` records fixed provider/model/Agent selection, Run states, active Run, recent bounded messages, summary, tool lifecycles, file hashes, tests, workspace/Git digests, and the next event sequence. `messages.jsonl` stores only visible user/assistant messages. `events.jsonl` stores sequenced audit events. `summary.md` is the human recovery view.
+Schema v3 separates a durable `open`/`archived` Session from its Runs and adds an optional Team Mission. `session.json` records fixed provider/model/Agent selection, Run states, active Run, recent bounded messages, summary, tool lifecycles, file hashes, tests, workspace/Git digests, the next event sequence, and bounded Mission/WorkItem/Handoff state. `messages.jsonl` stores only visible owner/Lead messages. `events.jsonl` stores sequenced audit events. `summary.md` is the human recovery view.
 
 ## Checkpoint lifecycle
 
@@ -14,7 +14,9 @@ JSON and Markdown snapshots are encoded completely, written to a temporary sibli
 
 ## Versioning and migration
 
-Schema version `1` has an explicit, tested, one-way migration to version `2`. Unknown versions remain rejected; no version or unknown field is interpreted silently.
+Schema versions `1` and `2` have explicit, tested, one-way migrations to version `3`. Unknown versions remain rejected; no version or unknown field is interpreted silently.
+
+Each Team WorkItem has a stable `execution_session_id` pointing to a hidden Session in the same store. Hidden Sessions do not appear in owner-facing lists, but retain the normal tool lifecycle and checkpoint semantics. Recovery marks both parent Mission work and child Runner work interrupted; completed child Sessions are converted to Handoffs without replay.
 
 ## Retention and logs
 

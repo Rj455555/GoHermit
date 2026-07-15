@@ -94,3 +94,19 @@ func TestRuntimeSelectionAppliesReadOnlyReviewAgent(t *testing.T) {
 		}
 	}
 }
+
+func TestCLITeamProfileRequiresWebSessionAPI(t *testing.T) {
+	root := t.TempDir()
+	configText := "[model]\nmodel = \"test\"\n\n[agent]\nprofile = \"team\"\n"
+	if err := os.WriteFile(filepath.Join(root, "hermit.toml"), []byte(configText), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	cli := CLI{Stdout: &stdout, Stderr: &stderr, NewProvider: func(config.Config) (model.Provider, error) { return finalProvider{}, nil }}
+	if code := cli.Run(context.Background(), []string{"run", "--workspace", root, "task"}); code != ExitUsage {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Web Session API") {
+		t.Fatalf("stderr=%s", stderr.String())
+	}
+}

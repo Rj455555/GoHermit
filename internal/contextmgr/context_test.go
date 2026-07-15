@@ -30,3 +30,14 @@ func TestBuildDeduplicatesAndBounds(t *testing.T) {
 		t.Fatalf("duplicate messages remained: %d", count)
 	}
 }
+
+func TestBuildIncludesOwnerProfileBeforeProjectContext(t *testing.T) {
+	m, err := New(Config{MaxTokens: 2048, CompressionThreshold: .8, HardLimitThreshold: .92, ReserveOutputTokens: 256, OwnerProfile: "# Owner profile\n\n- Preferred language: Chinese"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, _ := m.Build(t.TempDir(), "goal", "", nil)
+	if len(messages) < 3 || !strings.Contains(messages[1].Content, "Owner profile") || messages[len(messages)-1].Content != "goal" {
+		t.Fatalf("messages=%+v", messages)
+	}
+}
