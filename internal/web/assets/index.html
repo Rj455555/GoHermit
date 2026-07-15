@@ -7,86 +7,83 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">G</span><div><strong>GoHermit</strong><small>Local Agent Harness</small></div></div>
-      <nav aria-label="主导航">
-        <button class="nav-item active" data-page="dashboard"><span>◉</span>概览</button>
-        <button class="nav-item" data-page="agent"><span>▶</span>Agent</button>
-        <button class="nav-item" data-page="settings" data-testid="nav-settings"><span>⚙</span>模型接入</button>
-      </nav>
-      <div class="sidebar-status"><i id="health-dot"></i><span id="health">正在连接</span></div>
+  <div id="app" class="app-shell">
+    <aside class="icon-rail" aria-label="工具栏">
+      <button id="brand-button" class="rail-button brand-button" aria-label="新建任务"><span>G</span></button>
+      <button id="tasks-button" class="rail-button active" aria-label="任务"><span>◫</span></button>
+      <div class="rail-spacer"></div>
+      <span id="health-dot" class="health-dot" title="正在连接"></span>
+      <button id="settings-button" class="rail-button" data-testid="nav-settings" aria-label="设置"><span>⚙</span></button>
     </aside>
 
-    <main>
-      <header class="topbar"><div><h1 id="page-title">概览</h1><p id="page-subtitle">查看工作区、会话和模型接入状态</p></div><span id="version" class="version">—</span></header>
+    <aside id="task-sidebar" class="task-sidebar">
+      <header class="sidebar-head">
+        <div><strong>GoHermit</strong><span id="version">—</span></div>
+        <button id="sidebar-close" class="icon-button mobile-only" aria-label="关闭任务列表">×</button>
+      </header>
+      <button id="new-task" class="new-task-button"><span>＋</span> 新建任务</button>
+      <div class="sidebar-label"><span>任务</span><span id="session-count">0</span></div>
+      <div id="session-list" class="session-list"></div>
+      <footer class="sidebar-footer">
+        <div class="service-line"><span id="service-dot"></span><span id="service-status">正在连接</span></div>
+        <div id="workspace" class="workspace-path" title="当前工作区">—</div>
+      </footer>
+    </aside>
 
-      <section id="page-dashboard" class="page active">
-        <div class="metric-grid four">
-          <article class="metric"><span>服务状态</span><strong id="metric-service">检查中</strong><small>本地单用户服务</small></article>
-          <article class="metric"><span>可用接入</span><strong id="metric-providers">0</strong><small>已登录或已设置 Key</small></article>
-          <article class="metric"><span>会话</span><strong id="metric-sessions">0</strong><small>保存在当前工作区</small></article>
-          <article class="metric"><span>运行状态</span><strong id="metric-run">空闲</strong><small>同一时间一个 Run</small></article>
+    <main class="workspace">
+      <header class="thread-header">
+        <button id="sidebar-open" class="icon-button mobile-only" aria-label="打开任务列表">☰</button>
+        <div class="thread-identity">
+          <h1 id="thread-title">新任务</h1>
+          <p id="thread-meta">选择模型，然后告诉 GoHermit 需要完成什么</p>
         </div>
-        <article class="panel">
-          <div class="panel-head"><div><h2>最近会话</h2><p>重新打开会话即可继续对话，不会丢失已确认的上下文。</p></div><button class="secondary" data-go="agent">打开 Agent</button></div>
-          <div id="recent-sessions" class="session-cards"></div>
-        </article>
-        <article class="panel">
-          <div class="panel-head"><div><h2>已连接的模型服务</h2><p>只有可用的接入方式才会出现在新建会话中。</p></div><button class="secondary" data-go="settings">管理接入</button></div>
-          <div id="connected-list" class="provider-list"></div>
-        </article>
-        <article class="panel compact"><h2>工作区</h2><code id="workspace">—</code></article>
+        <div class="thread-actions">
+          <span id="run-status" class="run-status">就绪</span>
+          <button id="resume-run" class="subtle-button hidden">恢复</button>
+          <button id="cancel-run" class="subtle-button danger-text hidden">停止</button>
+        </div>
+      </header>
+
+      <section id="thread" class="thread empty-thread">
+        <div id="welcome" class="welcome">
+          <div class="welcome-mark">G</div>
+          <h2>今天想构建什么？</h2>
+          <p>GoHermit 会读取项目、修改代码、运行测试，并保存可恢复的工作状态。</p>
+        </div>
+        <div id="messages" class="messages"></div>
+        <details id="activity-panel" class="activity-panel hidden">
+          <summary><span class="activity-chevron">›</span> 运行活动 <span id="activity-count" class="activity-count">0</span></summary>
+          <div id="events" class="events"></div>
+        </details>
       </section>
 
-      <section id="page-agent" class="page wide">
-        <div id="agent-empty" class="empty-state hidden">
-          <div class="empty-icon">◎</div><h2>还没有可用的模型</h2>
-          <p>先登录 Codex，或为一个 API 接入方式设置 Key。</p>
-          <button class="primary" data-go="settings">前往模型接入</button>
-        </div>
-        <div id="agent-workspace" class="agent-layout">
-          <aside class="session-pane">
-            <button id="new-session" class="primary full">＋ 新建会话</button>
-            <div id="session-list" class="session-list"></div>
-          </aside>
-          <section class="conversation-pane">
-            <div id="new-session-form" class="new-session-card">
-              <div><h2>新建 Agent 会话</h2><p>模型与 Agent 在会话创建后固定，便于恢复和审计。</p></div>
-              <div class="config-grid">
-                <label><span>公司</span><select id="company"></select></label>
-                <label><span>接入方式</span><select id="access"></select></label>
-                <label><span>模型</span><select id="model"></select></label>
-                <label><span>Agent</span><select id="agent"></select></label>
-              </div>
-              <p id="access-note" class="note"></p>
-              <button id="create-session" class="primary">创建会话</button>
+      <footer class="composer-wrap">
+        <div id="composer" class="composer">
+          <textarea id="task" maxlength="16384" aria-label="任务消息" placeholder="描述任务，或继续当前会话…"></textarea>
+          <div class="composer-footer">
+            <div id="new-task-options" class="model-pickers">
+              <label><span class="sr-only">公司</span><select id="company" aria-label="公司"></select></label>
+              <label><span class="sr-only">接入方式</span><select id="access" aria-label="接入方式"></select></label>
+              <label><span class="sr-only">模型</span><select id="model" aria-label="模型"></select></label>
+              <label><span class="sr-only">Agent</span><select id="agent" aria-label="Agent"></select></label>
             </div>
-
-            <div id="conversation" class="conversation hidden">
-              <header class="conversation-head">
-                <div><h2 id="conversation-title">会话</h2><p id="conversation-meta"></p></div>
-                <span id="run-status" class="status-badge">空闲</span>
-              </header>
-              <div id="messages" class="messages"><p class="placeholder">发送第一条消息开始开发。</p></div>
-              <details class="activity-panel">
-                <summary>运行活动 <span id="activity-count">0</span></summary>
-                <div id="events" class="events"><p class="placeholder">还没有工具或验证事件。</p></div>
-              </details>
-              <div class="composer chat-composer">
-                <textarea id="task" maxlength="16384" placeholder="继续描述任务、补充要求，或让 Agent 检查当前进度…"></textarea>
-                <div class="actions"><span id="run-hint">消息和摘要只保存在当前工作区。</span><div class="button-row"><button id="resume-run" class="secondary hidden">恢复</button><button id="cancel-run" class="danger hidden">停止</button><button id="send" class="primary">发送</button></div></div>
-              </div>
+            <div id="session-model" class="session-model hidden"></div>
+            <div class="composer-actions">
+              <span class="shortcut">Ctrl ↵</span>
+              <button id="send" class="send-button" aria-label="发送">↑</button>
             </div>
-          </section>
+          </div>
         </div>
-      </section>
-
-      <section id="page-settings" class="page">
-        <div class="intro"><h2>模型接入</h2><p>先接入服务，再创建 Agent 会话。API Key 只保存在 GoHermit 服务端，不写入项目或浏览器。</p></div>
-        <div id="settings-list" class="settings-list"></div>
-      </section>
+        <p id="composer-note" class="composer-note">模型可能出错，请检查重要改动。</p>
+      </footer>
     </main>
+
+    <div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
+    <aside id="settings-drawer" class="settings-drawer hidden" aria-label="设置">
+      <header class="drawer-head"><div><h2>设置</h2><p>模型接入与凭据</p></div><button id="settings-close" class="icon-button" aria-label="关闭设置">×</button></header>
+      <div class="settings-intro"><strong>模型接入</strong><p>未登录或未设置 Key 的接入方式不会出现在新任务中。凭据只保存在服务端。</p></div>
+      <div id="settings-list" class="settings-list"></div>
+    </aside>
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="/app.js" defer></script>

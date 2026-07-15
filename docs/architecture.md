@@ -33,7 +33,7 @@ Provider-neutral messages and tool definitions are converted at the HTTP boundar
 
 ## Web boundary
 
-`hermit-web` embeds a Dashboard, persistent Agent workspace, and Provider Settings. Same-origin Session APIs create fixed provider/model/Agent selections, append user-message Runs, and replay persisted events by sequence before continuing live SSE. Workspace, endpoints, and credentials remain server-side. One workspace permits one active Run; history and settings remain readable. The surface is only for loopback or SSH-tunneled access.
+`hermit-web` embeds a Codex-style single workbench with a task sidebar, conversation/execution canvas, composer, and Settings drawer. Same-origin Session APIs create fixed provider/model/Agent selections, append user-message Runs, and replay persisted events by sequence before continuing live SSE. Workspace, endpoints, and credentials remain server-side. One workspace permits one active Run; history and settings remain readable. The surface is only for loopback or SSH-tunneled access.
 
 ## Tool call flow
 

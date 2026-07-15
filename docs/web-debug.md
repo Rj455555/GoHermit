@@ -1,6 +1,6 @@
 # Local Web and Docker debugging
 
-`hermit-web` is a local single-user console with Dashboard, persistent Agent, and Provider Settings pages. Settings accepts provider credentials over the loopback-only origin; secrets are stored server-side and never returned to the browser. A Session fixes company, access, model, and Agent selection; each user message creates a Run. The browser reloads visible history and resumes structured SSE events with `after=<sequence>`.
+`hermit-web` is a local single-user, Codex-style workbench: a compact tool rail, persistent task list, conversation/execution canvas, pinned composer, and a Settings drawer. Settings accepts provider credentials over the loopback-only origin; secrets are stored server-side and never returned to the browser. A Session fixes company, access, model, and Agent selection; each user message creates a Run. The browser reloads the selected Session and resumes structured SSE events with `after=<sequence>`.
 
 Session endpoints and recovery behavior are summarized in `docs/ai/harness.md`. The legacy one-shot `POST /api/run` remains for compatibility, but the Web UI uses `/api/sessions`.
 
@@ -29,9 +29,9 @@ OpenAI expands to two provider rows, matching Hermes:
 - `openai-codex`: ChatGPT/Codex subscription login and the Codex backend.
 - `openai-api`: direct API billing through `OPENAI_API_KEY`.
 
-For Codex Plan, open Provider Settings and choose **Login Codex**. GoHermit starts the OpenAI device-code flow, polls it server-side, and saves the resulting tokens in the dedicated `gohermit-data` volume. Existing Codex CLI login remains a fallback: Compose mounts `${HOME}/.codex` read-only and never modifies it.
+For Codex Plan, open the Settings drawer and choose **Login Codex**. GoHermit starts the OpenAI device-code flow, polls it server-side, and saves the resulting tokens in the dedicated `gohermit-data` volume. Existing Codex CLI login remains a fallback: Compose mounts `${HOME}/.codex` read-only and never modifies it.
 
-For API providers, paste the key in Provider Settings. A configured environment variable remains supported and takes effect when no Web-managed key exists. Only access methods with usable credentials appear in Run Agent.
+For API providers, paste the key in Settings. A configured environment variable remains supported and takes effect when no Web-managed key exists. Only access methods with usable credentials appear in the new-task composer.
 
 Alibaba likewise exposes standard DashScope API and Alibaba Coding Plan as separate provider rows because their keys and endpoints differ.
 
@@ -58,7 +58,7 @@ Then open <http://127.0.0.1:8787> locally. Do not change the Compose bind to `0.
 - Model keys and OAuth tokens are never returned by `/api/info` or any settings response.
 - The workspace and config path are fixed when the server starts; browser selections can only reference server-defined catalog entries.
 - Only one task may run at a time.
-- Request size and task length are bounded; disconnecting cancels the run.
+- Request size and task length are bounded; Runs continue across an SSE reconnect and stop only through their bounded runtime or the explicit cancel endpoint.
 - Browser POSTs are same-origin checked and responses set a restrictive content security policy.
 - The container drops Linux capabilities, enables `no-new-privileges`, mounts config read-only, and does not mount the Docker socket.
 - Repository build/test code and configured plugins remain trusted code; Docker packaging is isolation-in-depth, not a hostile-code sandbox.

@@ -4,12 +4,12 @@ Read this file only when changing the Web console, provider availability, or aut
 
 ## User flow
 
-`Dashboard -> Provider Settings -> Agent Session`
+`Task rail/sidebar -> conversation workbench -> Settings drawer`
 
 - Settings displays the full company/access catalog.
-- Run receives `available_companies`, which contains only supported access methods whose credentials are currently usable.
+- The new-task composer receives `available_companies`, which contains only supported access methods whose credentials are currently usable.
 - The picker remains `company -> access/billing path -> model -> Agent profile`.
-- Dashboard summarizes connected access methods and current run state.
+- Existing Sessions keep their selection fixed; the header and task list summarize current Run state.
 
 ## Code map
 
@@ -21,7 +21,7 @@ Read this file only when changing the Web console, provider availability, or aut
 | mode-0600 atomic credential file | `internal/auth/store.go` |
 | Codex device-code state machine | `internal/auth/device.go` |
 | status/filter/settings/run APIs | `internal/web/server.go` |
-| Dashboard/Run/Settings SPA | `internal/web/assets/` |
+| Codex-style task/workbench/settings SPA | `internal/web/assets/` |
 | persistent container data | `compose.yaml`, `Dockerfile` |
 
 ## Credential precedence
@@ -39,7 +39,12 @@ Read this file only when changing the Web console, provider availability, or aut
 - `DELETE /api/settings/providers/{provider}/credentials`: remove locally stored credentials.
 - `POST /api/settings/providers/openai-codex/login`: begin device login.
 - `GET /api/settings/logins/{id}`: poll secret-free login state.
-- `POST /api/run`: validate catalog selection, resolve credentials server-side, stream events.
+- `POST /api/sessions`: validate a fixed catalog selection and create a Session.
+- `GET /api/sessions/{id}`: reload selection, messages, summary, and Run state.
+- `POST /api/sessions/{id}/runs`: append one user message and start a Run.
+- `GET /api/sessions/{id}/events?after={sequence}`: replay and continue SSE events.
+- Run cancel/resume endpoints are documented in `docs/ai/harness.md`.
+- `POST /api/run`: legacy compatibility only; the SPA does not use it.
 
 All mutating endpoints enforce same-origin requests. Never add secrets to `/api/info`, logs, events, DOM persistence, localStorage, sessionStorage, or repository files.
 
