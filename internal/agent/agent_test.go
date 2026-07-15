@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
+	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/session"
+	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/tool"
 )
 
@@ -107,6 +109,23 @@ func TestNormalStopAndToolResultReturned(t *testing.T) {
 	if s.Status != session.Open || s.Turns != 2 || len(s.Runs) != 1 || s.Runs[0].Status != session.RunCompleted {
 		t.Fatalf("session=%+v", s)
 	}
+	if s.Runs[0].Plan == nil || s.Runs[0].Plan.Status != taskplan.Completed {
+		t.Fatalf("plan=%+v", s.Runs[0].Plan)
+	}
+	events, err := runner.Store.Events(s.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, updated := false, 0
+	for _, runtimeEvent := range events {
+		created = created || runtimeEvent.Type == event.PlanCreated
+		if runtimeEvent.Type == event.PlanUpdated {
+			updated++
+		}
+	}
+	if !created || updated < 4 {
+		t.Fatalf("plan events created=%v updated=%d", created, updated)
+	}
 }
 func TestMaximumTurns(t *testing.T) {
 	p := &scriptedProvider{fn: func(n int, r model.GenerateRequest) (model.GenerateResponse, error) {
@@ -119,6 +138,9 @@ func TestMaximumTurns(t *testing.T) {
 	}
 	if s.Status != session.Open || len(s.Runs) != 1 || s.Runs[0].Status != session.RunFailed || s.Turns != 2 {
 		t.Fatalf("session status=%s run=%+v turns=%d", s.Status, s.Runs, s.Turns)
+	}
+	if s.Runs[0].Plan == nil || s.Runs[0].Plan.Status != taskplan.Failed {
+		t.Fatalf("plan=%+v", s.Runs[0].Plan)
 	}
 }
 func TestTotalTimeout(t *testing.T) {
@@ -133,6 +155,9 @@ func TestTotalTimeout(t *testing.T) {
 	}
 	if s.Status != session.Open || len(s.Runs) != 1 || s.Runs[0].Status != session.RunCancelled {
 		t.Fatalf("session status=%s runs=%+v", s.Status, s.Runs)
+	}
+	if s.Runs[0].Plan == nil || s.Runs[0].Plan.Status != taskplan.Cancelled {
+		t.Fatalf("plan=%+v", s.Runs[0].Plan)
 	}
 }
 func TestToolErrorReturnedToModel(t *testing.T) {

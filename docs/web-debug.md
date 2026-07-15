@@ -1,6 +1,6 @@
 # Local Web and Docker debugging
 
-`hermit-web` is a local single-owner, Codex-style workbench: a compact tool rail, persistent task list, conversation/execution canvas, pinned composer, and a Settings drawer. Settings manages the Owner Profile plus provider credentials; both remain server-side and credentials are never returned to the browser. A Session fixes company, access, model, and single Agent or Personal Agent Team selection; each user message creates a Run. Team Runs show per-role WorkItem status and bounded usage. The browser reloads the selected Session and resumes structured SSE events with `after=<sequence>`.
+`hermit-web` is a local single-owner, Codex-style workbench: a compact tool rail, persistent task list, conversation/execution canvas, pinned composer, and a Settings drawer. Every Run shows a collapsible Cursor-style Live Plan with checkboxes, current phase, bounded detail, and completion progress. Settings manages the Owner Profile plus provider credentials; both remain server-side. A Session fixes company, access, model, and single Agent or Personal Agent Team selection; each user message creates a Run. The browser reloads the selected Plan and resumes structured SSE events with `after=<sequence>` or `Last-Event-ID`.
 
 Session endpoints and recovery behavior are summarized in `docs/ai/harness.md`. The legacy one-shot `POST /api/run` remains for compatibility, but the Web UI uses `/api/sessions`.
 

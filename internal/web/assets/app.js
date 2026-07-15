@@ -221,6 +221,7 @@ function showNewTask(focus = true) {
   $('#welcome').classList.remove('hidden');
   $('#thread').classList.add('empty-thread');
   $('#messages').replaceChildren();
+  $('#plan-panel').classList.add('hidden');
   $('#team-panel').classList.add('hidden');
   resetActivity();
   $('#new-task-options').classList.remove('hidden');
@@ -261,6 +262,7 @@ async function openSession(id) {
   $('#session-model').classList.remove('hidden');
   renderThreadIdentity();
   renderMessages(current.messages || []);
+  renderPlan();
   renderMission();
   resetActivity();
   renderRunState();
@@ -288,6 +290,37 @@ function renderMessages(messages) {
   root.replaceChildren();
   for (const message of messages) addMessage(message.role, message.content, false);
   requestAnimationFrame(() => { $('#thread').scrollTop = $('#thread').scrollHeight; });
+}
+
+function renderPlan() {
+  const panel = $('#plan-panel');
+  const run = activeRun() || lastRun();
+  const plan = run && run.plan;
+  if (!plan || !(plan.steps || []).length) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  const steps = plan.steps || [];
+  const done = steps.filter(step => step.status === 'completed').length;
+  const currentStep = steps.find(step => step.status === 'in_progress');
+  const failedStep = steps.find(step => step.status === 'failed');
+  const cancelledStep = steps.find(step => step.status === 'cancelled');
+  $('#plan-current').textContent = currentStep ? `正在进行：${currentStep.title}` : (failedStep ? `失败：${failedStep.title}` : (cancelledStep ? '计划已停止' : (plan.status === 'completed' ? '全部完成' : '等待下一步')));
+  $('#plan-progress-text').textContent = `${done} / ${steps.length}`;
+  $('#plan-progress-bar').style.width = `${steps.length ? Math.round(done * 100 / steps.length) : 0}%`;
+  const root = $('#plan-steps');
+  root.replaceChildren();
+  for (const step of steps) {
+    const row = document.createElement('li');
+    row.className = `plan-step ${step.status}`;
+    row.innerHTML = '<span class="plan-check" aria-hidden="true"></span><div><strong></strong><span></span></div>';
+    row.querySelector('.plan-check').textContent = ({completed: '✓', in_progress: '•', failed: '!', cancelled: '–'})[step.status] || '';
+    row.querySelector('strong').textContent = step.title;
+    const detail = row.querySelector('div span');
+    detail.textContent = step.detail || ({pending: '等待处理', in_progress: '正在处理', completed: '已完成', failed: '未完成', cancelled: '已停止'})[step.status] || step.status;
+    root.append(row);
+  }
 }
 
 function roleLabel(role) {
@@ -400,6 +433,7 @@ async function sendMessage() {
     current.session.runs.push({id: result.run_id, status: 'queued', message});
     renderRunState();
     current = await request(`/api/sessions/${id}`);
+    renderPlan();
     renderMission();
     await loadInfo();
   } catch (error) {
@@ -414,7 +448,7 @@ function connectEvents(sessionID) {
   closeEvents();
   eventSource = new EventSource(`/api/sessions/${sessionID}/events?after=${lastSequence}`);
   eventSource.sessionID = sessionID;
-  const types = ['task_started', 'turn_started', 'model_started', 'model_delta', 'model_completed', 'tool_started', 'tool_completed', 'permission_required', 'checkpoint_saved', 'run_verifying', 'run_interrupted', 'workspace_changed', 'memory_updated', 'session_updated', 'mission_started', 'mission_completed', 'mission_failed', 'work_item_started', 'work_item_completed', 'work_item_failed', 'task_completed', 'task_failed', 'task_cancelled'];
+  const types = ['task_started', 'turn_started', 'model_started', 'model_delta', 'model_completed', 'tool_started', 'tool_completed', 'permission_required', 'checkpoint_saved', 'run_verifying', 'run_interrupted', 'workspace_changed', 'memory_updated', 'session_updated', 'plan_created', 'plan_updated', 'mission_started', 'mission_completed', 'mission_failed', 'work_item_started', 'work_item_completed', 'work_item_failed', 'task_completed', 'task_failed', 'task_cancelled'];
   for (const type of types) eventSource.addEventListener(type, source => consumeEvent(type, source));
   eventSource.onerror = () => {
     if (current && current.session.id === sessionID) $('#composer-note').textContent = '事件连接正在重试…';
@@ -441,6 +475,11 @@ function consumeEvent(type, sourceEvent) {
   if (type === 'model_started') streamingBubble = null;
   const agent = runtimeEvent.agent_id ? `${roleLabel(runtimeEvent.agent_id)} · ` : '';
   addActivity(type, agent + (runtimeEvent.error || runtimeEvent.message || runtimeEvent.tool || ''));
+  if ((type === 'plan_created' || type === 'plan_updated') && runtimeEvent.data && runtimeEvent.data.plan && current) {
+    const run = (current.session.runs || []).find(item => item.id === runtimeEvent.run_id);
+    if (run) run.plan = runtimeEvent.data.plan;
+    renderPlan();
+  }
   renderMissionEvent(type, runtimeEvent);
   if (type === 'task_started') setBusyState('运行中', 'running');
   if (type === 'run_verifying') setBusyState('验证中', 'running');
@@ -485,7 +524,7 @@ function eventIcon(type) {
 }
 
 function eventLabel(type) {
-  return ({task_started: '开始运行', turn_started: '新一轮', model_started: '模型处理中', model_completed: '模型响应完成', tool_started: '调用工具', tool_completed: '工具完成', permission_required: '需要权限', checkpoint_saved: '已保存状态', run_verifying: '验证改动', run_interrupted: '运行中断', workspace_changed: '工作区已变化', memory_updated: '项目记忆已更新', mission_started: '团队任务开始', mission_completed: '团队任务完成', mission_failed: '团队任务失败', work_item_started: 'Agent 开始工作', work_item_completed: 'Agent 完成交接', work_item_failed: 'Agent 执行失败', task_completed: '任务完成', task_failed: '任务失败', task_cancelled: '任务已停止'})[type] || type;
+  return ({task_started: '开始运行', turn_started: '新一轮', model_started: '模型处理中', model_completed: '模型响应完成', tool_started: '调用工具', tool_completed: '工具完成', permission_required: '需要权限', checkpoint_saved: '已保存状态', run_verifying: '验证改动', run_interrupted: '运行中断', workspace_changed: '工作区已变化', memory_updated: '项目记忆已更新', plan_created: '执行计划已创建', plan_updated: '执行计划已更新', mission_started: '团队任务开始', mission_completed: '团队任务完成', mission_failed: '团队任务失败', work_item_started: 'Agent 开始工作', work_item_completed: 'Agent 完成交接', work_item_failed: 'Agent 执行失败', task_completed: '任务完成', task_failed: '任务失败', task_cancelled: '任务已停止'})[type] || type;
 }
 
 function setBusyState(text, state) {
@@ -501,6 +540,7 @@ async function refreshCurrent() {
   current = await request(`/api/sessions/${id}`);
   renderThreadIdentity();
   renderMessages(current.messages || []);
+  renderPlan();
   renderMission();
   renderRunState();
   $('#composer-note').textContent = '模型可能出错，请检查重要改动。';

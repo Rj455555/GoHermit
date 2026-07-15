@@ -15,6 +15,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/session"
+	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
 )
 
@@ -60,6 +61,10 @@ func TestTeamRunCompletesParentSessionWithVisibleLeadHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	run.Plan, err = taskplan.DefaultTeam(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err = server.store.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
@@ -71,9 +76,82 @@ func TestTeamRunCompletesParentSessionWithVisibleLeadHandoff(t *testing.T) {
 	if loaded.ActiveRunID != "" || loaded.Runs[0].Status != session.RunCompleted || loaded.Mission == nil || loaded.Mission.Status != team.Completed || len(loaded.TestResults) != 1 {
 		t.Fatalf("loaded=%+v", loaded)
 	}
+	done, total := loaded.Runs[0].Plan.Progress()
+	if loaded.Runs[0].Plan.Status != taskplan.Completed || done != total || total != 6 {
+		t.Fatalf("plan=%+v", loaded.Runs[0].Plan)
+	}
 	messages, err := server.store.Messages(sess.ID)
 	if err != nil || len(messages) != 1 || messages[0].Role != "assistant" {
 		t.Fatalf("messages=%+v err=%v", messages, err)
+	}
+}
+
+func TestLaunchTeamRunCreatesAndStreamsDurablePlan(t *testing.T) {
+	server := testServer(t)
+	server.teamWorker = webTeamWorker{}
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Team plan", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := server.launchSessionRun(sess, "build it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for server.active.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := loaded.Runs[len(loaded.Runs)-1]
+	if run.ID != runID || run.Plan == nil || run.Plan.Status != taskplan.Completed {
+		t.Fatalf("run=%+v", run)
+	}
+	events, err := server.store.Events(sess.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdSequence, updates := uint64(0), 0
+	for _, runtimeEvent := range events {
+		if runtimeEvent.Type == event.PlanCreated {
+			createdSequence = runtimeEvent.Sequence
+		}
+		if runtimeEvent.Type == event.PlanUpdated {
+			updates++
+			if createdSequence == 0 || runtimeEvent.Sequence <= createdSequence {
+				t.Fatalf("plan update preceded creation: %+v", runtimeEvent)
+			}
+		}
+	}
+	if createdSequence == 0 || updates < 6 {
+		t.Fatalf("created=%d updates=%d", createdSequence, updates)
+	}
+}
+
+func TestVerifierFailureMarksLivePlanFailed(t *testing.T) {
+	plan, _ := taskplan.DefaultTeam("run")
+	for _, id := range []string{"explore", "build", "review", "repair"} {
+		_, _ = plan.Start(id, "started")
+		_, _ = plan.Complete(id, "done")
+	}
+	mission, _ := team.DefaultMission("mission", "run", "goal", team.DefaultBudget())
+	mission.Handoffs = append(mission.Handoffs, team.Handoff{ID: "handoff-verify", WorkItemID: "verify", Role: team.RoleVerifier, Summary: "tests failed", Checks: []team.Check{{Command: "go test ./...", Passed: false, Summary: "failed"}}})
+	started := team.TeamEvent{Type: team.WorkItemStarted, WorkItemID: "verify", Role: team.RoleVerifier, Message: "verify"}
+	if changed, _, _ := syncTeamPlan(plan, started, mission); !changed {
+		t.Fatal("verifier plan step did not start")
+	}
+	done := team.TeamEvent{Type: team.WorkItemDone, WorkItemID: "verify", Role: team.RoleVerifier, Message: "tests failed"}
+	if changed, _, _ := syncTeamPlan(plan, done, mission); !changed || plan.Status != taskplan.Failed || plan.Current() != nil {
+		t.Fatalf("plan=%+v changed=%v", plan, changed)
 	}
 }
 
@@ -288,6 +366,11 @@ func TestTeamCancellationAndTimeoutHaveDistinctRecoverySemantics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			run.Plan, err = taskplan.DefaultTeam(run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = run.Plan.Start("explore", "started")
 			sess.Mission.Status = team.Running
 			if err = server.store.Save(context.Background(), sess); err != nil {
 				t.Fatal(err)
@@ -303,6 +386,12 @@ func TestTeamCancellationAndTimeoutHaveDistinctRecoverySemantics(t *testing.T) {
 			}
 			if (loaded.ActiveRunID != "") != tc.wantActiveRun || (gotRun.CompletedAt != nil) != tc.wantCompleted {
 				t.Fatalf("active=%q completed=%v", loaded.ActiveRunID, gotRun.CompletedAt)
+			}
+			if tc.wantActiveRun && gotRun.Plan.Status != taskplan.Active {
+				t.Fatalf("interrupted plan=%+v", gotRun.Plan)
+			}
+			if !tc.wantActiveRun && gotRun.Plan.Status != taskplan.Cancelled {
+				t.Fatalf("cancelled plan=%+v", gotRun.Plan)
 			}
 		})
 	}

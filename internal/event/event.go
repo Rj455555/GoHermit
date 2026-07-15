@@ -32,6 +32,8 @@ const (
 	WorkItemStarted    Type = "work_item_started"
 	WorkItemCompleted  Type = "work_item_completed"
 	WorkItemFailed     Type = "work_item_failed"
+	PlanCreated        Type = "plan_created"
+	PlanUpdated        Type = "plan_updated"
 )
 
 type Event struct {
@@ -42,6 +44,7 @@ type Event struct {
 	MissionID  string          `json:"mission_id,omitempty"`
 	WorkItemID string          `json:"work_item_id,omitempty"`
 	AgentID    string          `json:"agent_id,omitempty"`
+	PlanStepID string          `json:"plan_step_id,omitempty"`
 	Sequence   uint64          `json:"sequence,omitempty"`
 	Turn       int             `json:"turn,omitempty"`
 	Tool       string          `json:"tool,omitempty"`

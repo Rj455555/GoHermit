@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0-dev
+
+- Added a durable Cursor-style Live Plan to every Run, with bounded checkbox steps, one current step, progress, details, and terminal completed/failed/cancelled states.
+- Added schema v4 with an explicit v3 migration and validation on both checkpoint save and load.
+- Added sequenced `plan_created` and `plan_updated` SSE events containing bounded public Plan snapshots; refresh and reconnect recover the same revision.
+- Mapped single-Agent analysis/execution/verification/report phases and Team WorkItems to the shared Plan contract without persisting private model reasoning.
+- Added a collapsible workbench checklist with live current-step text, completion bar, failure/cancellation states, and persisted reload behavior.
+
 ## 0.3.0-dev
 
 - Added the single-owner Personal Agent Team: Lead, Explorer, Builder, Reviewer, repair Builder, and Verifier execute a bounded dependency workflow.

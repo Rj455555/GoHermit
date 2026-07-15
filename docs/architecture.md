@@ -14,7 +14,7 @@ Agent loop ── Context manager
     └── Session store ── atomic JSON / batched JSONL ── .gohermit
 ```
 
-For a Team Run, a presentation-neutral Coordinator sits above the existing Agent loop. It schedules dependency-ready WorkItems, gives each role only its dependency Handoffs, checkpoints the parent Mission, and uses stable hidden child Sessions for the existing Runner. Parallel read-only work is allowed; a Mission-wide lease permits one workspace writer. Only the Lead Handoff becomes a visible assistant message.
+For a Team Run, a presentation-neutral Coordinator sits above the existing Agent loop. It schedules dependency-ready WorkItems, gives each role only its dependency Handoffs, checkpoints the parent Mission, and uses stable hidden child Sessions for the existing Runner. Parallel read-only work is allowed; a Mission-wide lease permits one workspace writer. Only the Lead Handoff becomes a visible assistant message. A separate presentation-neutral Live Plan maps real Run/WorkItem transitions into owner-facing checkbox progress.
 
 Dependencies point inward: `cmd` depends on `internal/app`; app assembles domain packages; agent depends on provider/tool/session abstractions; infrastructure packages implement them. Agent never imports the CLI.
 
@@ -43,7 +43,7 @@ The registry rejects duplicate names. The executor resolves the tool, applies a 
 
 ## Session flow
 
-A Session is a durable conversation; each user message creates a Run with its own status and verification state. Visible user/assistant messages and sequenced events are append-only JSONL, while bounded recovery state is atomically replaced in `session.json`. Schema v1 and v2 migrate explicitly to v3. Team Missions add WorkItems and Handoffs; each WorkItem binds a stable hidden execution Session so recovery reuses completed results and resumes interrupted Runner state. Workspace identity mismatch fails closed; external file/Git changes trigger reconciliation instead of discarding the Session. Started-but-unfinished tools become uncertain and are never blindly replayed.
+A Session is a durable conversation; each user message creates a Run with its own status, verification state, and public Live Plan. Visible user/assistant messages and sequenced events are append-only JSONL, while bounded recovery state is atomically replaced in `session.json`. Schema v1-v3 migrate explicitly to v4. Team Missions add WorkItems and Handoffs; each WorkItem binds a stable hidden execution Session so recovery reuses completed results and resumes interrupted Runner state. Workspace identity mismatch fails closed; external file/Git changes trigger reconciliation instead of discarding the Session. Started-but-unfinished tools become uncertain and are never blindly replayed.
 
 ## Cancellation and errors
 

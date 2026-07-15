@@ -179,11 +179,11 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 		if err := mission.Start(id); err != nil {
 			return err
 		}
+		c.emit(TeamEvent{Type: WorkItemStarted, MissionID: mission.ID, WorkItemID: id, Role: item.Role, Message: item.Title})
 		if err := c.checkpoint(mission); err != nil {
 			return err
 		}
 		assignment := Assignment{MissionID: mission.ID, Goal: mission.Goal, WorkItem: *item, Inputs: dependencyHandoffs(mission, *item), MaxTokens: max(1024, (mission.Budget.MaxTokens-mission.Usage.Tokens)/max(1, len(mission.WorkItems))), MaxDuration: mission.Budget.Timeout}
-		c.emit(TeamEvent{Type: WorkItemStarted, MissionID: mission.ID, WorkItemID: id, Role: item.Role, Message: item.Title})
 		started++
 		group.Add(1)
 		go func(id string, role Role, assignment Assignment) {
