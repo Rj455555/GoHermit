@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0-dev
+
+- Added prepared commit journals so Session checkpoints and persistent event batches recover idempotently after crashes and are durable before SSE delivery.
+- Added a presentation-neutral Run/Plan controller and consistent resumable timeout versus terminal cancellation semantics.
+- Added task-specific Plan titles plus `auto` and review-first Plan modes; review Runs stay queued until explicit owner approval and can be cancelled before execution.
+- Added adaptive Personal Agent Team topologies with parallel read-only evidence gathering, a single writer, and Plan steps derived from real Mission WorkItems.
+- Added a bounded repair/reverify loop that preserves prior Handoffs and retries failed independent verification up to three attempts within the Mission budget.
+- Added durable detached Worker activity relay without storing raw tool arguments.
+- Added Playwright coverage for review Plan creation, refresh recovery, approval, and execution-state controls, plus Linux Go/race, Web E2E, cross-build, and Docker CI jobs.
+
 ## 0.4.0-dev
 
 - Added a durable Cursor-style Live Plan to every Run, with bounded checkbox steps, one current step, progress, details, and terminal completed/failed/cancelled states.

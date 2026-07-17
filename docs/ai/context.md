@@ -4,7 +4,7 @@ This is the compact handoff for coding agents. Read `AGENTS.md` first, then this
 
 ## Product in one paragraph
 
-GoHermit `0.4.0-dev` is a foreground, local-first, single-owner coding harness. A durable Session contains multiple user-message Runs, visible history, bounded context, verified project memory, crash recovery, and a public Live Plan whose checkbox phases update from real execution facts. A Run may use the original single Agent or a Personal Agent Team whose Mission delegates bounded WorkItems through structured Handoffs. Explicit Owner Profile data lives outside repositories and enters every Worker context.
+GoHermit `0.5.0-dev` is a foreground, local-first, single-owner coding harness. A durable Session contains multiple user-message Runs, visible history, bounded context, verified project memory, crash recovery, and a task-specific public Live Plan. A Run may wait for owner Plan approval, use the original single Agent, or use an adaptive Personal Agent Team whose Mission delegates bounded WorkItems through structured Handoffs and a bounded repair/verify loop. Explicit Owner Profile data lives outside repositories and enters every Worker context.
 
 ## Shortest useful reading path
 
@@ -32,8 +32,8 @@ GoHermit `0.4.0-dev` is a foreground, local-first, single-owner coding harness. 
 | provider catalog/grouping | `internal/config` | `internal/auth`, provider docs, config tests |
 | credentials/device login | `internal/auth` | `docs/ai/console-credentials.md`, Compose data volume |
 | local Web/SSE | `internal/web`, `cmd/hermit-web` | Web tests, `docs/web-debug.md` |
-| team orchestration | `internal/team`, `internal/app/team_worker.go` | `docs/ai/team.md`, ADR 0008 |
-| Live Plan/checklist | `internal/taskplan`, Plan updates in agent/Web | `docs/ai/plan-mode.md`, ADR 0009 |
+| team orchestration | `internal/team`, `internal/app/team_worker.go` | `internal/runcontrol`, `docs/ai/team.md`, ADR 0008 |
+| Live Plan/checklist | `internal/taskplan`, `internal/runcontrol` | `docs/ai/plan-mode.md`, ADR 0009/0010 |
 | owner preferences/memory | `internal/owner` | owner APIs and context manager |
 | Docker packaging | `Dockerfile`, `compose.yaml` | Web/Docker guide |
 | tool registry/timeouts | `internal/tool/tool.go` | executor tests |
@@ -57,9 +57,9 @@ GoHermit `0.4.0-dev` is a foreground, local-first, single-owner coding harness. 
 - Checkpoints are versioned JSON, atomically replaced, and resumable without full conversation history.
 - Plugin stdout is protocol-only, message/concurrency sizes are bounded, and crashes cannot crash the core.
 - GoHermit never commits, pushes, opens PRs, changes system settings, or emits telemetry by itself. Docker packaging is an operator-started local debug surface.
-- Team agents communicate durably only through bounded Handoffs; read-only agents may run concurrently, but one workspace has one writer.
+- Team agents communicate durably only through bounded Handoffs; read-only agents may run concurrently, but one workspace has one writer. Child activity is committed before presentation delivery.
 - A Team Run cannot reach Lead completion without independent post-repair Verifier evidence.
-- Live Plan revisions come only from real lifecycle transitions; at most one step is current, and no Plan contains private reasoning or fabricated progress.
+- Live Plan revisions come only from real lifecycle transitions. Single-Agent Plans have one current step; Team Plans may show concurrent read-only steps. No Plan contains private reasoning or fabricated progress.
 
 ## Current verified state
 
@@ -75,6 +75,7 @@ GoHermit `0.4.0-dev` is a foreground, local-first, single-owner coding harness. 
 - Codex Run models are discovered from the authenticated account; Responses streaming reconstructs text and tool calls from output-item events and safely replays encrypted continuation.
 - Harness tests cover Session/Run verification, schema migration, event replay, recovery reconciliation, project-memory redaction, and `Last-Event-ID` SSE continuation. The Mac-hosted v0.3 workbench passes health/API/static acceptance; an interactive live-model Mission remains opt-in.
 - Team tests cover dependency order, parallel readers, one writer, structured Handoffs, Verifier gating, parent Session completion, and completed Worker replay protection.
+- For v0.5, commit-journal crash injection, detached Worker event durability, Plan approval, adaptive Team topology, bounded repair/reverify, task-specific Plan, and Chromium refresh/approval E2E tests pass on Windows. Vet and native/cross-platform builds pass; Linux race and Docker gates are also checked by `.github/workflows/ci.yml` because this Windows host has no Docker and blocks some transient test executables.
 - The only third-party Go module is `github.com/BurntSushi/toml` for strict TOML decoding.
 
 ## Known boundaries
@@ -86,19 +87,20 @@ GoHermit `0.4.0-dev` is a foreground, local-first, single-owner coding harness. 
 - Codex device login uses OpenAI's device flow and stores tokens only in the server-side credential store. Revocation is detected when a refresh is required; there is no proactive remote token introspection.
 - The Web surface is single-user and unauthenticated; public exposure is unsupported.
 - Provider/model/Agent selection is fixed for a Session; create a new Session to switch.
-- Interactive approvals and multiple workspaces remain deferred.
-- Team templates currently use one provider/model selection for all roles; per-role model overrides and isolated parallel worktrees remain deferred.
+- Plan approval is implemented; scoped tool/side-effect approval and multiple workspaces remain deferred.
+- Adaptive Team topology is deterministic and intent-based; model-proposed substeps, per-role model overrides, and isolated parallel worktrees remain deferred.
 - Team orchestration currently starts and resumes through the Web Session/Run API. The CLI and legacy `/api/run` reject `team` instead of silently running a single Lead loop.
 
 ## Verification
 
 ```bash
-gofmt -w .
+gofmt -w <changed Go files>
 go test ./...
 go test -race ./...
 go vet ./...
 go build ./cmd/hermit
 go build ./cmd/hermit-web
+pnpm test:e2e
 docker compose config
 ```
 

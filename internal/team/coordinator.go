@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -48,10 +49,11 @@ type TeamEvent struct {
 }
 
 type Coordinator struct {
-	Worker      Worker
-	MaxParallel int
-	Sink        func(TeamEvent)
-	Checkpoint  func(*Mission) error
+	Worker            Worker
+	MaxParallel       int
+	MaxRepairAttempts int
+	Sink              func(TeamEvent)
+	Checkpoint        func(*Mission) error
 }
 
 func DefaultMission(id, runID, goal string, budget Budget) (*Mission, error) {
@@ -73,6 +75,64 @@ func DefaultMission(id, runID, goal string, budget Budget) (*Mission, error) {
 		}
 	}
 	return mission, nil
+}
+
+// AdaptiveMission selects a bounded team topology from the task intent. Both
+// topologies preserve independent verification and a lead-only final handoff.
+func AdaptiveMission(id, runID, goal string, budget Budget) (*Mission, error) {
+	mission, err := NewMission(id, runID, goal, budget)
+	if err != nil {
+		return nil, err
+	}
+	subject := compactMissionGoal(goal)
+	var items []WorkItem
+	if mutationRequested(goal) {
+		items = []WorkItem{
+			{ID: "explore", Title: "梳理「" + subject + "」的代码与约束", Goal: "Inspect the relevant architecture, rules, current state, and concrete implementation boundaries.", Role: RoleExplorer},
+			{ID: "preflight", Title: "独立识别风险与验收条件", Goal: "Independently identify regressions, security risks, and deterministic acceptance checks before implementation.", Role: RoleReviewer},
+			{ID: "build", Title: "实现「" + subject + "」", Goal: "Implement the owner's goal using both preflight handoffs. Run focused checks and report every modified file.", Role: RoleBuilder, DependsOn: []string{"explore", "preflight"}, MutatesWorkspace: true},
+			{ID: "review", Title: "独立审查本次实现", Goal: "Review the current diff and evidence for correctness, regressions, security, and missing requirements.", Role: RoleReviewer, DependsOn: []string{"build"}},
+			{ID: "repair", Title: "处理审查或验证发现", Goal: "Fix every actionable review or verification issue and leave the workspace ready for another independent verification.", Role: RoleBuilder, DependsOn: []string{"review"}, MutatesWorkspace: true},
+			{ID: "verify", Title: "独立验证「" + subject + "」", Goal: "Run deterministic checks after the final mutation. Do not modify implementation files. Return explicit pass/fail evidence.", Role: RoleVerifier, DependsOn: []string{"repair"}},
+			{ID: "lead", Title: "汇总证据并交付结果", Goal: "Using only structured handoffs, confirm the outcome, verification, remaining risks, and concise next actions.", Role: RoleLead, DependsOn: []string{"verify"}},
+		}
+	} else {
+		items = []WorkItem{
+			{ID: "explore", Title: "梳理「" + subject + "」的项目事实", Goal: "Inspect the workspace and return source-backed facts relevant to the owner's question.", Role: RoleExplorer},
+			{ID: "review", Title: "独立检查假设与风险", Goal: "Independently inspect the same question, challenge assumptions, and identify missing evidence.", Role: RoleReviewer},
+			{ID: "verify", Title: "交叉验证分析证据", Goal: "Cross-check both handoffs and return explicit pass/fail evidence for the key claims without modifying files.", Role: RoleVerifier, DependsOn: []string{"explore", "review"}},
+			{ID: "lead", Title: "汇总结论并交付建议", Goal: "Synthesize a concise, source-backed answer and distinguish facts, inferences, and remaining uncertainty.", Role: RoleLead, DependsOn: []string{"verify"}},
+		}
+	}
+	for _, item := range items {
+		if err = mission.AddWork(item); err != nil {
+			return nil, err
+		}
+	}
+	return mission, nil
+}
+
+func mutationRequested(goal string) bool {
+	lower := strings.ToLower(goal)
+	markers := []string{"implement", "build", "create", "add ", "fix", "modify", "update", "refactor", "delete", "remove", "write", "develop", "deploy", "实现", "开发", "修复", "修改", "新增", "添加", "重构", "删除", "升级", "生成", "发布", "部署", "完成"}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func compactMissionGoal(goal string) string {
+	goal = strings.Join(strings.Fields(goal), " ")
+	runes := []rune(goal)
+	if len(runes) > 36 {
+		return string(runes[:36]) + "…"
+	}
+	if goal == "" {
+		return "当前任务"
+	}
+	return goal
 }
 
 func (c *Coordinator) Run(ctx context.Context, mission *Mission) error {
@@ -229,6 +289,29 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 			cancelBatch()
 			continue
 		}
+		if outcome.role == RoleVerifier && !handoffChecksPassed(outcome.result.Handoff) {
+			attempts := c.MaxRepairAttempts
+			if attempts <= 0 {
+				attempts = 3
+			}
+			requeued, retryErr := mission.RequeueAfterVerification(outcome.id, attempts)
+			if retryErr != nil {
+				mission.FailMission(retryErr.Error())
+				batchErr = retryErr
+				cancelBatch()
+				continue
+			}
+			if !requeued {
+				message := "independent verification did not pass"
+				mission.FailMission(message)
+				c.emit(TeamEvent{Type: WorkItemFailed, MissionID: mission.ID, WorkItemID: outcome.id, Role: outcome.role, Message: message})
+				_ = c.checkpoint(mission)
+				batchErr = errors.New(message)
+				cancelBatch()
+				continue
+			}
+			outcome.result.Handoff.Summary += "；验证未通过，已进入有界修复循环"
+		}
 		c.emit(TeamEvent{Type: WorkItemDone, MissionID: mission.ID, WorkItemID: outcome.id, Role: outcome.role, Message: outcome.result.Handoff.Summary})
 		if err := c.checkpoint(mission); err != nil {
 			batchErr = err
@@ -269,6 +352,18 @@ func verificationPassed(mission *Mission) bool {
 		return true
 	}
 	return false
+}
+
+func handoffChecksPassed(handoff Handoff) bool {
+	if len(handoff.Checks) == 0 {
+		return false
+	}
+	for _, check := range handoff.Checks {
+		if !check.Passed {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Coordinator) emit(event TeamEvent) {

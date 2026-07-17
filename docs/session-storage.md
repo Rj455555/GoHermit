@@ -25,3 +25,5 @@ Each Team WorkItem has a stable `execution_session_id` pointing to a hidden Sess
 ## Corruption and external changes
 
 Invalid JSON is reported as a corrupt checkpoint and workspace mismatch is rejected. Changed file hashes or Git state set `workspace_changed`; the next Run receives reconciliation context and must re-verify. A tool persisted as `completed` is never replayed. A `started` tool without completion becomes `uncertain`, requiring state inspection and replanning.
+
+Persistent state/event updates first atomically write a bounded `commit.json` journal, then replace `session.json`/`summary.md`, append sequenced events idempotently, and remove the journal. Load completes a valid prepared journal after a crash and rejects corrupt, oversized, version-mismatched, or cross-Session journals. SSE publication occurs only after this commit returns. Hidden Team Workers use the same durable detached-event path for parent-visible activity.

@@ -4,13 +4,15 @@ Read this file for Owner Profile, Mission, WorkItem, Handoff, role policy, team 
 
 ## Product boundary
 
-GoHermit v0.4 remains a local, single-owner service. It is not a general multi-user or free-form multi-agent platform. One owner-facing Session contains Runs. A Run selected with Agent `team` owns one Mission and one public Live Plan. A Mission contains bounded dependency-ordered WorkItems and structured Handoffs.
+GoHermit v0.5 remains a local, single-owner service. It is not a general multi-user or free-form multi-agent platform. One owner-facing Session contains Runs. A Run selected with Agent `team` owns one adaptive Mission and one public Live Plan. A Mission contains bounded dependency-ordered WorkItems and structured Handoffs.
 
 Only Lead produces the visible final answer. Worker private reasoning, full prompts, stream chunks, and arbitrary agent chat are never stored or shown. Read-only WorkItems may run concurrently; one workspace has one writer lease.
 
-## Default workflow
+## Adaptive workflows
 
-`Explorer → Builder → Reviewer → repair Builder → Verifier → Lead`
+Read-only intent: parallel `Explorer + Reviewer → Verifier → Lead`.
+
+Mutation intent: parallel `Explorer + preflight Reviewer → Builder → Reviewer → repair Builder → Verifier → Lead`.
 
 - Explorer: read-only project and constraint inspection.
 - Builder: workspace-scoped implementation and focused checks.
@@ -20,13 +22,13 @@ Only Lead produces the visible final answer. Worker private reasoning, full prom
 - Lead: synthesizes only the bounded Handoffs for the owner.
 - Operator: reserved and disabled by default for future approval-gated operations.
 
-The Lead WorkItem cannot start without at least one explicit successful Verifier check. WorkItems, model calls, estimated/provider tokens, Mission duration, Handoffs, evidence, files, and checks are bounded.
+The Lead WorkItem cannot start without at least one explicit successful Verifier check. WorkItems, model calls, estimated/provider tokens, Mission duration, Handoffs, evidence, files, and checks are bounded. A failed mutation Verifier requeues its repair dependency and itself, preserving prior Handoffs, for at most three verification attempts and within the existing Mission budget.
 
 ## Persistence and recovery
 
 Session schema v4 stores the parent `mission` plus each Run's optional Live Plan. Each WorkItem gets a deterministic hidden `execution_session_id`. Hidden Worker Sessions use the normal Runner checkpoint and completed-tool replay guard but do not appear in the owner's Session list.
 
-Coordinator checkpoints immediately after assigning an execution Session and starting a WorkItem. On restart, parent and child running state becomes `interrupted`. Resume reloads the same child Session. A completed child result is converted to the missing Handoff without another model call; an interrupted child resumes through the existing Runner.
+Coordinator checkpoints immediately after assigning an execution Session and starting a WorkItem. Parent events and relayed child activity are committed before SSE delivery. On restart, parent and child running state becomes `interrupted`. Resume reloads the same child Session. A completed child result is converted to the missing Handoff without another model call; an interrupted child resumes through the existing Runner.
 
 ## Owner profile
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
+	"github.com/Rj455555/GoHermit/internal/runcontrol"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
@@ -43,6 +44,33 @@ func (webTeamWorker) Execute(_ context.Context, assignment team.Assignment) (tea
 		handoff.Checks = []team.Check{{Command: "go test ./...", Passed: true, Summary: "ok"}}
 	}
 	return team.Result{Handoff: handoff, ModelCalls: 1, Tokens: 100}, nil
+}
+
+func TestCommitAndPublishMakesEventDurableBeforeSubscriberDelivery(t *testing.T) {
+	server := testServer(t)
+	sess, _ := session.New("goal", server.Workspace, "digest")
+	if err := server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	subscriber := server.subscribe(sess.ID)
+	defer server.unsubscribe(sess.ID, subscriber)
+	committed, err := server.commitAndPublish(sess, event.New(event.PlanUpdated, sess.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case delivered := <-subscriber:
+		if delivered.Sequence != committed.Sequence {
+			t.Fatalf("delivered=%+v committed=%+v", delivered, committed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("event was not published")
+	}
+	fresh, _ := session.NewStore(server.Workspace, ".gohermit")
+	events, err := fresh.Events(sess.ID, 0)
+	if err != nil || len(events) != 1 || events[0].Sequence != committed.Sequence {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
 }
 
 func TestTeamRunCompletesParentSessionWithVisibleLeadHandoff(t *testing.T) {
@@ -137,6 +165,57 @@ func TestLaunchTeamRunCreatesAndStreamsDurablePlan(t *testing.T) {
 	}
 }
 
+func TestReviewPlanWaitsForApprovalBeforeTeamExecution(t *testing.T) {
+	server := testServer(t)
+	server.teamWorker = webTeamWorker{}
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Review plan", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.PlanMode = session.PlanReview
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+
+	runID, err := server.launchSessionRun(sess, "修复 Codex 登录流式输出")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.active.Load() {
+		t.Fatal("review-first run occupied the workspace before approval")
+	}
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := loaded.ActiveRun()
+	if run == nil || run.ID != runID || run.Status != session.RunQueued || run.PlanApproved || run.Plan == nil || !strings.Contains(run.Plan.Steps[0].Title, "Codex 登录") {
+		t.Fatalf("run=%+v", run)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID+"/runs/"+runID+"/approve", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("approve status=%d body=%s", response.Code, response.Body.String())
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for server.active.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	loaded, err = server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Runs[0].Status != session.RunCompleted || !loaded.Runs[0].PlanApproved || loaded.Runs[0].PlanApprovedAt == nil {
+		t.Fatalf("approved run=%+v", loaded.Runs[0])
+	}
+}
+
 func TestVerifierFailureMarksLivePlanFailed(t *testing.T) {
 	plan, _ := taskplan.DefaultTeam("run")
 	for _, id := range []string{"explore", "build", "review", "repair"} {
@@ -146,12 +225,12 @@ func TestVerifierFailureMarksLivePlanFailed(t *testing.T) {
 	mission, _ := team.DefaultMission("mission", "run", "goal", team.DefaultBudget())
 	mission.Handoffs = append(mission.Handoffs, team.Handoff{ID: "handoff-verify", WorkItemID: "verify", Role: team.RoleVerifier, Summary: "tests failed", Checks: []team.Check{{Command: "go test ./...", Passed: false, Summary: "failed"}}})
 	started := team.TeamEvent{Type: team.WorkItemStarted, WorkItemID: "verify", Role: team.RoleVerifier, Message: "verify"}
-	if changed, _, _ := syncTeamPlan(plan, started, mission); !changed {
+	if transition, _ := runcontrol.ApplyTeamEvent(plan, started, mission); !transition.Changed {
 		t.Fatal("verifier plan step did not start")
 	}
 	done := team.TeamEvent{Type: team.WorkItemDone, WorkItemID: "verify", Role: team.RoleVerifier, Message: "tests failed"}
-	if changed, _, _ := syncTeamPlan(plan, done, mission); !changed || plan.Status != taskplan.Failed || plan.Current() != nil {
-		t.Fatalf("plan=%+v changed=%v", plan, changed)
+	if transition, _ := runcontrol.ApplyTeamEvent(plan, done, mission); !transition.Changed || plan.Status != taskplan.Failed || plan.Current() != nil {
+		t.Fatalf("plan=%+v changed=%v", plan, transition.Changed)
 	}
 }
 

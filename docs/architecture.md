@@ -14,7 +14,7 @@ Agent loop ── Context manager
     └── Session store ── atomic JSON / batched JSONL ── .gohermit
 ```
 
-For a Team Run, a presentation-neutral Coordinator sits above the existing Agent loop. It schedules dependency-ready WorkItems, gives each role only its dependency Handoffs, checkpoints the parent Mission, and uses stable hidden child Sessions for the existing Runner. Parallel read-only work is allowed; a Mission-wide lease permits one workspace writer. Only the Lead Handoff becomes a visible assistant message. A separate presentation-neutral Live Plan maps real Run/WorkItem transitions into owner-facing checkbox progress.
+For a Team Run, a presentation-neutral Coordinator sits above the existing Agent loop. It chooses a bounded intent-based topology, schedules dependency-ready WorkItems, gives each role only its dependency Handoffs, checkpoints the parent Mission, and uses stable hidden child Sessions for the existing Runner. Parallel read-only work is allowed; a Mission-wide lease permits one workspace writer. Failed mutation verification can requeue repair/verify up to three attempts. Only the Lead Handoff becomes a visible assistant message. `internal/runcontrol` maps real Run/WorkItem transitions into owner-facing checkbox progress independently from HTTP.
 
 Dependencies point inward: `cmd` depends on `internal/app`; app assembles domain packages; agent depends on provider/tool/session abstractions; infrastructure packages implement them. Agent never imports the CLI.
 

@@ -122,9 +122,43 @@ func TestNormalStopAndToolResultReturned(t *testing.T) {
 		if runtimeEvent.Type == event.PlanUpdated {
 			updated++
 		}
+		if runtimeEvent.Type == event.ToolStarted && len(runtimeEvent.Data) != 0 {
+			t.Fatalf("persisted tool arguments: %s", runtimeEvent.Data)
+		}
 	}
 	if !created || updated < 4 {
 		t.Fatalf("plan events created=%v updated=%d", created, updated)
+	}
+}
+
+func TestPersistentEventsAreDurableBeforeSinkDelivery(t *testing.T) {
+	p := &scriptedProvider{fn: func(_ int, _ model.GenerateRequest) (model.GenerateResponse, error) {
+		return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: "done"}, FinishReason: "stop"}, nil
+	}}
+	runner, s := newRunner(t, p, 2, time.Second, agentTool{})
+	durable := true
+	seen := false
+	runner.Sink = func(runtimeEvent event.Event) {
+		if runtimeEvent.Type != event.PlanCreated {
+			return
+		}
+		seen = true
+		events, err := runner.Store.Events(s.ID, 0)
+		if err != nil {
+			durable = false
+			return
+		}
+		found := false
+		for _, stored := range events {
+			found = found || stored.Sequence == runtimeEvent.Sequence
+		}
+		durable = durable && found
+	}
+	if err := runner.Run(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	if !seen || !durable {
+		t.Fatalf("plan creation reached sink before durable commit: seen=%v durable=%v", seen, durable)
 	}
 }
 func TestMaximumTurns(t *testing.T) {
@@ -153,8 +187,26 @@ func TestTotalTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout")
 	}
-	if s.Status != session.Open || len(s.Runs) != 1 || s.Runs[0].Status != session.RunCancelled {
+	if s.Status != session.Open || len(s.Runs) != 1 || s.Runs[0].Status != session.RunInterrupted || s.ActiveRunID == "" || s.Runs[0].CompletedAt != nil {
 		t.Fatalf("session status=%s runs=%+v", s.Status, s.Runs)
+	}
+	if s.Runs[0].Plan == nil || s.Runs[0].Plan.Status != taskplan.Active || s.Runs[0].Plan.Current() == nil {
+		t.Fatalf("plan=%+v", s.Runs[0].Plan)
+	}
+}
+
+func TestExplicitCancellationIsTerminal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &scriptedProvider{fn: func(_ int, _ model.GenerateRequest) (model.GenerateResponse, error) {
+		cancel()
+		return model.GenerateResponse{}, context.Canceled
+	}}
+	runner, s := newRunner(t, p, 2, time.Second, agentTool{})
+	if err := runner.Run(ctx, s); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v", err)
+	}
+	if len(s.Runs) != 1 || s.Runs[0].Status != session.RunCancelled || s.ActiveRunID != "" || s.Runs[0].CompletedAt == nil {
+		t.Fatalf("runs=%+v active=%q", s.Runs, s.ActiveRunID)
 	}
 	if s.Runs[0].Plan == nil || s.Runs[0].Plan.Status != taskplan.Cancelled {
 		t.Fatalf("plan=%+v", s.Runs[0].Plan)

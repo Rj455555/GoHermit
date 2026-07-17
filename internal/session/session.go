@@ -27,6 +27,8 @@ import (
 
 const SchemaVersion = 4
 
+const commitJournalVersion = 1
+
 type Status string
 
 const (
@@ -53,6 +55,24 @@ const (
 	RunInterrupted RunStatus = "interrupted"
 )
 
+type PlanMode string
+
+const (
+	PlanAuto   PlanMode = "auto"
+	PlanReview PlanMode = "review"
+)
+
+func NormalizePlanMode(value string) (PlanMode, error) {
+	switch PlanMode(strings.TrimSpace(value)) {
+	case "", PlanAuto:
+		return PlanAuto, nil
+	case PlanReview:
+		return PlanReview, nil
+	default:
+		return "", errors.New("plan mode must be auto or review")
+	}
+}
+
 type Selection struct {
 	Company string `json:"company,omitempty"`
 	Access  string `json:"access,omitempty"`
@@ -77,6 +97,9 @@ type Run struct {
 	CompletionTokens     int            `json:"completion_tokens,omitempty"`
 	TotalTokens          int            `json:"total_tokens,omitempty"`
 	Plan                 *taskplan.Plan `json:"plan,omitempty"`
+	PlanMode             PlanMode       `json:"plan_mode,omitempty"`
+	PlanApproved         bool           `json:"plan_approved,omitempty"`
+	PlanApprovedAt       *time.Time     `json:"plan_approved_at,omitempty"`
 	ModifiedFiles        []string       `json:"modified_files,omitempty"`
 	FinalMessage         string         `json:"final_message,omitempty"`
 	Error                string         `json:"error,omitempty"`
@@ -126,6 +149,7 @@ type Session struct {
 	Goal              string            `json:"goal"`
 	Status            Status            `json:"status"`
 	Selection         Selection         `json:"selection"`
+	PlanMode          PlanMode          `json:"plan_mode,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
 	UpdatedAt         time.Time         `json:"updated_at"`
 	Turns             int               `json:"turns"`
@@ -168,6 +192,7 @@ func NewConversation(title, workspace, configDigest string, selection Selection)
 	s.Title = clipTitle(title)
 	s.Goal = ""
 	s.Selection = selection
+	s.PlanMode = PlanAuto
 	return s, nil
 }
 
@@ -191,7 +216,12 @@ func (s *Session) NewRun(message string) (*Run, error) {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	run := Run{ID: id, Message: strings.TrimSpace(message), Status: RunQueued, StartedAt: now, UpdatedAt: now, StartTurn: s.Turns + 1}
+	mode, err := NormalizePlanMode(string(s.PlanMode))
+	if err != nil {
+		return nil, err
+	}
+	s.PlanMode = mode
+	run := Run{ID: id, Message: strings.TrimSpace(message), Status: RunQueued, StartedAt: now, UpdatedAt: now, StartTurn: s.Turns + 1, PlanMode: mode, PlanApproved: mode == PlanAuto}
 	if run.Message == "" {
 		return nil, errors.New("run message is required")
 	}
@@ -226,6 +256,13 @@ type Store struct {
 	workspace, root string
 	pending         map[string][]event.Event
 	sequences       map[string]uint64
+	commitStageHook func(string) error
+}
+
+type commitJournal struct {
+	Version int           `json:"version"`
+	Session *Session      `json:"session"`
+	Events  []event.Event `json:"events,omitempty"`
 }
 
 func NewStore(workspace, directory string) (*Store, error) {
@@ -259,13 +296,122 @@ func (s *Store) Save(ctx context.Context, session *Session) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	for i := range session.Runs {
-		if err := taskplan.Validate(session.Runs[i].Plan); err != nil {
-			return fmt.Errorf("invalid run plan: %w", err)
+	if err := validateSessionPlans(session); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.commitLocked(ctx, session, append([]event.Event(nil), s.pending[session.ID]...)); err != nil {
+		return err
+	}
+	delete(s.pending, session.ID)
+	return nil
+}
+
+// CommitEvent durably checkpoints session state and a sequenced event before
+// returning it to a presentation subscriber.
+func (s *Store) CommitEvent(ctx context.Context, session *Session, runtimeEvent event.Event) (event.Event, error) {
+	committed, err := s.CommitEvents(ctx, session, []event.Event{runtimeEvent})
+	if err != nil {
+		return event.Event{}, err
+	}
+	return committed[0], nil
+}
+
+// CommitEvents durably checkpoints session state and an ordered event batch.
+func (s *Store) CommitEvents(ctx context.Context, session *Session, runtimeEvents []event.Event) ([]event.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if session == nil || len(runtimeEvents) == 0 {
+		return nil, errors.New("session and at least one event are required")
+	}
+	if err := validateSessionPlans(session); err != nil {
+		return nil, err
+	}
+	for _, runtimeEvent := range runtimeEvents {
+		if runtimeEvent.SessionID != session.ID {
+			return nil, errors.New("event session does not match checkpoint")
 		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	committed := make([]event.Event, 0, len(runtimeEvents))
+	for _, runtimeEvent := range runtimeEvents {
+		runtimeEvent = s.sequenceEventLocked(session.ID, runtimeEvent)
+		s.pending[session.ID] = append(s.pending[session.ID], runtimeEvent)
+		committed = append(committed, runtimeEvent)
+	}
+	if err := s.commitLocked(ctx, session, append([]event.Event(nil), s.pending[session.ID]...)); err != nil {
+		return nil, err
+	}
+	delete(s.pending, session.ID)
+	return committed, nil
+}
+
+// CommitDetachedEvent durably relays activity from a child worker when the
+// caller does not own the parent Session pointer. It checkpoints the latest
+// persisted parent state and never publishes before the event is on disk.
+func (s *Store) CommitDetachedEvent(ctx context.Context, sessionID string, runtimeEvent event.Event) (event.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return event.Event{}, err
+	}
+	if runtimeEvent.SessionID != sessionID {
+		return event.Event{}, errors.New("event session does not match checkpoint")
+	}
+	dir, err := s.sessionDir(sessionID)
+	if err != nil {
+		return event.Event{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err = s.recoverJournalLocked(dir, sessionID); err != nil {
+		return event.Event{}, err
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "session.json"))
+	if err != nil {
+		return event.Event{}, fmt.Errorf("read parent checkpoint: %w", err)
+	}
+	var checkpoint Session
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&checkpoint); err != nil || checkpoint.SchemaVersion != SchemaVersion || checkpoint.ID != sessionID {
+		return event.Event{}, errors.New("parent checkpoint is corrupt or unsupported")
+	}
+	if err = validateSessionPlans(&checkpoint); err != nil {
+		return event.Event{}, err
+	}
+	runtimeEvent = s.sequenceEventLocked(sessionID, runtimeEvent)
+	events := append(append([]event.Event(nil), s.pending[sessionID]...), runtimeEvent)
+	if err = s.commitLocked(ctx, &checkpoint, events); err != nil {
+		return event.Event{}, err
+	}
+	delete(s.pending, sessionID)
+	return runtimeEvent, nil
+}
+
+func validateSessionPlans(session *Session) error {
+	if session == nil {
+		return errors.New("session checkpoint is required")
+	}
+	if _, err := NormalizePlanMode(string(session.PlanMode)); err != nil {
+		return err
+	}
+	for i := range session.Runs {
+		if _, err := NormalizePlanMode(string(session.Runs[i].PlanMode)); err != nil {
+			return fmt.Errorf("invalid run plan mode: %w", err)
+		}
+		if err := taskplan.Validate(session.Runs[i].Plan); err != nil {
+			return fmt.Errorf("invalid run plan: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) commitLocked(ctx context.Context, session *Session, events []event.Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if seq := s.sequences[session.ID]; seq > session.NextEventSequence {
 		session.NextEventSequence = seq
 	} else {
@@ -276,23 +422,100 @@ func (s *Store) Save(ctx context.Context, session *Session) error {
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(session, "", "  ")
+	journal := commitJournal{Version: commitJournalVersion, Session: session, Events: events}
+	data, err := json.MarshalIndent(journal, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err = storage.AtomicWrite(filepath.Join(dir, "commit.json"), append(data, '\n'), 0600); err != nil {
+		return fmt.Errorf("write commit journal: %w", err)
+	}
+	if s.commitStageHook != nil {
+		if err = s.commitStageHook("journal_written"); err != nil {
+			return err
+		}
+	}
+	return s.applyJournalLocked(dir, journal)
+}
+
+func (s *Store) applyJournalLocked(dir string, journal commitJournal) error {
+	if journal.Version != commitJournalVersion || journal.Session == nil {
+		return errors.New("corrupt commit journal")
+	}
+	data, err := json.MarshalIndent(journal.Session, "", "  ")
 	if err != nil {
 		return err
 	}
 	if err = storage.AtomicWrite(filepath.Join(dir, "session.json"), append(data, '\n'), 0600); err != nil {
 		return fmt.Errorf("write checkpoint: %w", err)
 	}
-	if err = storage.AtomicWrite(filepath.Join(dir, "summary.md"), []byte(session.Summary), 0600); err != nil {
+	if err = storage.AtomicWrite(filepath.Join(dir, "summary.md"), []byte(journal.Session.Summary), 0600); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
-	if events := s.pending[session.ID]; len(events) > 0 {
-		if err = appendEvents(filepath.Join(dir, "events.jsonl"), events); err != nil {
+	if s.commitStageHook != nil {
+		if err = s.commitStageHook("checkpoint_written"); err != nil {
 			return err
 		}
-		delete(s.pending, session.ID)
+	}
+	if err = appendEventsIdempotent(filepath.Join(dir, "events.jsonl"), journal.Events); err != nil {
+		return err
+	}
+	if s.commitStageHook != nil {
+		if err = s.commitStageHook("events_written"); err != nil {
+			return err
+		}
+	}
+	if err = os.Remove(filepath.Join(dir, "commit.json")); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove commit journal: %w", err)
 	}
 	return nil
+}
+
+func appendEventsIdempotent(path string, events []event.Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+	last, err := lastEventSequence(path)
+	if err != nil {
+		return err
+	}
+	pending := make([]event.Event, 0, len(events))
+	for _, runtimeEvent := range events {
+		if runtimeEvent.Sequence == 0 {
+			return errors.New("commit journal contains an unsequenced event")
+		}
+		if runtimeEvent.Sequence > last {
+			pending = append(pending, runtimeEvent)
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	return appendEvents(path, pending)
+}
+
+func lastEventSequence(path string) (uint64, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	var last uint64
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	for scanner.Scan() {
+		var runtimeEvent event.Event
+		if err = json.Unmarshal(scanner.Bytes(), &runtimeEvent); err != nil {
+			return 0, fmt.Errorf("corrupt event history: %w", err)
+		}
+		if runtimeEvent.Sequence > last {
+			last = runtimeEvent.Sequence
+		}
+	}
+	return last, scanner.Err()
 }
 func appendEvents(path string, events []event.Event) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -321,14 +544,19 @@ func appendEvents(path string, events []event.Event) error {
 func (s *Store) BufferEvent(id string, e event.Event) event.Event {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if e.Sequence == 0 {
-		s.sequences[id]++
-		e.Sequence = s.sequences[id]
-	} else if e.Sequence > s.sequences[id] {
-		s.sequences[id] = e.Sequence
-	}
+	e = s.sequenceEventLocked(id, e)
 	s.pending[id] = append(s.pending[id], e)
 	return e
+}
+
+func (s *Store) sequenceEventLocked(id string, runtimeEvent event.Event) event.Event {
+	if runtimeEvent.Sequence == 0 {
+		s.sequences[id]++
+		runtimeEvent.Sequence = s.sequences[id]
+	} else if runtimeEvent.Sequence > s.sequences[id] {
+		s.sequences[id] = runtimeEvent.Sequence
+	}
+	return runtimeEvent
 }
 
 func (s *Store) SeedEventSequence(id string, sequence uint64) {
@@ -346,6 +574,12 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
+	if err = s.recoverJournalLocked(dir, id); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	s.mu.Unlock()
 	b, err := os.ReadFile(filepath.Join(dir, "session.json"))
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint: %w", err)
@@ -372,7 +606,20 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	} else if out.SchemaVersion == 3 {
 		migrateV3(&out)
 	}
+	mode, modeErr := NormalizePlanMode(string(out.PlanMode))
+	if modeErr != nil {
+		return nil, fmt.Errorf("corrupt plan mode: %w", modeErr)
+	}
+	out.PlanMode = mode
 	for i := range out.Runs {
+		runMode, runModeErr := NormalizePlanMode(string(out.Runs[i].PlanMode))
+		if runModeErr != nil {
+			return nil, fmt.Errorf("corrupt run plan mode: %w", runModeErr)
+		}
+		out.Runs[i].PlanMode = runMode
+		if runMode == PlanAuto {
+			out.Runs[i].PlanApproved = true
+		}
 		if err = taskplan.Validate(out.Runs[i].Plan); err != nil {
 			return nil, fmt.Errorf("corrupt run plan: %w", err)
 		}
@@ -389,6 +636,32 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	}
 	s.mu.Unlock()
 	return &out, nil
+}
+
+func (s *Store) recoverJournalLocked(dir, sessionID string) error {
+	data, err := os.ReadFile(filepath.Join(dir, "commit.json"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read commit journal: %w", err)
+	}
+	if len(data) > 8<<20 {
+		return errors.New("commit journal exceeds size limit")
+	}
+	var journal commitJournal
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&journal); err != nil {
+		return fmt.Errorf("corrupt commit journal: %w", err)
+	}
+	if journal.Session == nil || journal.Session.ID != sessionID {
+		return errors.New("commit journal session mismatch")
+	}
+	if err = validateSessionPlans(journal.Session); err != nil {
+		return fmt.Errorf("corrupt commit journal: %w", err)
+	}
+	return s.applyJournalLocked(dir, journal)
 }
 
 func (s *Store) Recover(ctx context.Context, id string) (*Session, error) {

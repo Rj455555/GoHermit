@@ -42,6 +42,7 @@
           <p id="thread-meta">选择模型，然后告诉 GoHermit 需要完成什么</p>
         </div>
         <div class="thread-actions">
+          <button id="approve-plan" class="subtle-button hidden">批准计划</button>
           <span id="run-status" class="run-status">就绪</span>
           <button id="resume-run" class="subtle-button hidden">恢复</button>
           <button id="cancel-run" class="subtle-button danger-text hidden">停止</button>
@@ -79,6 +80,7 @@
               <label><span class="sr-only">接入方式</span><select id="access" aria-label="接入方式"></select></label>
               <label><span class="sr-only">模型</span><select id="model" aria-label="模型"></select></label>
               <label><span class="sr-only">Agent</span><select id="agent" aria-label="Agent"></select></label>
+              <label><span class="sr-only">计划模式</span><select id="plan-mode" aria-label="计划模式"><option value="auto">自动执行</option><option value="review">先审计划</option></select></label>
             </div>
             <div id="session-model" class="session-model hidden"></div>
             <div class="composer-actions">

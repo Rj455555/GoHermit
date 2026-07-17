@@ -61,9 +61,12 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 	if active.Status != session.RunQueued && active.Status != session.RunInterrupted {
 		return fmt.Errorf("run %s cannot start from status %s", active.ID, active.Status)
 	}
+	if active.PlanMode == session.PlanReview && !active.PlanApproved {
+		return errors.New("review plan must be approved before execution")
+	}
 	planCreated := false
 	if active.Plan == nil {
-		plan, err := taskplan.DefaultSingle(active.ID)
+		plan, err := taskplan.ForGoal(active.ID, active.Message, s.Selection.Agent)
 		if err != nil {
 			return err
 		}
@@ -75,16 +78,24 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 	s.Status = session.Open
 	started := event.New(event.TaskStarted, s.ID)
 	started.RunID = active.ID
-	r.emit(s, started, true)
-	if planCreated {
-		r.emitPlan(s, active, event.PlanCreated, "", "执行计划已创建")
+	if err := r.emit(s, started, true); err != nil {
+		return err
 	}
-	r.preparePlan(s, active)
+	if planCreated {
+		if err := r.emitPlan(s, active, event.PlanCreated, "", "执行计划已创建"); err != nil {
+			return err
+		}
+	}
+	if err := r.preparePlan(s, active); err != nil {
+		return err
+	}
 	if s.WorkspaceChanged {
 		e := event.New(event.WorkspaceChanged, s.ID)
 		e.RunID = active.ID
 		e.Message = "workspace changed since the previous checkpoint; current state must be inspected and verified"
-		r.emit(s, e, true)
+		if err := r.emit(s, e, true); err != nil {
+			return err
+		}
 		s.WorkspaceChanged = false
 	}
 	if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
@@ -109,7 +120,9 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 		e := event.New(event.TurnStarted, s.ID)
 		e.RunID = active.ID
 		e.Turn = turn
-		r.emit(s, e, true)
+		if err := r.emit(s, e, true); err != nil {
+			return err
+		}
 		runState := r.runState(s, active)
 		assembled, compressed := r.Context.BuildRun(s.Workspace, active.Message, s.Summary, messages, runState)
 		if compressed {
@@ -120,7 +133,9 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 		e = event.New(event.ModelStarted, s.ID)
 		e.RunID = active.ID
 		e.Turn = turn
-		r.emit(s, e, true)
+		if err := r.emit(s, e, true); err != nil {
+			return err
+		}
 		response, err := r.Provider.Generate(runCtx, model.GenerateRequest{Model: r.Config.Model, Messages: assembled, Tools: r.Executor.Registry.ModelDefinitions(), Stream: r.Config.Stream, OnStream: func(delta model.StreamEvent) {
 			if delta.Delta == "" {
 				return
@@ -129,7 +144,7 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			ev.RunID = active.ID
 			ev.Turn = turn
 			ev.Message = delta.Delta
-			r.emit(s, ev, false)
+			_ = r.emit(s, ev, false)
 		}})
 		if err != nil {
 			if runCtx.Err() != nil {
@@ -146,21 +161,33 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 		e.RunID = active.ID
 		e.Turn = turn
 		e.Message = response.FinishReason
-		r.emit(s, e, true)
+		if err := r.emit(s, e, true); err != nil {
+			return err
+		}
 		messages = append(messages, response.Message)
 		if len(response.Message.ToolCalls) == 0 {
-			r.planComplete(s, active, "analyze", "上下文分析完成")
-			r.planComplete(s, active, "execute", "执行阶段完成")
-			r.planStart(s, active, "verify", "正在验证完成条件")
+			if err := r.planComplete(s, active, "analyze", "上下文分析完成"); err != nil {
+				return err
+			}
+			if err := r.planComplete(s, active, "execute", "执行阶段完成"); err != nil {
+				return err
+			}
+			if err := r.planStart(s, active, "verify", "正在验证完成条件"); err != nil {
+				return err
+			}
 			active.Status = session.RunVerifying
 			ve := event.New(event.RunVerifying, s.ID)
 			ve.RunID = active.ID
 			ve.Turn = turn
-			r.emit(s, ve, true)
+			if err := r.emit(s, ve, true); err != nil {
+				return err
+			}
 			passed, reason := r.verifyCandidate(runCtx, s, active)
 			if !passed {
 				active.VerificationAttempts++
-				r.planNote(s, active, "verify", "验证未通过，正在修复后重试："+reason)
+				if err := r.planNote(s, active, "verify", "验证未通过，正在修复后重试："+reason); err != nil {
+					return err
+				}
 				if active.VerificationAttempts >= maxVerification {
 					return r.fail(runCtx, s, "verification failed", errors.New(reason))
 				}
@@ -171,15 +198,21 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			}
 			return r.complete(runCtx, s, active, response.Message.Content, messages)
 		}
-		r.planComplete(s, active, "analyze", "上下文分析完成")
-		r.planStart(s, active, "execute", "正在执行任务")
+		if err := r.planComplete(s, active, "analyze", "上下文分析完成"); err != nil {
+			return err
+		}
+		if err := r.planStart(s, active, "execute", "正在执行任务"); err != nil {
+			return err
+		}
 		for _, call := range response.Message.ToolCalls {
 			e = event.New(event.ToolStarted, s.ID)
 			e.RunID = active.ID
 			e.Turn = turn
 			e.Tool = call.Name
 			e.Data = call.Arguments
-			r.emit(s, e, true)
+			if err := r.emit(s, e, true); err != nil {
+				return err
+			}
 			startedAt := time.Now().UTC()
 			s.ToolCalls = appendBoundedTool(s.ToolCalls, session.ToolRecord{Time: startedAt, StartedAt: startedAt, RunID: active.ID, CallID: call.ID, Name: call.Name, Status: "started"}, 500)
 			if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
@@ -192,7 +225,9 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 				pe.Turn = turn
 				pe.Tool = call.Name
 				pe.Message = result.Error.Message
-				r.emit(s, pe, true)
+				if err := r.emit(s, pe, true); err != nil {
+					return err
+				}
 			}
 			content := tool.MarshalResult(result)
 			messages = append(messages, model.Message{Role: model.RoleTool, ToolCallID: call.ID, Content: content})
@@ -212,7 +247,9 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			e.Turn = turn
 			e.Tool = call.Name
 			e.Message = summary
-			r.emit(s, e, true)
+			if err := r.emit(s, e, true); err != nil {
+				return err
+			}
 			if defTool, ok := r.Executor.Registry.Get(call.Name); ok && defTool.Definition().MutatesWorkspace {
 				active.LastMutationTurn = turn
 				r.snapshotChanges(runCtx, s, active)
@@ -229,12 +266,9 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			if r.Config.CheckpointOnToolCompletion {
 				s.GitState = session.GitState(runCtx, s.Workspace)
 				checkpoint := event.New(event.CheckpointSaved, s.ID)
-				r.Store.BufferEvent(s.ID, checkpoint)
-				if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
+				checkpoint.RunID = active.ID
+				if err := r.emit(s, checkpoint, true); err != nil {
 					return err
-				}
-				if r.Sink != nil {
-					r.Sink(checkpoint)
 				}
 			}
 		}
@@ -243,12 +277,9 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			s.Summary = contextmgr.StructuredSummary(s)
 			s.GitState = session.GitState(runCtx, s.Workspace)
 			checkpoint := event.New(event.CheckpointSaved, s.ID)
-			r.Store.BufferEvent(s.ID, checkpoint)
-			if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
+			checkpoint.RunID = active.ID
+			if err := r.emit(s, checkpoint, true); err != nil {
 				return err
-			}
-			if r.Sink != nil {
-				r.Sink(checkpoint)
 			}
 		}
 	}
@@ -352,9 +383,15 @@ func documentationOnly(paths []string) bool {
 }
 
 func (r *Runner) complete(ctx context.Context, s *session.Session, run *session.Run, final string, messages []model.Message) error {
-	r.planComplete(s, run, "verify", "验证已通过")
-	r.planStart(s, run, "report", "正在整理交付结果")
-	r.planComplete(s, run, "report", "结果已整理并交付")
+	if err := r.planComplete(s, run, "verify", "验证已通过"); err != nil {
+		return err
+	}
+	if err := r.planStart(s, run, "report", "正在整理交付结果"); err != nil {
+		return err
+	}
+	if err := r.planComplete(s, run, "report", "结果已整理并交付"); err != nil {
+		return err
+	}
 	if run.Plan == nil || run.Plan.Status != taskplan.Completed {
 		return r.fail(ctx, s, "live plan did not reach completion", errors.New("live plan completion gate failed"))
 	}
@@ -381,12 +418,16 @@ func (r *Runner) complete(ctx context.Context, s *session.Session, run *session.
 	}
 	memoryEvent := event.New(event.MemoryUpdated, s.ID)
 	memoryEvent.RunID = run.ID
-	r.emit(s, memoryEvent, true)
+	if err := r.emit(s, memoryEvent, true); err != nil {
+		return err
+	}
 	done := event.New(event.TaskCompleted, s.ID)
 	done.RunID = run.ID
 	done.Turn = s.Turns
 	done.Message = final
-	r.emit(s, done, true)
+	if err := r.emit(s, done, true); err != nil {
+		return err
+	}
 	return r.Store.Save(context.WithoutCancel(ctx), s)
 }
 func boundedMessages(messages []model.Message) []model.Message {
@@ -418,83 +459,96 @@ func clip(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
-func (r *Runner) emit(s *session.Session, e event.Event, persist bool) {
+func (r *Runner) emit(s *session.Session, e event.Event, persist bool) error {
 	if persist && e.Type != event.ModelDelta {
-		e = r.Store.BufferEvent(s.ID, e)
+		persisted := e
+		if persisted.Type == event.ToolStarted {
+			persisted.Data = nil
+		}
+		committed, err := r.Store.CommitEvent(context.Background(), s, persisted)
+		if err != nil {
+			return err
+		}
+		e.Sequence = committed.Sequence
 	}
 	if r.Sink != nil {
 		r.Sink(e)
 	}
+	return nil
 }
 
-func (r *Runner) preparePlan(s *session.Session, run *session.Run) {
+func (r *Runner) preparePlan(s *session.Session, run *session.Run) error {
 	if run == nil || run.Plan == nil || run.Plan.Status != taskplan.Active {
-		return
+		return nil
 	}
 	if current := run.Plan.Current(); current != nil {
-		r.planNote(s, run, current.ID, "正在从中断点恢复此步骤")
-		return
+		return r.planNote(s, run, current.ID, "正在从中断点恢复此步骤")
 	}
 	if next := run.Plan.NextPending(); next != nil {
-		r.planStart(s, run, next.ID, "正在处理此步骤")
+		return r.planStart(s, run, next.ID, "正在处理此步骤")
 	}
+	return nil
 }
 
-func (r *Runner) planStart(s *session.Session, run *session.Run, id, detail string) {
+func (r *Runner) planStart(s *session.Session, run *session.Run, id, detail string) error {
 	if run == nil || run.Plan == nil {
-		return
+		return nil
 	}
 	changed, err := run.Plan.Start(id, detail)
 	if err == nil && changed {
-		r.emitPlan(s, run, event.PlanUpdated, id, detail)
+		return r.emitPlan(s, run, event.PlanUpdated, id, detail)
 	}
+	return err
 }
 
-func (r *Runner) planComplete(s *session.Session, run *session.Run, id, detail string) {
+func (r *Runner) planComplete(s *session.Session, run *session.Run, id, detail string) error {
 	if run == nil || run.Plan == nil {
-		return
+		return nil
 	}
 	changed, err := run.Plan.Complete(id, detail)
 	if err == nil && changed {
-		r.emitPlan(s, run, event.PlanUpdated, id, detail)
+		return r.emitPlan(s, run, event.PlanUpdated, id, detail)
 	}
+	return err
 }
 
-func (r *Runner) planNote(s *session.Session, run *session.Run, id, detail string) {
+func (r *Runner) planNote(s *session.Session, run *session.Run, id, detail string) error {
 	if run == nil || run.Plan == nil {
-		return
+		return nil
 	}
 	changed, err := run.Plan.Note(id, detail)
 	if err == nil && changed {
-		r.emitPlan(s, run, event.PlanUpdated, id, detail)
+		return r.emitPlan(s, run, event.PlanUpdated, id, detail)
 	}
+	return err
 }
 
-func (r *Runner) planFailCurrent(s *session.Session, run *session.Run, detail string) {
+func (r *Runner) planFailCurrent(s *session.Session, run *session.Run, detail string) error {
 	if run == nil || run.Plan == nil || run.Plan.Status != taskplan.Active {
-		return
+		return nil
 	}
 	step := run.Plan.Current()
 	if step == nil {
 		step = run.Plan.NextPending()
 	}
 	if step == nil {
-		return
+		return nil
 	}
 	changed, err := run.Plan.Fail(step.ID, detail)
 	if err == nil && changed {
-		r.emitPlan(s, run, event.PlanUpdated, step.ID, detail)
+		return r.emitPlan(s, run, event.PlanUpdated, step.ID, detail)
 	}
+	return err
 }
 
-func (r *Runner) emitPlan(s *session.Session, run *session.Run, eventType event.Type, stepID, message string) {
+func (r *Runner) emitPlan(s *session.Session, run *session.Run, eventType event.Type, stepID, message string) error {
 	data, err := json.Marshal(map[string]any{"plan": run.Plan})
 	if err != nil {
-		return
+		return err
 	}
 	e := event.New(eventType, s.ID)
 	e.RunID, e.PlanStepID, e.Message, e.Data = run.ID, stepID, message, data
-	r.emit(s, e, true)
+	return r.emit(s, e, true)
 }
 
 func (r *Runner) fail(ctx context.Context, s *session.Session, message string, cause error) error {
@@ -502,7 +556,9 @@ func (r *Runner) fail(ctx context.Context, s *session.Session, message string, c
 	s.LastError = cause.Error()
 	runID := s.ActiveRunID
 	if run := s.ActiveRun(); run != nil {
-		r.planFailCurrent(s, run, cause.Error())
+		if planErr := r.planFailCurrent(s, run, cause.Error()); planErr != nil {
+			return errors.Join(cause, planErr)
+		}
 		now := time.Now().UTC()
 		run.Status = session.RunFailed
 		run.Error = cause.Error()
@@ -516,43 +572,57 @@ func (r *Runner) fail(ctx context.Context, s *session.Session, message string, c
 	e.RunID = runID
 	e.Message = message
 	e.Error = cause.Error()
-	r.Store.BufferEvent(s.ID, e)
-	_ = r.Store.Save(context.WithoutCancel(ctx), s)
-	if r.Sink != nil {
-		r.Sink(e)
+	if err := r.emit(s, e, true); err != nil {
+		return errors.Join(cause, err)
 	}
 	return cause
 }
 func (r *Runner) stop(ctx context.Context, s *session.Session, cause error) error {
 	s.Status = session.Open
 	runID := s.ActiveRunID
-	if errors.Is(cause, context.DeadlineExceeded) {
+	interrupted := errors.Is(cause, context.DeadlineExceeded)
+	if interrupted {
 		s.LastError = "total execution timeout"
 	} else {
 		s.LastError = "cancelled"
 	}
 	if run := s.ActiveRun(); run != nil {
-		if run.Plan != nil {
-			if changed, stepID := run.Plan.Cancel("运行已停止"); changed {
-				r.emitPlan(s, run, event.PlanUpdated, stepID, "运行已停止")
+		if interrupted {
+			if run.Plan != nil && run.Plan.Current() != nil {
+				if err := r.planNote(s, run, run.Plan.Current().ID, "运行超时中断，可从当前步骤恢复"); err != nil {
+					return errors.Join(cause, err)
+				}
 			}
+			run.Status = session.RunInterrupted
+			run.Error = s.LastError
+			run.UpdatedAt = time.Now().UTC()
+		} else {
+			if run.Plan != nil {
+				if changed, stepID := run.Plan.Cancel("运行已停止"); changed {
+					if err := r.emitPlan(s, run, event.PlanUpdated, stepID, "运行已停止"); err != nil {
+						return errors.Join(cause, err)
+					}
+				}
+			}
+			now := time.Now().UTC()
+			run.Status = session.RunCancelled
+			run.Error = s.LastError
+			run.CompletedAt = &now
+			run.UpdatedAt = now
+			s.ActiveRunID = ""
 		}
-		now := time.Now().UTC()
-		run.Status = session.RunCancelled
-		run.Error = s.LastError
-		run.CompletedAt = &now
-		run.UpdatedAt = now
-		s.ActiveRunID = ""
 	}
 	s.GitState = session.GitState(context.WithoutCancel(ctx), s.Workspace)
 	s.Summary = contextmgr.StructuredSummary(s)
-	e := event.New(event.TaskCancelled, s.ID)
+	eventType := event.TaskCancelled
+	if interrupted {
+		eventType = event.RunInterrupted
+	}
+	e := event.New(eventType, s.ID)
 	e.RunID = runID
 	e.Error = s.LastError
-	r.Store.BufferEvent(s.ID, e)
-	_ = r.Store.Save(context.WithoutCancel(ctx), s)
-	if r.Sink != nil {
-		r.Sink(e)
+	if err := r.emit(s, e, true); err != nil {
+		return errors.Join(cause, err)
 	}
 	return cause
 }

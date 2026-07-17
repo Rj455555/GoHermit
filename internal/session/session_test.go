@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -274,5 +275,131 @@ func TestEventSequenceContinuesAcrossStoreInstances(t *testing.T) {
 	next := secondStore.BufferEvent(loaded.ID, event.New(event.TaskCompleted, loaded.ID))
 	if next.Sequence != 11 {
 		t.Fatalf("next sequence=%d", next.Sequence)
+	}
+}
+
+func TestCommitEventIsDurableBeforeReturn(t *testing.T) {
+	root := t.TempDir()
+	store, _ := NewStore(root, ".gohermit")
+	s, _ := New("goal", root, "digest")
+	committed, err := store.CommitEvent(context.Background(), s, event.New(event.PlanCreated, s.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := NewStore(root, ".gohermit")
+	events, err := fresh.Events(s.ID, 0)
+	if err != nil || len(events) != 1 || events[0].Sequence != committed.Sequence || events[0].Type != event.PlanCreated {
+		t.Fatalf("committed=%+v events=%+v err=%v", committed, events, err)
+	}
+	loaded, err := fresh.Load(context.Background(), s.ID)
+	if err != nil || loaded.NextEventSequence != committed.Sequence {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+}
+
+func TestLoadRecoversPreparedCommitJournalExactlyOnce(t *testing.T) {
+	for _, crashStage := range []string{"journal_written", "checkpoint_written", "events_written"} {
+		t.Run(crashStage, func(t *testing.T) {
+			root := t.TempDir()
+			store, _ := NewStore(root, ".gohermit")
+			s, _ := New("goal", root, "digest")
+			if err := store.Save(context.Background(), s); err != nil {
+				t.Fatal(err)
+			}
+			s.Summary = "recovered summary"
+			store.commitStageHook = func(stage string) error {
+				if stage == crashStage {
+					return errors.New("simulated crash")
+				}
+				return nil
+			}
+			if _, err := store.CommitEvent(context.Background(), s, event.New(event.PlanUpdated, s.ID)); err == nil {
+				t.Fatal("expected simulated crash")
+			}
+			fresh, _ := NewStore(root, ".gohermit")
+			loaded, err := fresh.Load(context.Background(), s.ID)
+			if err != nil || loaded.Summary != "recovered summary" {
+				t.Fatalf("loaded=%+v err=%v", loaded, err)
+			}
+			events, err := fresh.Events(s.ID, 0)
+			if err != nil || len(events) != 1 || events[0].Type != event.PlanUpdated {
+				t.Fatalf("events=%+v err=%v", events, err)
+			}
+			if _, err = fresh.Load(context.Background(), s.ID); err != nil {
+				t.Fatal(err)
+			}
+			events, _ = fresh.Events(s.ID, 0)
+			if len(events) != 1 {
+				t.Fatalf("journal replay duplicated events: %+v", events)
+			}
+		})
+	}
+}
+
+func TestCommitEventsRejectsMixedSessionsWithoutPartialPersistence(t *testing.T) {
+	root := t.TempDir()
+	store, _ := NewStore(root, ".gohermit")
+	s, _ := New("goal", root, "digest")
+	_, err := store.CommitEvents(context.Background(), s, []event.Event{
+		event.New(event.TaskStarted, s.ID),
+		event.New(event.TaskCompleted, "another-session"),
+	})
+	if err == nil {
+		t.Fatal("expected mixed-session batch rejection")
+	}
+	if err = store.Save(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.Events(s.ID, 0)
+	if err != nil || len(events) != 0 || s.NextEventSequence != 0 {
+		t.Fatalf("events=%+v sequence=%d err=%v", events, s.NextEventSequence, err)
+	}
+}
+
+func TestPlanModeDefaultsAndRejectsUnknownValues(t *testing.T) {
+	if mode, err := NormalizePlanMode(""); err != nil || mode != PlanAuto {
+		t.Fatalf("mode=%q err=%v", mode, err)
+	}
+	if mode, err := NormalizePlanMode("review"); err != nil || mode != PlanReview {
+		t.Fatalf("mode=%q err=%v", mode, err)
+	}
+	if _, err := NormalizePlanMode("unattended-root"); err == nil {
+		t.Fatal("expected unknown plan mode rejection")
+	}
+}
+
+func TestCommitDetachedEventDurablyRelaysChildActivity(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := New("goal", root, "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	runtimeEvent := event.New(event.ToolCompleted, sess.ID)
+	runtimeEvent.RunID = "parent-run"
+	committed, err := store.CommitDetachedEvent(context.Background(), sess.ID, runtimeEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed.Sequence == 0 {
+		t.Fatal("detached event was not sequenced")
+	}
+	fresh, err := NewStore(sess.Workspace, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := fresh.Events(sess.ID, 0)
+	if err != nil || len(events) != 1 || events[0].Sequence != committed.Sequence {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+	loaded, err := fresh.Load(context.Background(), sess.ID)
+	if err != nil || loaded.NextEventSequence != committed.Sequence {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
 	}
 }

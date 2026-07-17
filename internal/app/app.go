@@ -25,7 +25,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/tool/builtin"
 )
 
-const Version = "0.4.0-dev"
+const Version = "0.5.0-dev"
 const (
 	ExitOK        = 0
 	ExitRuntime   = 1

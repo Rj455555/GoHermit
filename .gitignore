@@ -5,4 +5,7 @@
 /.gohermit/
 *.test
 coverage.out
+/node_modules/
+/playwright-report/
+/test-results/
 /.env
