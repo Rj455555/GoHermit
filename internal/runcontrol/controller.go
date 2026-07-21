@@ -91,7 +91,11 @@ func queuedVerificationRetry(mission *team.Mission, verifierID string) []string 
 	for _, dependency := range verifier.DependsOn {
 		for i := range mission.WorkItems {
 			item := mission.WorkItems[i]
-			if item.ID == dependency && item.MutatesWorkspace && item.Status == team.WorkQueued && item.Attempt > 0 {
+			// A queued mutating dependency at this point was requeued by
+			// RequeueAfterVerification. Attempt stays 0 for a repair that was
+			// skipped after an advisory-only review and un-skipped by this
+			// verification failure, so the attempt count must not gate it.
+			if item.ID == dependency && item.MutatesWorkspace && item.Status == team.WorkQueued {
 				queued = append(queued, item.ID)
 			}
 		}

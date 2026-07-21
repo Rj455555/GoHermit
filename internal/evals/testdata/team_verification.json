@@ -71,6 +71,50 @@
         "attempts": {"build": 1, "verify": 0},
         "handoffs": 0
       }
+    },
+    {
+      "name": "advisory-findings-skip-repair",
+      "max_repair_attempts": 3,
+      "work_items": [
+        {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder", "mutates_workspace": true},
+        {"id": "review", "title": "独立审查", "goal": "审查本次实现", "role": "reviewer", "depends_on": ["build"]},
+        {"id": "repair", "title": "处理审查发现", "goal": "修复审查发现", "role": "builder", "depends_on": ["review"], "mutates_workspace": true},
+        {"id": "verify", "title": "独立验证", "goal": "运行确定性检查", "role": "verifier", "depends_on": ["repair"]},
+        {"id": "lead", "title": "汇总交付", "goal": "汇总证据并交付", "role": "lead", "depends_on": ["verify"]}
+      ],
+      "script": [
+        {"id": "review", "attempt": 1, "result": "findings_advisory"},
+        {"id": "verify", "attempt": 1, "result": "checks_pass"}
+      ],
+      "expected": {
+        "mission_status": "completed",
+        "attempts": {"build": 1, "review": 1, "repair": 0, "verify": 1, "lead": 1},
+        "statuses": {"repair": "skipped", "verify": "completed"},
+        "worker_calls": {"repair": 0},
+        "handoffs": 4
+      }
+    },
+    {
+      "name": "blocking-findings-run-repair",
+      "max_repair_attempts": 3,
+      "work_items": [
+        {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder", "mutates_workspace": true},
+        {"id": "review", "title": "独立审查", "goal": "审查本次实现", "role": "reviewer", "depends_on": ["build"]},
+        {"id": "repair", "title": "处理审查发现", "goal": "修复审查发现", "role": "builder", "depends_on": ["review"], "mutates_workspace": true},
+        {"id": "verify", "title": "独立验证", "goal": "运行确定性检查", "role": "verifier", "depends_on": ["repair"]},
+        {"id": "lead", "title": "汇总交付", "goal": "汇总证据并交付", "role": "lead", "depends_on": ["verify"]}
+      ],
+      "script": [
+        {"id": "review", "attempt": 1, "result": "findings_blocking"},
+        {"id": "verify", "attempt": 1, "result": "checks_pass"}
+      ],
+      "expected": {
+        "mission_status": "completed",
+        "attempts": {"build": 1, "review": 1, "repair": 1, "verify": 1, "lead": 1},
+        "statuses": {"repair": "completed"},
+        "worker_calls": {"repair": 1},
+        "handoffs": 5
+      }
     }
   ]
 }

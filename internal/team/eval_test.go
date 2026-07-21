@@ -34,6 +34,10 @@ func (w *evalScriptWorker) Execute(_ context.Context, assignment team.Assignment
 		handoff.Checks = []team.Check{{Command: "go test ./...", Passed: true, Summary: "pass"}}
 	case "checks_fail":
 		handoff.Checks = []team.Check{{Command: "go test ./...", Passed: false, Summary: "fail"}}
+	case "findings_blocking":
+		handoff.Findings = []team.Finding{{Severity: team.SeverityBlocking, Summary: "必须在交付前修复"}}
+	case "findings_advisory":
+		handoff.Findings = []team.Finding{{Severity: team.SeverityAdvisory, Summary: "可选改进"}}
 	}
 	return team.Result{Handoff: handoff, ModelCalls: 1, Tokens: 10}, nil
 }
@@ -88,6 +92,22 @@ func gradeVerificationScenario(t *testing.T, scenario evals.VerificationScenario
 		}
 		if item.Attempt != want {
 			t.Fatalf("work item %q attempts=%d want %d", item.ID, item.Attempt, want)
+		}
+	}
+	for id, want := range scenario.Expected.Statuses {
+		var got team.WorkStatus
+		for _, item := range mission.WorkItems {
+			if item.ID == id {
+				got = item.Status
+			}
+		}
+		if string(got) != want {
+			t.Fatalf("work item %q status=%s want %s", id, got, want)
+		}
+	}
+	for id, want := range scenario.Expected.WorkerCalls {
+		if worker.calls[id] != want {
+			t.Fatalf("worker calls for %q=%d want %d", id, worker.calls[id], want)
 		}
 	}
 	if len(mission.Handoffs) != scenario.Expected.Handoffs {

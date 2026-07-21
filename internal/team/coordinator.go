@@ -331,6 +331,23 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 		if err := c.checkpoint(mission); err != nil {
 			batchErr = err
 			cancelBatch()
+			continue
+		}
+		if outcome.role == RoleReviewer && !outcome.result.Handoff.HasBlockingFindings() {
+			// No blocking finding: bypass the repair stage. The skip is emitted
+			// after the reviewer's own completion so runcontrol completes the
+			// repair plan step from a clean state; a later verification failure
+			// can still requeue the skipped repair.
+			skipped := mission.SkipRepairsAfterReview(outcome.id)
+			for _, skippedID := range skipped {
+				c.emit(TeamEvent{Type: WorkItemDone, MissionID: mission.ID, WorkItemID: skippedID, Role: RoleBuilder, Message: "审查无 blocking 发现，跳过修复"})
+			}
+			if len(skipped) > 0 {
+				if err := c.checkpoint(mission); err != nil {
+					batchErr = err
+					cancelBatch()
+				}
+			}
 		}
 	}
 	if batchErr != nil {

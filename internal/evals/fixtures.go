@@ -42,24 +42,31 @@ type CheckFixture struct {
 	Summary string `json:"summary,omitempty"`
 }
 
+type FindingFixture struct {
+	Severity string `json:"severity"`
+	Summary  string `json:"summary"`
+}
+
 // HandoffFixture describes a candidate handoff. The count fields generate
 // filler entries so boundary scenarios stay human-auditable in JSON.
 type HandoffFixture struct {
-	ID                 string         `json:"id"`
-	WorkItemID         string         `json:"work_item_id"`
-	Role               string         `json:"role"`
-	Summary            string         `json:"summary,omitempty"`
-	SummarySize        int            `json:"summary_size,omitempty"`
-	Evidence           []string       `json:"evidence,omitempty"`
-	EvidenceCount      int            `json:"evidence_count,omitempty"`
-	ModifiedFiles      []string       `json:"modified_files,omitempty"`
-	ModifiedFilesCount int            `json:"modified_files_count,omitempty"`
-	Checks             []CheckFixture `json:"checks,omitempty"`
-	ChecksCount        int            `json:"checks_count,omitempty"`
-	Issues             []string       `json:"issues,omitempty"`
-	IssuesCount        int            `json:"issues_count,omitempty"`
-	NextSteps          []string       `json:"next_steps,omitempty"`
-	NextStepsCount     int            `json:"next_steps_count,omitempty"`
+	ID                 string           `json:"id"`
+	WorkItemID         string           `json:"work_item_id"`
+	Role               string           `json:"role"`
+	Summary            string           `json:"summary,omitempty"`
+	SummarySize        int              `json:"summary_size,omitempty"`
+	Evidence           []string         `json:"evidence,omitempty"`
+	EvidenceCount      int              `json:"evidence_count,omitempty"`
+	ModifiedFiles      []string         `json:"modified_files,omitempty"`
+	ModifiedFilesCount int              `json:"modified_files_count,omitempty"`
+	Checks             []CheckFixture   `json:"checks,omitempty"`
+	ChecksCount        int              `json:"checks_count,omitempty"`
+	Issues             []string         `json:"issues,omitempty"`
+	IssuesCount        int              `json:"issues_count,omitempty"`
+	NextSteps          []string         `json:"next_steps,omitempty"`
+	NextStepsCount     int              `json:"next_steps_count,omitempty"`
+	Findings           []FindingFixture `json:"findings,omitempty"`
+	FindingsCount      int              `json:"findings_count,omitempty"`
 }
 
 func (h HandoffFixture) Build() team.Handoff {
@@ -86,6 +93,15 @@ func (h HandoffFixture) Build() team.Handoff {
 		handoff.Checks = make([]team.Check, 0, h.ChecksCount)
 		for i := 0; i < h.ChecksCount; i++ {
 			handoff.Checks = append(handoff.Checks, team.Check{Command: fmt.Sprintf("check-%d", i), Passed: true})
+		}
+	}
+	for _, finding := range h.Findings {
+		handoff.Findings = append(handoff.Findings, team.Finding{Severity: team.Severity(finding.Severity), Summary: finding.Summary})
+	}
+	if h.FindingsCount > 0 {
+		handoff.Findings = make([]team.Finding, 0, h.FindingsCount)
+		for i := 0; i < h.FindingsCount; i++ {
+			handoff.Findings = append(handoff.Findings, team.Finding{Severity: team.SeverityAdvisory, Summary: fmt.Sprintf("finding-%d", i)})
 		}
 	}
 	return handoff
@@ -261,8 +277,8 @@ type VerificationScenarioFixture struct {
 }
 
 // WorkerScriptFixture scripts one worker execution; result is one of ok,
-// checks_pass, checks_fail, no_checks, or error. Unlisted (id, attempt)
-// pairs default to ok.
+// checks_pass, checks_fail, no_checks, findings_blocking, findings_advisory,
+// or error. Unlisted (id, attempt) pairs default to ok.
 type WorkerScriptFixture struct {
 	ID      string `json:"id"`
 	Attempt int    `json:"attempt"`
@@ -270,10 +286,12 @@ type WorkerScriptFixture struct {
 }
 
 type VerificationExpectFixture struct {
-	MissionStatus         string         `json:"mission_status"`
-	Attempts              map[string]int `json:"attempts"`
-	Handoffs              int            `json:"handoffs"`
-	PreservedFailedChecks bool           `json:"preserved_failed_checks,omitempty"`
+	MissionStatus         string            `json:"mission_status"`
+	Attempts              map[string]int    `json:"attempts"`
+	Handoffs              int               `json:"handoffs"`
+	PreservedFailedChecks bool              `json:"preserved_failed_checks,omitempty"`
+	Statuses              map[string]string `json:"statuses,omitempty"`
+	WorkerCalls           map[string]int    `json:"worker_calls,omitempty"`
 }
 
 // Recovery fixtures.

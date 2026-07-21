@@ -48,7 +48,24 @@ const (
 	WorkFailed      WorkStatus = "failed"
 	WorkCancelled   WorkStatus = "cancelled"
 	WorkInterrupted WorkStatus = "interrupted"
+	// WorkSkipped marks a repair stage bypassed because the Reviewer found
+	// nothing blocking; it satisfies dependents like WorkCompleted.
+	WorkSkipped WorkStatus = "skipped"
 )
+
+// Severity gates repair scheduling: only blocking findings schedule repair.
+type Severity string
+
+const (
+	SeverityBlocking Severity = "blocking"
+	SeverityAdvisory Severity = "advisory"
+)
+
+// Finding is one bounded Reviewer verdict attached to a handoff.
+type Finding struct {
+	Severity Severity `json:"severity"`
+	Summary  string   `json:"summary"`
+}
 
 type Budget struct {
 	MaxWorkItems  int           `json:"max_work_items"`
@@ -108,7 +125,19 @@ type Handoff struct {
 	Issues        []string      `json:"issues,omitempty"`
 	NextSteps     []string      `json:"next_steps,omitempty"`
 	Substeps      []SubstepSpec `json:"substeps,omitempty"`
+	Findings      []Finding     `json:"findings,omitempty"`
 	CreatedAt     time.Time     `json:"created_at"`
+}
+
+// HasBlockingFindings reports whether the handoff carries at least one
+// finding that must be repaired before delivery.
+func (h Handoff) HasBlockingFindings() bool {
+	for _, finding := range h.Findings {
+		if finding.Severity == SeverityBlocking {
+			return true
+		}
+	}
+	return false
 }
 
 type Mission struct {
@@ -359,7 +388,7 @@ func orderSubsteps(specs []SubstepSpec) []SubstepSpec {
 func (m *Mission) Ready() []string {
 	completed := make(map[string]bool, len(m.WorkItems))
 	for _, item := range m.WorkItems {
-		completed[item.ID] = item.Status == WorkCompleted
+		completed[item.ID] = item.Status == WorkCompleted || item.Status == WorkSkipped
 	}
 	ready := make([]string, 0)
 	for _, item := range m.WorkItems {
@@ -436,7 +465,7 @@ func (m *Mission) RequeueAfterVerification(verifierID string, maxAttempts int) (
 	repairIDs := make([]string, 0, len(verifier.DependsOn))
 	for _, dependency := range verifier.DependsOn {
 		item := m.work(dependency)
-		if item != nil && item.MutatesWorkspace && item.Status == WorkCompleted {
+		if item != nil && item.MutatesWorkspace && (item.Status == WorkCompleted || item.Status == WorkSkipped) {
 			repairIDs = append(repairIDs, item.ID)
 		}
 	}
@@ -454,6 +483,46 @@ func (m *Mission) RequeueAfterVerification(verifierID string, maxAttempts int) (
 	reset(verifier, "requeued after failed verification")
 	m.Status, m.Error, m.UpdatedAt = Running, "", now
 	return true, nil
+}
+
+// SkipRepairsAfterReview bypasses the repair stage when the Reviewer found
+// nothing blocking: every queued mutating WorkItem gated on the review becomes
+// WorkSkipped (Attempt stays 0) so dependents may run without executing it.
+// A later verification failure can still requeue a skipped repair.
+//
+// The guard below restricts skipping to post-implementation reviews: a review
+// whose own dependencies include a mutating WorkItem. Without it a preflight
+// review (which finds nothing blocking by construction) would skip the primary
+// build stage that depends on it.
+func (m *Mission) SkipRepairsAfterReview(reviewID string) []string {
+	skipped := make([]string, 0)
+	review := m.work(reviewID)
+	if review == nil || review.Role != RoleReviewer {
+		return skipped
+	}
+	postImplementation := false
+	for _, dependency := range review.DependsOn {
+		if item := m.work(dependency); item != nil && item.MutatesWorkspace {
+			postImplementation = true
+			break
+		}
+	}
+	if !postImplementation {
+		return skipped
+	}
+	now := time.Now().UTC()
+	for i := range m.WorkItems {
+		item := &m.WorkItems[i]
+		if item.Status != WorkQueued || !item.MutatesWorkspace || !contains(item.DependsOn, reviewID) {
+			continue
+		}
+		item.Status, item.UpdatedAt = WorkSkipped, now
+		skipped = append(skipped, item.ID)
+	}
+	if len(skipped) > 0 {
+		m.UpdatedAt = now
+	}
+	return skipped
 }
 
 func (m *Mission) Fail(id, message string) error {
@@ -527,8 +596,15 @@ func validateHandoff(item *WorkItem, handoff *Handoff) error {
 	if handoff.ID == "" || handoff.WorkItemID != item.ID || handoff.Role != item.Role || handoff.Summary == "" {
 		return errors.New("handoff identity, role, and summary must match the work item")
 	}
-	if len(handoff.Summary) > MaxTextBytes || len(handoff.Evidence) > 128 || len(handoff.ModifiedFiles) > 128 || len(handoff.Checks) > 64 || len(handoff.Issues) > 128 || len(handoff.NextSteps) > 128 || len(handoff.Substeps) > MaxProposedSubsteps {
+	if len(handoff.Summary) > MaxTextBytes || len(handoff.Evidence) > 128 || len(handoff.ModifiedFiles) > 128 || len(handoff.Checks) > 64 || len(handoff.Issues) > 128 || len(handoff.NextSteps) > 128 || len(handoff.Substeps) > MaxProposedSubsteps || len(handoff.Findings) > 128 {
 		return errors.New("handoff exceeds bounded limits")
+	}
+	// Findings fail closed: an unknown severity or empty summary rejects the
+	// whole handoff rather than silently downgrading the repair gate.
+	for _, finding := range handoff.Findings {
+		if finding.Severity != SeverityBlocking && finding.Severity != SeverityAdvisory || strings.TrimSpace(finding.Summary) == "" || len(finding.Summary) > MaxTextBytes {
+			return errors.New("handoff findings require a blocking or advisory severity and a bounded summary")
+		}
 	}
 	return nil
 }
@@ -547,7 +623,7 @@ func allCompleted(items []WorkItem) bool {
 		return false
 	}
 	for _, item := range items {
-		if item.Status != WorkCompleted {
+		if item.Status != WorkCompleted && item.Status != WorkSkipped {
 			return false
 		}
 	}
