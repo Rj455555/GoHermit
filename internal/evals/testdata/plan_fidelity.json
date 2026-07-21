@@ -1,0 +1,255 @@
+{
+  "transition_scripts": [
+    {
+      "name": "sequential-happy-path",
+      "allow_parallel": false,
+      "steps": [
+        {"id": "analyze", "title": "分析任务"},
+        {"id": "execute", "title": "执行任务"},
+        {"id": "verify", "title": "验证结果"}
+      ],
+      "ops": [
+        {"op": "start", "id": "analyze", "expect_ok": true, "expect_changed": true},
+        {"op": "note", "id": "analyze", "detail": "已完成一半", "expect_ok": true, "expect_changed": true},
+        {"op": "complete", "id": "analyze", "expect_ok": true, "expect_changed": true},
+        {"op": "start", "id": "execute", "expect_ok": true, "expect_changed": true},
+        {"op": "start", "id": "verify", "expect_ok": false, "expect_changed": false},
+        {"op": "complete", "id": "execute", "expect_ok": true, "expect_changed": true},
+        {"op": "complete", "id": "verify", "expect_ok": true, "expect_changed": true}
+      ],
+      "expected": {
+        "status": "completed",
+        "revision": 7,
+        "steps": {"analyze": "completed", "execute": "completed", "verify": "completed"}
+      }
+    },
+    {
+      "name": "negative-ops-preserve-state",
+      "allow_parallel": false,
+      "steps": [
+        {"id": "analyze", "title": "分析任务"},
+        {"id": "execute", "title": "执行任务"},
+        {"id": "verify", "title": "验证结果"}
+      ],
+      "ops": [
+        {"op": "start", "id": "analyze", "expect_ok": true, "expect_changed": true},
+        {"op": "complete", "id": "analyze", "expect_ok": true, "expect_changed": true},
+        {"op": "complete", "id": "analyze", "expect_ok": true, "expect_changed": false},
+        {"op": "start", "id": "ghost", "expect_ok": false, "expect_changed": false},
+        {"op": "fail", "id": "analyze", "expect_ok": false, "expect_changed": false},
+        {"op": "reopen", "ids": ["ghost"], "expect_ok": false, "expect_changed": false},
+        {"op": "note", "id": "execute", "detail": "尚未开始", "expect_ok": false, "expect_changed": false},
+        {"op": "start", "id": "execute", "expect_ok": true, "expect_changed": true},
+        {"op": "fail", "id": "execute", "detail": "执行失败", "expect_ok": true, "expect_changed": true},
+        {"op": "start", "id": "verify", "expect_ok": false, "expect_changed": false},
+        {"op": "cancel", "detail": "尝试取消已终止计划", "expect_ok": true, "expect_changed": false}
+      ],
+      "expected": {
+        "status": "failed",
+        "revision": 5,
+        "steps": {"analyze": "completed", "execute": "failed", "verify": "pending"}
+      }
+    },
+    {
+      "name": "reopen-then-cancel",
+      "allow_parallel": false,
+      "steps": [
+        {"id": "analyze", "title": "分析任务"},
+        {"id": "execute", "title": "执行任务"},
+        {"id": "verify", "title": "验证结果"}
+      ],
+      "ops": [
+        {"op": "start", "id": "analyze", "expect_ok": true, "expect_changed": true},
+        {"op": "complete", "id": "analyze", "expect_ok": true, "expect_changed": true},
+        {"op": "start", "id": "execute", "expect_ok": true, "expect_changed": true},
+        {"op": "fail", "id": "execute", "detail": "首次执行失败", "expect_ok": true, "expect_changed": true},
+        {"op": "reopen", "ids": ["execute"], "detail": "重新进入执行", "expect_ok": true, "expect_changed": true},
+        {"op": "start", "id": "execute", "expect_ok": true, "expect_changed": true},
+        {"op": "cancel", "detail": "用户停止任务", "expect_ok": true, "expect_changed": true}
+      ],
+      "expected": {
+        "status": "cancelled",
+        "revision": 8,
+        "steps": {"analyze": "completed", "execute": "cancelled", "verify": "pending"}
+      }
+    },
+    {
+      "name": "parallel-progress",
+      "allow_parallel": true,
+      "steps": [
+        {"id": "analyze", "title": "分析任务"},
+        {"id": "execute", "title": "执行任务"},
+        {"id": "verify", "title": "验证结果"}
+      ],
+      "ops": [
+        {"op": "start", "id": "analyze", "expect_ok": true, "expect_changed": true},
+        {"op": "start", "id": "execute", "expect_ok": true, "expect_changed": true},
+        {"op": "complete", "id": "analyze", "expect_ok": true, "expect_changed": true},
+        {"op": "complete", "id": "execute", "expect_ok": true, "expect_changed": true},
+        {"op": "complete", "id": "verify", "expect_ok": true, "expect_changed": true}
+      ],
+      "expected": {
+        "status": "completed",
+        "revision": 6,
+        "steps": {"analyze": "completed", "execute": "completed", "verify": "completed"}
+      }
+    }
+  ],
+  "team_event_scripts": [
+    {
+      "name": "verifier-retry-reopens-repair",
+      "allow_parallel": false,
+      "steps": [
+        {"id": "explore", "title": "分析目标"},
+        {"id": "build", "title": "实现结果"},
+        {"id": "review", "title": "独立审查"},
+        {"id": "repair", "title": "处理发现"},
+        {"id": "verify", "title": "独立验证"},
+        {"id": "lead", "title": "汇总交付"}
+      ],
+      "mission": {
+        "work_items": [
+          {"id": "repair", "role": "builder", "status": "queued", "mutates_workspace": true, "attempt": 1},
+          {"id": "verify", "role": "verifier", "status": "queued", "depends_on": ["repair"], "attempt": 1}
+        ],
+        "handoffs": [
+          {"id": "h-verify-1", "work_item_id": "verify", "role": "verifier", "summary": "验证未通过", "checks": [{"command": "go test ./...", "passed": false, "summary": "1 failing"}]}
+        ]
+      },
+      "events": [
+        {"type": "work_started", "work_item_id": "explore", "role": "explorer", "message": "分析目标"},
+        {"type": "work_completed", "work_item_id": "explore", "role": "explorer", "message": "分析完成"},
+        {"type": "work_started", "work_item_id": "build", "role": "builder", "message": "实现结果"},
+        {"type": "work_completed", "work_item_id": "build", "role": "builder", "message": "实现完成"},
+        {"type": "work_started", "work_item_id": "review", "role": "reviewer", "message": "独立审查"},
+        {"type": "work_completed", "work_item_id": "review", "role": "reviewer", "message": "审查完成"},
+        {"type": "work_started", "work_item_id": "repair", "role": "builder", "message": "处理发现"},
+        {"type": "work_completed", "work_item_id": "repair", "role": "builder", "message": "修复完成"},
+        {"type": "work_started", "work_item_id": "verify", "role": "verifier", "message": "独立验证"},
+        {"type": "work_completed", "work_item_id": "verify", "role": "verifier", "message": "验证未通过，已进入有界修复循环"}
+      ],
+      "expected": {
+        "transitions": [
+          {"changed": true, "step_id": "explore"},
+          {"changed": true, "step_id": "explore"},
+          {"changed": true, "step_id": "build"},
+          {"changed": true, "step_id": "build"},
+          {"changed": true, "step_id": "review"},
+          {"changed": true, "step_id": "review"},
+          {"changed": true, "step_id": "repair"},
+          {"changed": true, "step_id": "repair"},
+          {"changed": true, "step_id": "verify"},
+          {"changed": true, "step_id": "repair"}
+        ],
+        "final": {
+          "status": "active",
+          "revision": 11,
+          "steps": {"explore": "completed", "build": "completed", "review": "completed", "repair": "pending", "verify": "pending", "lead": "pending"}
+        }
+      }
+    },
+    {
+      "name": "verifier-fail-without-budget-fails-plan",
+      "allow_parallel": false,
+      "steps": [
+        {"id": "explore", "title": "分析目标"},
+        {"id": "build", "title": "实现结果"},
+        {"id": "review", "title": "独立审查"},
+        {"id": "repair", "title": "处理发现"},
+        {"id": "verify", "title": "独立验证"},
+        {"id": "lead", "title": "汇总交付"}
+      ],
+      "mission": {
+        "work_items": [
+          {"id": "repair", "role": "builder", "status": "completed", "mutates_workspace": true, "attempt": 2},
+          {"id": "verify", "role": "verifier", "status": "completed", "depends_on": ["repair"], "attempt": 2}
+        ],
+        "handoffs": [
+          {"id": "h-verify-2", "work_item_id": "verify", "role": "verifier", "summary": "验证仍未通过", "checks": [{"command": "go test ./...", "passed": false, "summary": "2 failing"}]}
+        ]
+      },
+      "events": [
+        {"type": "work_started", "work_item_id": "explore", "role": "explorer", "message": "分析目标"},
+        {"type": "work_completed", "work_item_id": "explore", "role": "explorer", "message": "分析完成"},
+        {"type": "work_started", "work_item_id": "build", "role": "builder", "message": "实现结果"},
+        {"type": "work_completed", "work_item_id": "build", "role": "builder", "message": "实现完成"},
+        {"type": "work_started", "work_item_id": "review", "role": "reviewer", "message": "独立审查"},
+        {"type": "work_completed", "work_item_id": "review", "role": "reviewer", "message": "审查完成"},
+        {"type": "work_started", "work_item_id": "repair", "role": "builder", "message": "处理发现"},
+        {"type": "work_completed", "work_item_id": "repair", "role": "builder", "message": "修复完成"},
+        {"type": "work_started", "work_item_id": "verify", "role": "verifier", "message": "独立验证"},
+        {"type": "work_completed", "work_item_id": "verify", "role": "verifier", "message": "验证未通过且修复次数耗尽"}
+      ],
+      "expected": {
+        "transitions": [
+          {"changed": true, "step_id": "explore"},
+          {"changed": true, "step_id": "explore"},
+          {"changed": true, "step_id": "build"},
+          {"changed": true, "step_id": "build"},
+          {"changed": true, "step_id": "review"},
+          {"changed": true, "step_id": "review"},
+          {"changed": true, "step_id": "repair"},
+          {"changed": true, "step_id": "repair"},
+          {"changed": true, "step_id": "verify"},
+          {"changed": true, "step_id": "verify"}
+        ],
+        "final": {
+          "status": "failed",
+          "revision": 11,
+          "steps": {"explore": "completed", "build": "completed", "review": "completed", "repair": "completed", "verify": "failed", "lead": "pending"}
+        }
+      }
+    },
+    {
+      "name": "mission-failed-falls-back-to-current-step",
+      "allow_parallel": false,
+      "steps": [
+        {"id": "analyze", "title": "分析任务"},
+        {"id": "execute", "title": "执行任务"},
+        {"id": "verify", "title": "验证结果"}
+      ],
+      "mission": {"work_items": []},
+      "events": [
+        {"type": "work_started", "work_item_id": "analyze", "role": "explorer", "message": "分析任务"},
+        {"type": "work_completed", "work_item_id": "analyze", "role": "explorer", "message": "分析完成"},
+        {"type": "work_started", "work_item_id": "execute", "role": "builder", "message": "执行任务"},
+        {"type": "mission_failed", "message": "预算耗尽"}
+      ],
+      "expected": {
+        "transitions": [
+          {"changed": true, "step_id": "analyze"},
+          {"changed": true, "step_id": "analyze"},
+          {"changed": true, "step_id": "execute"},
+          {"changed": true, "step_id": "execute"}
+        ],
+        "final": {
+          "status": "failed",
+          "revision": 5,
+          "steps": {"analyze": "completed", "execute": "failed", "verify": "pending"}
+        }
+      }
+    },
+    {
+      "name": "mission-failed-falls-back-to-next-pending",
+      "allow_parallel": false,
+      "steps": [
+        {"id": "analyze", "title": "分析任务"},
+        {"id": "execute", "title": "执行任务"}
+      ],
+      "mission": {"work_items": []},
+      "events": [
+        {"type": "mission_failed", "message": "调度失败"}
+      ],
+      "expected": {
+        "transitions": [
+          {"changed": true, "step_id": "analyze"}
+        ],
+        "final": {
+          "status": "failed",
+          "revision": 2,
+          "steps": {"analyze": "failed", "execute": "pending"}
+        }
+      }
+    }
+  ]
+}

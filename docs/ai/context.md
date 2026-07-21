@@ -77,6 +77,7 @@ GoHermit `0.5.0-dev` is a foreground, local-first, single-owner coding harness. 
 - Team tests cover dependency order, parallel readers, one writer, structured Handoffs, Verifier gating, parent Session completion, and completed Worker replay protection.
 - For v0.5, commit-journal crash injection, detached Worker event durability, Plan approval, adaptive Team topology, bounded repair/reverify, task-specific Plan, and Chromium refresh/approval E2E tests pass on Windows. Vet and native/cross-platform builds pass; Linux race and Docker gates are also checked by `.github/workflows/ci.yml` because this Windows host has no Docker and blocks some transient test executables.
 - The only third-party Go module is `github.com/BurntSushi/toml` for strict TOML decoding.
+- The v0.5 eval definition `docs/ai/evals/v0.5.md` is implemented as checked-in fixture graders: `internal/evals` (plan fidelity, handoff quality, shared fixture loader) plus `eval_test.go` graders in `internal/team` (verification), `internal/session` (recovery), and `internal/web` (owner summary); all fixtures under `internal/evals/testdata/` decode with `DisallowUnknownFields` and run inside `go test ./...`.
 
 ## Known boundaries
 

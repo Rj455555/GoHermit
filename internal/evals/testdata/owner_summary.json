@@ -1,0 +1,46 @@
+{
+  "scenarios": [
+    {
+      "name": "last-lead-handoff-wins",
+      "handoffs": [
+        {"id": "h-explore", "work_item_id": "explore", "role": "explorer", "summary": "项目事实已梳理"},
+        {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成", "modified_files": ["internal/b.go", "internal/a.go", "internal/b.go"]},
+        {"id": "h-lead-early", "work_item_id": "lead", "role": "lead", "summary": "过时的中途总结"},
+        {"id": "h-verify", "work_item_id": "verify", "role": "verifier", "summary": "验证通过", "checks": [{"command": "go test ./...", "passed": true, "summary": "all green"}]},
+        {"id": "h-lead-final", "work_item_id": "lead", "role": "lead", "summary": "交付：实现完成并通过独立验证"}
+      ],
+      "expected": {
+        "final_summary": "交付：实现完成并通过独立验证",
+        "modified_files": ["internal/a.go", "internal/b.go"]
+      }
+    },
+    {
+      "name": "no-lead-handoff-falls-back-empty",
+      "handoffs": [
+        {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成", "modified_files": ["internal/c.go"]},
+        {"id": "h-verify", "work_item_id": "verify", "role": "verifier", "summary": "验证通过", "checks": [{"command": "go vet ./...", "passed": true, "summary": "clean"}]}
+      ],
+      "expected": {
+        "final_summary": "",
+        "modified_files": ["internal/c.go"]
+      }
+    },
+    {
+      "name": "full-team-run-owner-summary",
+      "run": true,
+      "handoffs": [
+        {"id": "h-explore", "work_item_id": "explore", "role": "explorer", "summary": "项目结构与约束已梳理"},
+        {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成", "modified_files": ["internal/evals/grade_plan.go", "internal/evals/fixtures.go"]},
+        {"id": "h-review", "work_item_id": "review", "role": "reviewer", "summary": "审查通过，无阻断问题"},
+        {"id": "h-repair", "work_item_id": "repair", "role": "builder", "summary": "无需修复", "modified_files": ["internal/evals/grade_plan.go"]},
+        {"id": "h-verify", "work_item_id": "verify", "role": "verifier", "summary": "验证通过", "checks": [{"command": "go test ./internal/evals/", "passed": true, "summary": "pass"}]},
+        {"id": "h-lead", "work_item_id": "lead", "role": "lead", "summary": "已交付确定性评估夹具与评分器，验证全部通过。"}
+      ],
+      "expected": {
+        "final_summary": "已交付确定性评估夹具与评分器，验证全部通过。",
+        "modified_files": ["internal/evals/fixtures.go", "internal/evals/grade_plan.go"],
+        "checks": [{"command": "go test ./internal/evals/", "passed": true, "summary": "pass"}]
+      }
+    }
+  ]
+}

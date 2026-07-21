@@ -4,7 +4,7 @@ This file starts after the `0.5.0-dev` adaptive Plan/Team milestone. Durable eve
 
 ## P0: eval-driven Plan refinement
 
-1. Turn `docs/ai/evals/v0.5.md` into checked-in deterministic repository fixtures and graders for Plan fidelity, Handoff quality, recovery, verification, and final owner summary.
+1. ~~Turn `docs/ai/evals/v0.5.md` into checked-in deterministic repository fixtures and graders for Plan fidelity, Handoff quality, recovery, verification, and final owner summary.~~ Done: `internal/evals` plus per-package `eval_test.go` graders; see the grader mapping in `docs/ai/evals/v0.5.md`.
 2. Let Explorer propose bounded task-specific substeps through a strict schema. Every substep must map to a real WorkItem; completed IDs and revisions cannot be rewritten.
 3. Add structured Reviewer issue severity and make repair scheduling depend on actionable findings instead of always running one initial repair pass.
 4. Record provider usage consistently for failed, retry, and summary calls and show per-role usage without exposing prompts.
