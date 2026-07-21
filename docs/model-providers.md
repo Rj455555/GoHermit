@@ -40,6 +40,8 @@ docker compose up --build -d
 
 Compose mounts `${HOME}/.codex` at `/codex` read-only and sets `CODEX_HOME=/codex`. `GOHERMIT_CODEX_ACCESS_TOKEN` is available for controlled non-CLI environments, but a maintained Codex login is preferred. Tokens are never returned by Web APIs or logged.
 
+An opt-in live smoke test validates the account path against the real Codex backend with one bounded call: `GOHERMIT_LIVE_CODEX_SMOKE=1 go test ./internal/evals/ -run TestLiveCodexSmoke -count=1 -v`. It skips when credentials are missing, never runs in the default suite, and is the only path that can place a paid live call; CI runs it solely via the manual `live-smoke` workflow-dispatch job.
+
 ## Agent profiles
 
 - `coding`: full workspace-scoped development tools.
