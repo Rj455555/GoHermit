@@ -64,6 +64,9 @@ func (w *fakeWorker) Execute(_ context.Context, assignment Assignment) (Result, 
 		return Result{}, fmt.Errorf("failed %s", w.fail)
 	}
 	handoff := Handoff{ID: "handoff-" + assignment.WorkItem.ID, WorkItemID: assignment.WorkItem.ID, Role: assignment.WorkItem.Role, Summary: "completed " + assignment.WorkItem.ID}
+	if assignment.WorkItem.Role == RoleReviewer {
+		handoff.Findings = []Finding{{Severity: SeverityBlocking, Summary: "scripted blocking finding"}}
+	}
 	if assignment.WorkItem.Role == RoleVerifier {
 		handoff.Checks = []Check{{Command: "go test ./...", Passed: true, Summary: "ok"}}
 	}
@@ -177,6 +180,9 @@ func (w *retryVerifierWorker) Execute(_ context.Context, assignment Assignment) 
 	handoff := Handoff{ID: fmt.Sprintf("handoff-%s-%d", assignment.WorkItem.ID, assignment.WorkItem.Attempt), WorkItemID: assignment.WorkItem.ID, Role: assignment.WorkItem.Role, Summary: "done"}
 	if assignment.WorkItem.ID == "repair" {
 		w.repairCalls++
+	}
+	if assignment.WorkItem.Role == RoleReviewer {
+		handoff.Findings = []Finding{{Severity: SeverityBlocking, Summary: "scripted blocking finding"}}
 	}
 	if assignment.WorkItem.Role == RoleVerifier {
 		w.verifyCalls++

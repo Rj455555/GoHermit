@@ -82,6 +82,26 @@ func TestVerifierFailureReopensControllerPlanWhenMissionQueuedRepair(t *testing.
 	}
 }
 
+func TestVerifierFailureReopensPlanForUnskippedRepairWithZeroAttempts(t *testing.T) {
+	// After an advisory-only review the repair stage is skipped; when the
+	// verifier then fails, RequeueAfterVerification un-skips it with Attempt
+	// still 0. The plan must reopen that repair step instead of failing.
+	plan, err := taskplan.NewParallel("plan-run", []taskplan.StepSpec{{ID: "repair", Title: "Repair"}, {ID: "verify", Title: "Verify"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = plan.Complete("repair", "审查无 blocking 发现，跳过修复")
+	_, _ = plan.Start("verify", "verify")
+	mission := &team.Mission{
+		WorkItems: []team.WorkItem{{ID: "repair", Status: team.WorkQueued, MutatesWorkspace: true}, {ID: "verify", Role: team.RoleVerifier, Status: team.WorkQueued, DependsOn: []string{"repair"}, Attempt: 1}},
+		Handoffs:  []team.Handoff{{ID: "failed", WorkItemID: "verify", Role: team.RoleVerifier, Checks: []team.Check{{Command: "go test ./...", Passed: false}}}},
+	}
+	transition, err := ApplyTeamEvent(plan, team.TeamEvent{Type: team.WorkItemDone, WorkItemID: "verify", Role: team.RoleVerifier}, mission)
+	if err != nil || !transition.Changed || transition.StepID != "repair" || plan.Status != taskplan.Active || plan.Steps[0].Status != taskplan.Pending || plan.Steps[1].Status != taskplan.Pending {
+		t.Fatalf("transition=%+v plan=%+v err=%v", transition, plan, err)
+	}
+}
+
 func TestSubstepsAcceptedExtendsPlanFromExplorerProposal(t *testing.T) {
 	plan, err := taskplan.New("plan-run", []taskplan.StepSpec{{ID: "explore", Title: "Explore"}, {ID: "lead", Title: "Lead"}})
 	if err != nil {

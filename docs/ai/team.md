@@ -12,12 +12,12 @@ Only Lead produces the visible final answer. Worker private reasoning, full prom
 
 Read-only intent: parallel `Explorer + Reviewer → Verifier → Lead`.
 
-Mutation intent: parallel `Explorer + preflight Reviewer → Builder → Reviewer → repair Builder → Verifier → Lead`.
+Mutation intent: parallel `Explorer + preflight Reviewer → Builder → Reviewer → repair Builder → Verifier → Lead`. The Reviewer reports severity-tagged findings; the repair stage runs only when at least one finding is blocking and is otherwise skipped so verification runs directly.
 
 - Explorer: read-only project and constraint inspection.
 - Builder: workspace-scoped implementation and focused checks.
 - Reviewer: independent read-only diff review.
-- Repair Builder: addresses review findings or proves no change is needed.
+- Repair Builder: addresses blocking review findings; skipped when the review is clean or advisory-only, and still requeued if a later verification fails.
 - Verifier: read-only inspection plus `test.run`; it has no file write, patch, or general shell tools.
 - Lead: synthesizes only the bounded Handoffs for the owner.
 - Operator: reserved and disabled by default for future approval-gated operations.

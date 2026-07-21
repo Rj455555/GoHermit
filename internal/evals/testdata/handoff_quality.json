@@ -81,6 +81,39 @@
       "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成", "checks_count": 65},
       "expect_accept": false,
       "error_contains": "handoff exceeds bounded limits"
+    },
+    {
+      "name": "valid-findings-accepted",
+      "work_item": {"id": "review", "title": "独立审查", "goal": "审查本次实现", "role": "reviewer"},
+      "handoff": {"id": "h-review", "work_item_id": "review", "role": "reviewer", "summary": "审查完成", "findings": [{"severity": "blocking", "summary": "错误处理缺失"}, {"severity": "advisory", "summary": "可补充注释"}]},
+      "expect_accept": true
+    },
+    {
+      "name": "boundary-findings-accepted",
+      "work_item": {"id": "review", "title": "独立审查", "goal": "审查本次实现", "role": "reviewer"},
+      "handoff": {"id": "h-review", "work_item_id": "review", "role": "reviewer", "summary": "审查完成", "findings_count": 128},
+      "expect_accept": true
+    },
+    {
+      "name": "invalid-finding-severity-rejected",
+      "work_item": {"id": "review", "title": "独立审查", "goal": "审查本次实现", "role": "reviewer"},
+      "handoff": {"id": "h-review", "work_item_id": "review", "role": "reviewer", "summary": "审查完成", "findings": [{"severity": "critical", "summary": "未知严重级别"}]},
+      "expect_accept": false,
+      "error_contains": "handoff findings require a blocking or advisory severity and a bounded summary"
+    },
+    {
+      "name": "empty-finding-summary-rejected",
+      "work_item": {"id": "review", "title": "独立审查", "goal": "审查本次实现", "role": "reviewer"},
+      "handoff": {"id": "h-review", "work_item_id": "review", "role": "reviewer", "summary": "审查完成", "findings": [{"severity": "blocking", "summary": "  "}]},
+      "expect_accept": false,
+      "error_contains": "handoff findings require a blocking or advisory severity and a bounded summary"
+    },
+    {
+      "name": "too-many-findings-rejected",
+      "work_item": {"id": "review", "title": "独立审查", "goal": "审查本次实现", "role": "reviewer"},
+      "handoff": {"id": "h-review", "work_item_id": "review", "role": "reviewer", "summary": "审查完成", "findings_count": 129},
+      "expect_accept": false,
+      "error_contains": "handoff exceeds bounded limits"
     }
   ]
 }

@@ -81,6 +81,37 @@ func TestParseWorkerHandoffReadsOptionalSubsteps(t *testing.T) {
 	}
 }
 
+func TestParseWorkerHandoffReadsOptionalFindings(t *testing.T) {
+	with := parseWorkerHandoff(`{"summary":"reviewed","findings":[{"severity":"blocking","summary":"必须修复"},{"severity":"advisory","summary":"可选改进"}]}`)
+	if with.Summary != "reviewed" || len(with.Findings) != 2 {
+		t.Fatalf("handoff=%+v", with)
+	}
+	if with.Findings[0].Severity != team.SeverityBlocking || with.Findings[1].Severity != team.SeverityAdvisory {
+		t.Fatalf("findings=%+v", with.Findings)
+	}
+	without := parseWorkerHandoff(`{"summary":"reviewed"}`)
+	if without.Summary != "reviewed" || len(without.Findings) != 0 {
+		t.Fatalf("handoff=%+v", without)
+	}
+}
+
+func TestReviewerAssignmentPromptDocumentsFindingsSchema(t *testing.T) {
+	reviewer, err := assignmentPrompt(team.Assignment{Goal: "goal", WorkItem: team.WorkItem{ID: "review", Role: team.RoleReviewer, Title: "Review", Goal: "review"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(reviewer, "findings") || !strings.Contains(reviewer, "blocking") || !strings.Contains(reviewer, "advisory") {
+		t.Fatalf("reviewer prompt lacks the findings severity schema: %q", reviewer)
+	}
+	builder, err := assignmentPrompt(team.Assignment{Goal: "goal", WorkItem: team.WorkItem{ID: "build", Role: team.RoleBuilder, Title: "Build", Goal: "implement"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(builder, "findings") {
+		t.Fatalf("builder prompt must not report findings: %q", builder)
+	}
+}
+
 func TestExplorerAssignmentPromptDocumentsSubstepSchema(t *testing.T) {
 	explorer, err := assignmentPrompt(team.Assignment{Goal: "goal", WorkItem: team.WorkItem{ID: "explore", Role: team.RoleExplorer, Title: "Explore", Goal: "inspect"}})
 	if err != nil {
