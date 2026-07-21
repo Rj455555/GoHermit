@@ -15,8 +15,13 @@ company group → provider/access slug → provider model → Agent profile
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | Chat Completions | `https://api.deepseek.com` |
 | Alibaba / Qwen | `alibaba` (`qwen` config alias) | `DASHSCOPE_API_KEY` | Chat Completions | DashScope compatible endpoint |
 | Alibaba / Qwen | `alibaba-coding-plan` | `ALIBABA_CODING_PLAN_API_KEY` | Chat Completions | Alibaba Coding Plan endpoint |
+| Moonshot AI / Kimi | `kimi-coding-plan` | `KIMI_API_KEY` | Chat Completions | `https://api.kimi.com/coding/v1` |
 
 Legacy `codex`, `openai`, `openai-chat`, and `openai-compatible` TOML presets remain valid for CLI compatibility. In the Web catalog, OpenAI Codex Plan and OpenAI API are deliberately separate providers.
+
+## Kimi Code 编程套餐
+
+The `kimi-coding-plan` provider targets the Kimi Code (coding plan) membership endpoint `https://api.kimi.com/coding/v1`, an OpenAI-compatible Chat Completions API. It uses the plan-issued API key from `KIMI_API_KEY` (or a key pasted in Web Provider Settings, which is stored server-side and takes precedence over the environment). The default model is `kimi-for-coding`; the Web catalog also offers `kimi-for-coding-highspeed` and `k3` under the Moonshot AI / Kimi group. A ready-made TOML preset ships as `configs/kimi-coding-plan.toml`.
 
 ## Codex Plan
 
