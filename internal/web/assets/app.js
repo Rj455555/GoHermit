@@ -38,6 +38,7 @@ function setConnectivity(state) {
   $('#health-dot').className = `health-dot ${online ? (busy ? 'busy' : 'ready') : (reconnectingNow ? 'busy' : 'error')}`;
   $('#health-dot').title = online ? (busy ? 'Agent 运行中' : '服务正常') : (reconnectingNow ? '正在重新连接' : '服务离线');
   $('#new-task').disabled = !online;
+  $('#approve-plan').disabled = !online;
   for (const control of document.querySelectorAll('#new-task-options select')) control.disabled = !online;
   if (!online) {
     $('#task').disabled = true;
@@ -226,6 +227,7 @@ function showNewTask(focus = true) {
   resetActivity();
   $('#new-task-options').classList.remove('hidden');
   $('#session-model').classList.add('hidden');
+  $('#approve-plan').classList.add('hidden');
   $('#resume-run').classList.add('hidden');
   $('#cancel-run').classList.add('hidden');
   setRunStatus('就绪', 'idle');
@@ -240,7 +242,8 @@ async function createSession() {
     company: $('#company').value,
     access: $('#access').value,
     model: $('#model').value,
-    agent: $('#agent').value
+    agent: $('#agent').value,
+    plan_mode: $('#plan-mode').value
   };
   const session = await request('/api/sessions', {
     method: 'POST',
@@ -397,11 +400,14 @@ function renderRunState() {
   const latest = run || lastRun();
   const status = latest && latest.status;
   setRunStatus(statusText(status), statusClass(status));
-  const busy = run && ['queued', 'running', 'verifying'].includes(run.status);
-  $('#send').disabled = Boolean(busy);
-  $('#cancel-run').classList.toggle('hidden', !busy);
+	const awaitingApproval = Boolean(run && run.status === 'queued' && run.plan_mode === 'review' && !run.plan_approved);
+  const busy = run && ['queued', 'running', 'verifying'].includes(run.status) && !awaitingApproval;
+	const occupied = Boolean(busy || awaitingApproval);
+  $('#send').disabled = occupied;
+	$('#approve-plan').classList.toggle('hidden', !awaitingApproval);
+  $('#cancel-run').classList.toggle('hidden', !(busy || awaitingApproval));
   $('#resume-run').classList.toggle('hidden', !(run && run.status === 'interrupted'));
-  $('#task').disabled = Boolean(busy);
+	$('#task').disabled = occupied;
   $('#task').placeholder = busy ? 'GoHermit 正在处理当前任务…' : '继续当前任务…';
 }
 
@@ -555,6 +561,20 @@ async function cancelRun() {
     await request(`/api/sessions/${current.session.id}/runs/${run.id}/cancel`, {method: 'POST'});
     setRunStatus('正在停止', 'warning');
   } catch (error) { toast(error.message, true); }
+}
+
+async function approvePlan() {
+  const run = activeRun();
+  if (!run) return;
+  try {
+    $('#approve-plan').disabled = true;
+    await request(`/api/sessions/${current.session.id}/runs/${run.id}/approve`, {method: 'POST'});
+    await refreshCurrent();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    $('#approve-plan').disabled = false;
+  }
 }
 
 async function resumeRun() {
@@ -777,6 +797,7 @@ $('#brand-button').addEventListener('click', () => showNewTask());
 $('#tasks-button').addEventListener('click', openMobileSidebar);
 $('#send').addEventListener('click', sendMessage);
 $('#cancel-run').addEventListener('click', cancelRun);
+$('#approve-plan').addEventListener('click', approvePlan);
 $('#resume-run').addEventListener('click', resumeRun);
 $('#task').addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') sendMessage(); });
 $('#settings-button').addEventListener('click', openSettings);

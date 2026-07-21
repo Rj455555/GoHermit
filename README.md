@@ -6,7 +6,7 @@ GoHermit is not a hosted service, a general-purpose multi-agent platform, an unb
 
 ## Status
 
-The current development version is `0.4.0-dev`. Every Run now exposes a durable Cursor-style Live Plan: a bounded checkbox list shows the current phase, completed work, failures, and progress in real time and survives refresh, SSE reconnect, and process recovery. The private Personal Agent Team and Owner Profile from v0.3 remain the execution and personalization foundation. The service remains single-owner, local-only, foreground, and free of telemetry or automatic Git push.
+The current development version is `0.5.0-dev`. Every Run exposes a durable task-specific Live Plan that survives refresh and recovery. New Sessions can execute automatically or wait for explicit Plan approval. Personal Agent Team Runs select a bounded topology from task intent, parallelize read-only preflight, keep one writer, and retry repair/verification within fixed limits. The service remains single-owner, local-only, foreground, and free of telemetry or automatic Git push.
 
 ## Build and install
 
@@ -14,6 +14,9 @@ Go 1.24 or newer is required.
 
 ```bash
 go test ./...
+pnpm install
+pnpm exec playwright install chromium
+pnpm test:e2e
 go build -o hermit ./cmd/hermit
 go build -o hermit-web ./cmd/hermit-web
 install -m 0755 hermit "$HOME/.local/bin/hermit"
@@ -87,7 +90,7 @@ External plugins are separate processes and form an explicit trust boundary. Rea
 - [Agent Harness quick reference](docs/ai/harness.md)
 - [Personal Agent Team quick reference](docs/ai/team.md)
 - [Live Plan quick reference](docs/ai/plan-mode.md)
-- [Current v0.4 implementation handoff](docs/ai/handoff-v0.4.md)
+- [Current v0.5 implementation handoff](docs/ai/handoff-v0.5.md)
 - [Next development plan](docs/ai/next-development-plan.md)
 - [Architecture](docs/architecture.md)
 - [Project structure](docs/project-structure.md)

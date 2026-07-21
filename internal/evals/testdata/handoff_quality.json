@@ -1,0 +1,86 @@
+{
+  "scenarios": [
+    {
+      "name": "valid-handoff-accepted",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成并通过构建", "evidence": ["go build ./... 通过"], "modified_files": ["internal/evals/fixtures.go"], "checks": [{"command": "go build ./...", "passed": true, "summary": "ok"}], "next_steps": ["运行测试"]},
+      "expect_accept": true
+    },
+    {
+      "name": "boundary-counts-accepted",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "达到有界上限的交付", "evidence_count": 128, "modified_files_count": 128, "issues_count": 128, "next_steps_count": 128, "checks_count": 64},
+      "expect_accept": true
+    },
+    {
+      "name": "empty-handoff-id-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "", "work_item_id": "build", "role": "builder", "summary": "实现完成"},
+      "expect_accept": false,
+      "error_contains": "handoff identity, role, and summary must match the work item"
+    },
+    {
+      "name": "wrong-work-item-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "repair", "role": "builder", "summary": "实现完成"},
+      "expect_accept": false,
+      "error_contains": "handoff identity, role, and summary must match the work item"
+    },
+    {
+      "name": "wrong-role-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "reviewer", "summary": "实现完成"},
+      "expect_accept": false,
+      "error_contains": "handoff identity, role, and summary must match the work item"
+    },
+    {
+      "name": "empty-summary-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "  "},
+      "expect_accept": false,
+      "error_contains": "handoff identity, role, and summary must match the work item"
+    },
+    {
+      "name": "oversized-summary-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary_size": 32769},
+      "expect_accept": false,
+      "error_contains": "handoff exceeds bounded limits"
+    },
+    {
+      "name": "too-much-evidence-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成", "evidence_count": 129},
+      "expect_accept": false,
+      "error_contains": "handoff exceeds bounded limits"
+    },
+    {
+      "name": "too-many-modified-files-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成", "modified_files_count": 129},
+      "expect_accept": false,
+      "error_contains": "handoff exceeds bounded limits"
+    },
+    {
+      "name": "too-many-issues-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成", "issues_count": 129},
+      "expect_accept": false,
+      "error_contains": "handoff exceeds bounded limits"
+    },
+    {
+      "name": "too-many-next-steps-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成", "next_steps_count": 129},
+      "expect_accept": false,
+      "error_contains": "handoff exceeds bounded limits"
+    },
+    {
+      "name": "too-many-checks-rejected",
+      "work_item": {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder"},
+      "handoff": {"id": "h-build", "work_item_id": "build", "role": "builder", "summary": "实现完成", "checks_count": 65},
+      "expect_accept": false,
+      "error_contains": "handoff exceeds bounded limits"
+    }
+  ]
+}

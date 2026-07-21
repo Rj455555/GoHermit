@@ -121,7 +121,7 @@ func dedupe(in []model.Message) []model.Message {
 	seen := map[string]bool{}
 	out := make([]model.Message, 0, len(in))
 	for _, m := range in {
-		key := string(m.Role) + "\x00" + m.Content
+		key := dedupeKey(m)
 		if seen[key] {
 			continue
 		}
@@ -129,6 +129,27 @@ func dedupe(in []model.Message) []model.Message {
 		out = append(out, m)
 	}
 	return out
+}
+
+// dedupeKey distinguishes tool-call turns that share an empty text content:
+// dropping one of them would orphan the matching tool result message, which
+// strict function-calling APIs reject with a tool_call_id error.
+func dedupeKey(m model.Message) string {
+	var b strings.Builder
+	b.WriteString(string(m.Role))
+	b.WriteString("\x00")
+	b.WriteString(m.Content)
+	b.WriteString("\x00")
+	b.WriteString(m.ToolCallID)
+	for _, c := range m.ToolCalls {
+		b.WriteString("\x00")
+		b.WriteString(c.ID)
+		b.WriteString("\x00")
+		b.WriteString(c.Name)
+		b.WriteString("\x00")
+		b.WriteString(string(c.Arguments))
+	}
+	return b.String()
 }
 func tokens(messages []model.Message) int {
 	n := 0

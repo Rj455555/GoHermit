@@ -34,6 +34,14 @@ func TestTeamWorkerReusesCompletedExecutionSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	parent, err := session.New("parent goal", root, "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent.ID = "parent"
+	if err = store.Save(context.Background(), parent); err != nil {
+		t.Fatal(err)
+	}
 	provider := &teamProvider{}
 	build := func(context.Context, string, string, RuntimeOptions) (*Runtime, error) {
 		manager, managerErr := contextmgr.New(contextmgr.Config{MaxTokens: 4096, CompressionThreshold: .8, HardLimitThreshold: .92, ReserveOutputTokens: 512})

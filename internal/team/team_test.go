@@ -72,3 +72,36 @@ func TestCancelIsTerminalAndInterruptIsResumable(t *testing.T) {
 		t.Fatalf("cancelled mission should be terminal: %+v", cancelled)
 	}
 }
+
+func TestAdaptiveMissionChoosesTopologyForTaskIntent(t *testing.T) {
+	readOnly, err := AdaptiveMission("mission-read", "run", "分析当前架构并给出建议", DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready := readOnly.Ready(); len(ready) != 2 {
+		t.Fatalf("read-only mission should begin with parallel evidence gathering: %v", ready)
+	}
+	for _, item := range readOnly.WorkItems {
+		if item.MutatesWorkspace {
+			t.Fatalf("read-only mission contains writer: %+v", item)
+		}
+	}
+
+	implementation, err := AdaptiveMission("mission-write", "run", "实现流式输出并修复恢复逻辑", DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready := implementation.Ready(); len(ready) != 2 {
+		t.Fatalf("implementation mission should parallelize preflight: %v", ready)
+	}
+	writers, verifier := 0, false
+	for _, item := range implementation.WorkItems {
+		if item.MutatesWorkspace {
+			writers++
+		}
+		verifier = verifier || item.Role == RoleVerifier
+	}
+	if writers < 1 || !verifier || len(implementation.WorkItems) <= len(readOnly.WorkItems) {
+		t.Fatalf("implementation topology=%+v", implementation.WorkItems)
+	}
+}

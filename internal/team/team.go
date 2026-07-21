@@ -235,6 +235,39 @@ func (m *Mission) Complete(id string, handoff Handoff) error {
 	return nil
 }
 
+// RequeueAfterVerification schedules the verifier and its mutating dependency
+// for another bounded attempt while preserving prior handoffs as audit history.
+func (m *Mission) RequeueAfterVerification(verifierID string, maxAttempts int) (bool, error) {
+	verifier := m.work(verifierID)
+	if verifier == nil || verifier.Role != RoleVerifier || verifier.Status != WorkCompleted {
+		return false, fmt.Errorf("work item %q is not a completed verifier", verifierID)
+	}
+	if maxAttempts < 1 || verifier.Attempt >= maxAttempts {
+		return false, nil
+	}
+	repairIDs := make([]string, 0, len(verifier.DependsOn))
+	for _, dependency := range verifier.DependsOn {
+		item := m.work(dependency)
+		if item != nil && item.MutatesWorkspace && item.Status == WorkCompleted {
+			repairIDs = append(repairIDs, item.ID)
+		}
+	}
+	if len(repairIDs) == 0 {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	reset := func(item *WorkItem, detail string) {
+		item.Status, item.Error, item.HandoffID, item.UpdatedAt = WorkQueued, detail, "", now
+		item.StartedAt, item.CompletedAt = nil, nil
+	}
+	for _, id := range repairIDs {
+		reset(m.work(id), "requeued after failed verification")
+	}
+	reset(verifier, "requeued after failed verification")
+	m.Status, m.Error, m.UpdatedAt = Running, "", now
+	return true, nil
+}
+
 func (m *Mission) Fail(id, message string) error {
 	item := m.work(id)
 	if item == nil || item.Status != WorkRunning {

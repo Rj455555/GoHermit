@@ -1,0 +1,25 @@
+{
+  "scenarios": [
+    {
+      "name": "crash-after-journal-written",
+      "events": 3,
+      "crash_stage": "journal_written",
+      "recoveries": 2,
+      "active_run": true
+    },
+    {
+      "name": "crash-after-checkpoint-written",
+      "events": 2,
+      "crash_stage": "checkpoint_written",
+      "recoveries": 1,
+      "active_run": true
+    },
+    {
+      "name": "crash-after-events-written",
+      "events": 4,
+      "crash_stage": "events_written",
+      "recoveries": 3,
+      "active_run": false
+    }
+  ]
+}

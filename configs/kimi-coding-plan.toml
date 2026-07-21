@@ -1,0 +1,7 @@
+[model]
+provider = "kimi-coding-plan"
+model = "kimi-for-coding"
+api_key_env = "KIMI_API_KEY"
+
+[permissions]
+allow_network = false

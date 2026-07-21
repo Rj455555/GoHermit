@@ -59,6 +59,9 @@ type ModelPreset struct {
 	BaseURL   string `json:"base_url"`
 	Model     string `json:"model"`
 	APIKeyEnv string `json:"api_key_env"`
+	// SanitizeToolNames rewrites dotted tool names to provider-safe wire names
+	// for function-calling APIs that reject characters such as dots.
+	SanitizeToolNames bool `json:"sanitize_tool_names,omitempty"`
 }
 
 // ModelOption is a selectable model within one provider access method.
@@ -113,6 +116,7 @@ var modelPresets = map[string]ModelPreset{
 	"alibaba":             {Provider: "alibaba", Protocol: "chat_completions", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen3.7-plus", APIKeyEnv: "DASHSCOPE_API_KEY"},
 	"qwen":                {Provider: "qwen", Protocol: "chat_completions", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen3.7-plus", APIKeyEnv: "DASHSCOPE_API_KEY"},
 	"alibaba-coding-plan": {Provider: "alibaba-coding-plan", Protocol: "chat_completions", BaseURL: "https://coding-intl.dashscope.aliyuncs.com/v1", Model: "qwen3-coder-plus", APIKeyEnv: "ALIBABA_CODING_PLAN_API_KEY"},
+	"kimi-coding-plan":    {Provider: "kimi-coding-plan", Protocol: "chat_completions", BaseURL: "https://api.kimi.com/coding/v1", Model: "kimi-for-coding", APIKeyEnv: "KIMI_API_KEY", SanitizeToolNames: true},
 	"openai-compatible":   {Provider: "openai-compatible", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
 	"openai-chat":         {Provider: "openai-chat", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
 }
@@ -143,6 +147,13 @@ var companyPresets = []CompanyPreset{
 		}},
 		{ID: "alibaba-coding-plan", Label: "Alibaba Coding Plan", AuthType: "api_key", Description: "使用阿里云 Coding Plan 专用额度、密钥与端点。", APIKeyEnv: "ALIBABA_CODING_PLAN_API_KEY", Supported: true, Models: []ModelOption{
 			{ID: "qwen3-coder-plus", Label: "Qwen3 Coder Plus", Provider: "alibaba-coding-plan"},
+		}},
+	}},
+	{ID: "kimi", Label: "Moonshot AI / Kimi", Access: []AccessPreset{
+		{ID: "kimi-coding-plan", Label: "Kimi Code 编程套餐", AuthType: "api_key", Description: "使用 Kimi Code 编程套餐会员专用端点与密钥。", APIKeyEnv: "KIMI_API_KEY", Supported: true, Models: []ModelOption{
+			{ID: "kimi-for-coding", Label: "Kimi For Coding (K2.7 Code)", Provider: "kimi-coding-plan"},
+			{ID: "kimi-for-coding-highspeed", Label: "Kimi For Coding Highspeed", Provider: "kimi-coding-plan"},
+			{ID: "k3", Label: "Kimi K3", Provider: "kimi-coding-plan"},
 		}},
 	}},
 }
@@ -273,12 +284,15 @@ func (c Config) CurrentSelection() RuntimeSelection {
 	case "alibaba-coding-plan":
 		selection.Company = "alibaba"
 		selection.Access = "alibaba-coding-plan"
+	case "kimi-coding-plan":
+		selection.Company = "kimi"
+		selection.Access = "kimi-coding-plan"
 	}
 	return selection
 }
 
 func ModelPresets() []ModelPreset {
-	names := []string{"openai-codex", "openai-api", "deepseek", "alibaba", "alibaba-coding-plan", "openai-compatible", "openai-chat"}
+	names := []string{"openai-codex", "openai-api", "deepseek", "alibaba", "alibaba-coding-plan", "kimi-coding-plan", "openai-compatible", "openai-chat"}
 	out := make([]ModelPreset, 0, len(names))
 	for _, name := range names {
 		out = append(out, modelPresets[name])

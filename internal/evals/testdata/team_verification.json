@@ -1,0 +1,76 @@
+{
+  "scenarios": [
+    {
+      "name": "verifier-without-evidence-fails-closed",
+      "max_repair_attempts": 1,
+      "work_items": [
+        {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder", "mutates_workspace": true},
+        {"id": "verify", "title": "独立验证", "goal": "运行确定性检查", "role": "verifier", "depends_on": ["build"]},
+        {"id": "lead", "title": "汇总交付", "goal": "汇总证据并交付", "role": "lead", "depends_on": ["verify"]}
+      ],
+      "script": [
+        {"id": "verify", "attempt": 1, "result": "no_checks"}
+      ],
+      "expected": {
+        "mission_status": "failed",
+        "attempts": {"build": 1, "verify": 1, "lead": 0},
+        "handoffs": 2
+      }
+    },
+    {
+      "name": "bounded-repair-then-pass",
+      "max_repair_attempts": 3,
+      "work_items": [
+        {"id": "explore", "title": "分析目标", "goal": "检查项目与约束", "role": "explorer"},
+        {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder", "depends_on": ["explore"], "mutates_workspace": true},
+        {"id": "verify", "title": "独立验证", "goal": "运行确定性检查", "role": "verifier", "depends_on": ["build"]},
+        {"id": "lead", "title": "汇总交付", "goal": "汇总证据并交付", "role": "lead", "depends_on": ["verify"]}
+      ],
+      "script": [
+        {"id": "verify", "attempt": 1, "result": "checks_fail"},
+        {"id": "verify", "attempt": 2, "result": "checks_pass"}
+      ],
+      "expected": {
+        "mission_status": "completed",
+        "attempts": {"explore": 1, "build": 2, "verify": 2, "lead": 1},
+        "handoffs": 6,
+        "preserved_failed_checks": true
+      }
+    },
+    {
+      "name": "attempts-exhausted-fails-closed",
+      "max_repair_attempts": 2,
+      "work_items": [
+        {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder", "mutates_workspace": true},
+        {"id": "verify", "title": "独立验证", "goal": "运行确定性检查", "role": "verifier", "depends_on": ["build"]},
+        {"id": "lead", "title": "汇总交付", "goal": "汇总证据并交付", "role": "lead", "depends_on": ["verify"]}
+      ],
+      "script": [
+        {"id": "verify", "attempt": 1, "result": "checks_fail"},
+        {"id": "verify", "attempt": 2, "result": "checks_fail"}
+      ],
+      "expected": {
+        "mission_status": "failed",
+        "attempts": {"build": 2, "verify": 2, "lead": 0},
+        "handoffs": 4,
+        "preserved_failed_checks": true
+      }
+    },
+    {
+      "name": "worker-error-fails-mission",
+      "max_repair_attempts": 2,
+      "work_items": [
+        {"id": "build", "title": "实现改动", "goal": "实现请求的改动", "role": "builder", "mutates_workspace": true},
+        {"id": "verify", "title": "独立验证", "goal": "运行确定性检查", "role": "verifier", "depends_on": ["build"]}
+      ],
+      "script": [
+        {"id": "build", "attempt": 1, "result": "error"}
+      ],
+      "expected": {
+        "mission_status": "failed",
+        "attempts": {"build": 1, "verify": 0},
+        "handoffs": 0
+      }
+    }
+  ]
+}

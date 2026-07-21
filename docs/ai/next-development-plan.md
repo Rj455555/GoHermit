@@ -1,45 +1,44 @@
 # Next development plan
 
-This file starts after the `0.4.0-dev` Live Plan milestone. Session/Run, Owner Profile, the default Personal Agent Team, stable Worker recovery, one-writer policy, Verifier gate, and durable owner-facing checkbox Plan are implemented; do not plan them again.
+This file starts after the `0.5.0-dev` adaptive Plan/Team milestone. Durable event commits, task-specific titles, review-first approval, intent-based Team topology, parallel read-only preflight, and bounded repair/reverify are implemented; do not plan them again.
 
-## P0: task-specific Plan refinement and team evaluation
+## P0: eval-driven Plan refinement
 
-1. Build checked-in deterministic repository fixtures that score Plan fidelity, Handoff quality, edits, review findings, verification, recovery, and final owner summary.
-2. Let Explorer propose bounded task-specific substeps only through a validated structure that maps every substep to one or more real WorkItems; preserve completed IDs/revisions during refinement.
-3. Replace the fixed single repair pass with a bounded review/repair loop driven by structured issue severity and reflected honestly in the Plan.
-4. Use provider token counters consistently, including failed and summary calls, and surface per-role usage in the UI.
-5. Keep one explicit opt-in live smoke that runs a small Codex Team Mission; paid calls stay outside default tests.
+1. ~~Turn `docs/ai/evals/v0.5.md` into checked-in deterministic repository fixtures and graders for Plan fidelity, Handoff quality, recovery, verification, and final owner summary.~~ Done: `internal/evals` plus per-package `eval_test.go` graders; see the grader mapping in `docs/ai/evals/v0.5.md`.
+2. Let Explorer propose bounded task-specific substeps through a strict schema. Every substep must map to a real WorkItem; completed IDs and revisions cannot be rewritten.
+3. Add structured Reviewer issue severity and make repair scheduling depend on actionable findings instead of always running one initial repair pass.
+4. Record provider usage consistently for failed, retry, and summary calls and show per-role usage without exposing prompts.
+5. Keep one opt-in Codex live smoke outside default tests; paid calls remain disabled by default.
 
-Acceptance: a Plan never claims completion before its mapped execution facts; refinement cannot rewrite completed history; a failed Verifier never reaches Lead; raw prompts, private reasoning, and unbounded output remain absent from storage.
+Acceptance: deterministic evals pass three consecutive runs; Plan state never outruns execution facts; recovery never duplicates completed tools or WorkItems.
 
-## P1: per-role model policy
+## P1: personal Team templates and per-role models
 
-1. Add a Team Template editor that chooses one default model plus optional role overrides.
-2. Add provider capability flags and reject unsupported role/model combinations at Session creation.
-3. Specify cost, retry, fallback, and audit semantics before adding ordered provider fallback.
+1. Add a local Team Template editor with a default provider/model and optional role overrides.
+2. Validate provider capabilities and credentials for every selected role before Session creation.
+3. Define cost ceilings, retry ownership, fallback audit events, and failure semantics before implementing provider fallback.
+4. Keep templates in owner-scoped storage outside repositories; export/import must redact credentials.
 
-Acceptance: selection remains server-validated and credential-filtered; Agent Core and team domain remain vendor-neutral.
+Acceptance: unsupported or unconfigured role selections fail before a Run exists; one model failure cannot silently switch vendors.
 
-## P2: interactive approval and Operator
+## P2: scoped tool and Operator approval
 
-1. Define a transport-neutral, scoped, expiring approval request/response contract.
-2. Enable Operator only for explicitly approved deploy, commit, push, or external side effects.
-3. Add crash/restart tests around pending approval and preserve completed-tool replay protection.
+Plan review approval does not authorize side effects. Add a separate transport-neutral, scoped, expiring approval request/response contract for permission-required tools and future Operator work.
 
-Acceptance: unattended mode denies approval-required work; approval cannot bypass workspace, credential, or shell policy.
+Acceptance: unattended mode denies approval-required actions; approvals cannot broaden workspace, credential, shell, or network policy; restart preserves pending approval without replaying a completed call.
 
 ## P3: isolated writer worktrees
 
 Draft an ADR before implementation. Add temporary Git worktrees only after merge ownership, conflict handling, cleanup, recovery, ignored files, submodules, and user changes have deterministic tests. Until then, keep one writer.
 
-## P4: personal background service
+## P4: private background service
 
-After approval semantics are complete, design an optional local daemon, task inbox, schedule, and notifications. It must remain single-owner and local by default, with explicit action scopes and no silent deployment or messaging.
+After scoped approval is complete, design an optional local daemon, task inbox, schedule, and notifications for the single owner. It must remain local by default and cannot silently commit, push, deploy, message, or publish.
 
 ## Explicitly deferred
 
 - Public or multi-user hosting
 - Organization accounts and cloud secret management
-- Unbounded autonomous agent creation or free-form agent chat
-- Automatic commit, push, deploy, or pull-request creation without approval
-- Telemetry or remote control plane
+- Unbounded autonomous Agent creation or free-form Agent chat
+- Automatic commit, push, deploy, messaging, or pull-request creation without scoped approval
+- Telemetry or a remote control plane

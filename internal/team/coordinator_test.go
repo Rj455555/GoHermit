@@ -167,3 +167,35 @@ func TestCoordinatorStopsWhenWorkerResultExceedsBudget(t *testing.T) {
 		t.Fatalf("events=%+v", events)
 	}
 }
+
+type retryVerifierWorker struct {
+	verifyCalls int
+	repairCalls int
+}
+
+func (w *retryVerifierWorker) Execute(_ context.Context, assignment Assignment) (Result, error) {
+	handoff := Handoff{ID: fmt.Sprintf("handoff-%s-%d", assignment.WorkItem.ID, assignment.WorkItem.Attempt), WorkItemID: assignment.WorkItem.ID, Role: assignment.WorkItem.Role, Summary: "done"}
+	if assignment.WorkItem.ID == "repair" {
+		w.repairCalls++
+	}
+	if assignment.WorkItem.Role == RoleVerifier {
+		w.verifyCalls++
+		passed := w.verifyCalls > 1
+		handoff.Checks = []Check{{Command: "go test ./...", Passed: passed, Summary: map[bool]string{true: "passed", false: "failed"}[passed]}}
+	}
+	return Result{Handoff: handoff, ModelCalls: 1, Tokens: 100}, nil
+}
+
+func TestCoordinatorRepairsAndReverifiesWithinBound(t *testing.T) {
+	mission, err := DefaultMission("mission-repair", "run", "build it", DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := &retryVerifierWorker{}
+	if err = (&Coordinator{Worker: worker, MaxRepairAttempts: 3}).Run(context.Background(), mission); err != nil {
+		t.Fatal(err)
+	}
+	if mission.Status != Completed || worker.verifyCalls != 2 || worker.repairCalls != 2 {
+		t.Fatalf("mission=%+v verify=%d repair=%d", mission, worker.verifyCalls, worker.repairCalls)
+	}
+}

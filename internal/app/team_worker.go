@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
@@ -73,13 +74,27 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 	if err != nil {
 		return team.Result{}, err
 	}
+	var relayMu sync.Mutex
+	var relayErr error
 	runtime.Runner.Sink = func(runtimeEvent event.Event) {
-		w.relay(assignment, runtimeEvent)
+		if err := w.relay(assignment, runtimeEvent); err != nil {
+			relayMu.Lock()
+			if relayErr == nil {
+				relayErr = err
+			}
+			relayMu.Unlock()
+		}
 	}
 	if !workerAlreadyCompleted(child) {
 		if err = runtime.Runner.Run(ctx, child); err != nil {
 			return team.Result{}, err
 		}
+	}
+	relayMu.Lock()
+	err = relayErr
+	relayMu.Unlock()
+	if err != nil {
+		return team.Result{}, fmt.Errorf("relay worker event: %w", err)
 	}
 	return workerResult(child, assignment, prompt)
 }
@@ -116,10 +131,10 @@ func workerResult(child *session.Session, assignment team.Assignment, prompt str
 	return team.Result{Handoff: handoff, ModelCalls: max(1, run.ModelCalls), Tokens: tokens}, nil
 }
 
-func (w *TeamWorker) relay(assignment team.Assignment, runtimeEvent event.Event) {
+func (w *TeamWorker) relay(assignment team.Assignment, runtimeEvent event.Event) error {
 	switch runtimeEvent.Type {
 	case event.TaskStarted, event.TaskCompleted, event.TaskFailed, event.TaskCancelled, event.RunInterrupted, event.ModelDelta, event.PlanCreated, event.PlanUpdated:
-		return
+		return nil
 	}
 	runtimeEvent.SessionID = w.ParentSessionID
 	runtimeEvent.RunID = w.ParentRunID
@@ -127,12 +142,20 @@ func (w *TeamWorker) relay(assignment team.Assignment, runtimeEvent event.Event)
 	runtimeEvent.WorkItemID = assignment.WorkItem.ID
 	runtimeEvent.AgentID = string(assignment.WorkItem.Role)
 	runtimeEvent.Sequence = 0
+	if runtimeEvent.Type == event.ToolStarted {
+		runtimeEvent.Data = nil
+	}
 	if w.ParentStore != nil {
-		runtimeEvent = w.ParentStore.BufferEvent(w.ParentSessionID, runtimeEvent)
+		var err error
+		runtimeEvent, err = w.ParentStore.CommitDetachedEvent(context.Background(), w.ParentSessionID, runtimeEvent)
+		if err != nil {
+			return err
+		}
 	}
 	if w.Sink != nil {
 		w.Sink(runtimeEvent)
 	}
+	return nil
 }
 
 func profileForRole(role team.Role) string {

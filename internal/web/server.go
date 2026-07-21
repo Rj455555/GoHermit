@@ -22,6 +22,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/owner"
+	"github.com/Rj455555/GoHermit/internal/runcontrol"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
@@ -108,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.sessionEvents)
 	mux.HandleFunc("POST /api/sessions/{id}/runs/{run}/cancel", s.cancelSessionRun)
 	mux.HandleFunc("POST /api/sessions/{id}/runs/{run}/resume", s.resumeSessionRun)
+	mux.HandleFunc("POST /api/sessions/{id}/runs/{run}/approve", s.approveSessionRun)
 	mux.HandleFunc("PUT /api/settings/providers/{provider}/api-key", s.saveAPIKey)
 	mux.HandleFunc("DELETE /api/settings/providers/{provider}/credentials", s.deleteCredentials)
 	mux.HandleFunc("POST /api/settings/providers/openai-codex/login", s.startCodexLogin)
@@ -409,11 +411,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Title   string `json:"title"`
-		Company string `json:"company"`
-		Access  string `json:"access"`
-		Model   string `json:"model"`
-		Agent   string `json:"agent"`
+		Title    string `json:"title"`
+		Company  string `json:"company"`
+		Access   string `json:"access"`
+		Model    string `json:"model"`
+		Agent    string `json:"agent"`
+		PlanMode string `json:"plan_mode"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
 	decoder.DisallowUnknownFields()
@@ -422,6 +425,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	selection := config.RuntimeSelection{Company: request.Company, Access: request.Access, Model: request.Model, Agent: request.Agent}
+	planMode, err := session.NormalizePlanMode(request.PlanMode)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
 	liveModels, err := s.validateSelection(r.Context(), selection)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -448,6 +456,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	sess.PlanMode = planMode
 	sess.GitState = session.GitState(r.Context(), runtime.Workspace)
 	if err := s.store.Save(r.Context(), sess); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -543,6 +552,42 @@ func (s *Server) resumeSessionRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": sess.ID, "run_id": runID})
 }
 
+func (s *Server) approveSessionRun(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	run := sess.ActiveRun()
+	if run == nil || run.ID != r.PathValue("run") || run.Status != session.RunQueued || run.PlanMode != session.PlanReview || run.Plan == nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "run has no review plan awaiting approval"})
+		return
+	}
+	if !run.PlanApproved {
+		now := time.Now().UTC()
+		run.PlanApproved, run.PlanApprovedAt, run.UpdatedAt = true, &now, now
+		approved := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, "", "计划已批准，准备执行")
+		if _, err = s.commitAndPublish(sess, approved); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	runID, err := s.launchSessionRun(sess, "")
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errRunActive) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": sess.ID, "run_id": runID})
+}
+
 var errRunActive = errors.New("another run is already active in this workspace")
 
 func (s *Server) launchSessionRun(sess *session.Session, message string) (string, error) {
@@ -583,7 +628,7 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 		return "", errors.New("session has no active run")
 	}
 	if selection.Agent == "team" && (sess.Mission == nil || sess.Mission.RunID != run.ID) {
-		mission, missionErr := team.DefaultMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget())
+		mission, missionErr := team.AdaptiveMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget())
 		if missionErr != nil {
 			s.active.Store(false)
 			s.runMu.Unlock()
@@ -593,24 +638,40 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 	}
 	var createdPlanEvent event.Event
 	if run.Plan == nil {
-		var planErr error
 		if selection.Agent == "team" {
-			run.Plan, planErr = taskplan.DefaultTeam(run.ID)
+			run.Plan, err = planForMission(run.ID, sess.Mission)
 		} else {
-			run.Plan, planErr = taskplan.DefaultSingle(run.ID)
+			run.Plan, err = taskplan.ForGoal(run.ID, run.Message, selection.Agent)
 		}
-		if planErr != nil {
+		if err != nil {
 			s.active.Store(false)
 			s.runMu.Unlock()
-			return "", planErr
+			return "", err
 		}
-		createdPlanEvent = s.planRuntimeEvent(sess.ID, run, event.PlanCreated, "", "执行计划已创建")
-		createdPlanEvent = s.store.BufferEvent(sess.ID, createdPlanEvent)
+		message := "执行计划已创建"
+		if run.PlanMode == session.PlanReview && !run.PlanApproved {
+			message = "执行计划已创建，等待确认"
+		}
+		createdPlanEvent = s.planRuntimeEvent(sess.ID, run, event.PlanCreated, "", message)
 	}
-	if err = s.store.Save(context.Background(), sess); err != nil {
+	if createdPlanEvent.Type != "" {
+		createdPlanEvent, err = s.store.CommitEvent(context.Background(), sess, createdPlanEvent)
+	} else {
+		err = s.store.Save(context.Background(), sess)
+	}
+	if err != nil {
 		s.active.Store(false)
 		s.runMu.Unlock()
 		return "", err
+	}
+	if run.PlanMode == session.PlanReview && !run.PlanApproved {
+		runID := run.ID
+		s.active.Store(false)
+		s.runMu.Unlock()
+		if createdPlanEvent.Type != "" {
+			s.publish(createdPlanEvent)
+		}
+		return runID, nil
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.activeSession, s.activeRun, s.cancelRun = sess.ID, run.ID, cancel
@@ -646,6 +707,17 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 	return runID, nil
 }
 
+func planForMission(runID string, mission *team.Mission) (*taskplan.Plan, error) {
+	if mission == nil || len(mission.WorkItems) == 0 {
+		return nil, errors.New("team mission is required before creating its plan")
+	}
+	specs := make([]taskplan.StepSpec, 0, len(mission.WorkItems))
+	for _, item := range mission.WorkItems {
+		specs = append(specs, taskplan.StepSpec{ID: item.ID, Title: item.Title})
+	}
+	return taskplan.NewParallel("plan-"+runID, specs)
+}
+
 func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID string, selection config.RuntimeSelection, apiKey string, liveModels []config.ModelOption) {
 	run := sess.ActiveRun()
 	if run == nil || run.ID != runID || sess.Mission == nil {
@@ -656,8 +728,10 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 	run.Status, run.UpdatedAt = session.RunRunning, now
 	started := event.New(event.TaskStarted, sess.ID)
 	started.RunID, started.MissionID, started.AgentID = runID, sess.Mission.ID, string(team.RoleLead)
-	started = s.store.BufferEvent(sess.ID, started)
-	s.publish(started)
+	if _, err := s.commitAndPublish(sess, started); err != nil {
+		s.failLaunchedRun(sess, runID, err)
+		return
+	}
 	profile, _ := s.owner.Load()
 	var worker team.Worker = &app.TeamWorker{
 		Workspace: s.Workspace, ConfigPath: s.ConfigPath, Selection: selection, APIKey: apiKey, Models: liveModels,
@@ -666,22 +740,33 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 	if s.teamWorker != nil {
 		worker = s.teamWorker
 	}
+	var sinkErr error
 	coordinator := &team.Coordinator{
 		Worker: worker,
 		Sink: func(teamEvent team.TeamEvent) {
+			if sinkErr != nil {
+				return
+			}
 			runtimeEvent := event.New(teamEventType(teamEvent.Type), sess.ID)
 			runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.WorkItemID = runID, sess.Mission.ID, teamEvent.WorkItemID
 			runtimeEvent.AgentID, runtimeEvent.Message = string(teamEvent.Role), teamEvent.Message
-			runtimeEvent = s.store.BufferEvent(sess.ID, runtimeEvent)
-			s.publish(runtimeEvent)
-			if changed, stepID, detail := syncTeamPlan(run.Plan, teamEvent, sess.Mission); changed {
-				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, stepID, detail)
-				planEvent.MissionID = sess.Mission.ID
-				planEvent = s.store.BufferEvent(sess.ID, planEvent)
-				s.publish(planEvent)
+			runtimeEvents := []event.Event{runtimeEvent}
+			transition, transitionErr := runcontrol.ApplyTeamEvent(run.Plan, teamEvent, sess.Mission)
+			if transitionErr != nil {
+				sinkErr = transitionErr
+				return
 			}
+			if transition.Changed {
+				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, transition.Detail)
+				planEvent.MissionID = sess.Mission.ID
+				runtimeEvents = append(runtimeEvents, planEvent)
+			}
+			_, sinkErr = s.commitAndPublishMany(sess, runtimeEvents)
 		},
 		Checkpoint: func(mission *team.Mission) error {
+			if sinkErr != nil {
+				return sinkErr
+			}
 			sess.Mission = mission
 			if active := sess.ActiveRun(); active != nil && active.ID == runID {
 				active.ModelCalls = mission.Usage.ModelCalls
@@ -724,35 +809,34 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 	_ = s.store.AppendMessage(sess.ID, session.MessageRecord{RunID: runID, Role: "assistant", Content: final.Summary})
 	completed := event.New(event.TaskCompleted, sess.ID)
 	completed.RunID, completed.MissionID, completed.AgentID, completed.Message = runID, sess.Mission.ID, string(team.RoleLead), final.Summary
-	completed = s.store.BufferEvent(sess.ID, completed)
-	_ = s.store.Save(context.Background(), sess)
-	s.publish(completed)
+	if _, err := s.commitAndPublish(sess, completed); err != nil {
+		sess.LastError = err.Error()
+	}
 }
 
 func (s *Server) finishTeamCancelled(sess *session.Session, run *session.Run, cause error) {
 	now := time.Now().UTC()
 	status, eventType := session.RunCancelled, event.TaskCancelled
+	var runtimeEvents []event.Event
 	if errors.Is(cause, context.DeadlineExceeded) {
 		status, eventType = session.RunInterrupted, event.RunInterrupted
 		if sess.Mission != nil && sess.Mission.Status != team.Interrupted {
 			sess.Mission.Interrupt(cause.Error())
 		}
 		if run.Plan != nil && run.Plan.Current() != nil {
-			if changed, noteErr := run.Plan.Note(run.Plan.Current().ID, "运行已中断，可从当前步骤恢复"); noteErr == nil && changed {
-				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, run.Plan.Current().ID, "运行已中断，可恢复")
+			if transition, noteErr := runcontrol.Interrupt(run.Plan, "运行已中断，可从当前步骤恢复"); noteErr == nil && transition.Changed {
+				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, "运行已中断，可恢复")
 				planEvent.MissionID = sess.Mission.ID
-				planEvent = s.store.BufferEvent(sess.ID, planEvent)
-				s.publish(planEvent)
+				runtimeEvents = append(runtimeEvents, planEvent)
 			}
 		}
 	} else if sess.Mission != nil {
 		sess.Mission.Cancel(cause.Error())
 		if run.Plan != nil {
-			if changed, stepID := run.Plan.Cancel("任务已由用户停止"); changed {
-				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, stepID, "任务已停止")
+			if transition, cancelErr := runcontrol.Cancel(run.Plan, "任务已由用户停止"); cancelErr == nil && transition.Changed {
+				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, "任务已停止")
 				planEvent.MissionID = sess.Mission.ID
-				planEvent = s.store.BufferEvent(sess.ID, planEvent)
-				s.publish(planEvent)
+				runtimeEvents = append(runtimeEvents, planEvent)
 			}
 		}
 	}
@@ -768,9 +852,10 @@ func (s *Server) finishTeamCancelled(sess *session.Session, run *session.Run, ca
 	}
 	runtimeEvent := event.New(eventType, sess.ID)
 	runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.Error = run.ID, sess.Mission.ID, cause.Error()
-	runtimeEvent = s.store.BufferEvent(sess.ID, runtimeEvent)
-	_ = s.store.Save(context.Background(), sess)
-	s.publish(runtimeEvent)
+	runtimeEvents = append(runtimeEvents, runtimeEvent)
+	if _, err := s.commitAndPublishMany(sess, runtimeEvents); err != nil {
+		sess.LastError = err.Error()
+	}
 }
 
 func teamEventType(value team.TeamEventType) event.Type {
@@ -797,59 +882,6 @@ func (s *Server) planRuntimeEvent(sessionID string, run *session.Run, eventType 
 	runtimeEvent.RunID, runtimeEvent.PlanStepID, runtimeEvent.Message = run.ID, stepID, message
 	runtimeEvent.Data, _ = json.Marshal(map[string]any{"plan": run.Plan})
 	return runtimeEvent
-}
-
-func syncTeamPlan(plan *taskplan.Plan, teamEvent team.TeamEvent, mission *team.Mission) (bool, string, string) {
-	if plan == nil || plan.Status != taskplan.Active {
-		return false, "", ""
-	}
-	stepID, detail := teamEvent.WorkItemID, teamEvent.Message
-	var changed bool
-	var err error
-	switch teamEvent.Type {
-	case team.WorkItemStarted:
-		changed, err = plan.Start(stepID, detail)
-	case team.WorkItemDone:
-		if teamEvent.Role == team.RoleVerifier && !verifierHandoffPassed(mission, stepID) {
-			detail = "独立验证未通过"
-			changed, err = plan.Fail(stepID, detail)
-		} else {
-			changed, err = plan.Complete(stepID, detail)
-		}
-	case team.WorkItemFailed:
-		changed, err = plan.Fail(stepID, detail)
-	case team.MissionFailed:
-		if stepID == "" {
-			if current := plan.Current(); current != nil {
-				stepID = current.ID
-			} else if next := plan.NextPending(); next != nil {
-				stepID = next.ID
-			}
-		}
-		if stepID != "" {
-			changed, err = plan.Fail(stepID, detail)
-		}
-	}
-	return err == nil && changed, stepID, detail
-}
-
-func verifierHandoffPassed(mission *team.Mission, workItemID string) bool {
-	if mission == nil {
-		return false
-	}
-	for i := len(mission.Handoffs) - 1; i >= 0; i-- {
-		handoff := mission.Handoffs[i]
-		if handoff.WorkItemID != workItemID || handoff.Role != team.RoleVerifier || len(handoff.Checks) == 0 {
-			continue
-		}
-		for _, check := range handoff.Checks {
-			if !check.Passed {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
 
 func finalTeamHandoff(mission *team.Mission) team.Handoff {
@@ -917,6 +949,7 @@ func (s *Server) validateSelection(ctx context.Context, selection config.Runtime
 
 func (s *Server) failLaunchedRun(sess *session.Session, runID string, cause error) {
 	if run := sess.ActiveRun(); run != nil && run.ID == runID {
+		var runtimeEvents []event.Event
 		if run.Plan != nil && run.Plan.Status == taskplan.Active {
 			step := run.Plan.Current()
 			if step == nil {
@@ -925,8 +958,7 @@ func (s *Server) failLaunchedRun(sess *session.Session, runID string, cause erro
 			if step != nil {
 				if changed, planErr := run.Plan.Fail(step.ID, cause.Error()); planErr == nil && changed {
 					planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, step.ID, cause.Error())
-					planEvent = s.store.BufferEvent(sess.ID, planEvent)
-					s.publish(planEvent)
+					runtimeEvents = append(runtimeEvents, planEvent)
 				}
 			}
 		}
@@ -940,9 +972,10 @@ func (s *Server) failLaunchedRun(sess *session.Session, runID string, cause erro
 		e := event.New(event.TaskFailed, sess.ID)
 		e.RunID = runID
 		e.Error = cause.Error()
-		e = s.store.BufferEvent(sess.ID, e)
-		_ = s.store.Save(context.Background(), sess)
-		s.publish(e)
+		runtimeEvents = append(runtimeEvents, e)
+		if _, err := s.commitAndPublishMany(sess, runtimeEvents); err != nil {
+			sess.LastError = err.Error()
+		}
 	}
 }
 
@@ -953,6 +986,33 @@ func (s *Server) cancelSessionRun(w http.ResponseWriter, r *http.Request) {
 	}
 	s.runMu.Lock()
 	if s.activeSession != r.PathValue("id") || s.activeRun != r.PathValue("run") || s.cancelRun == nil {
+		sess, loadErr := s.store.Load(r.Context(), r.PathValue("id"))
+		if loadErr == nil {
+			run := sess.ActiveRun()
+			if run != nil && run.ID == r.PathValue("run") && run.Status == session.RunQueued && run.PlanMode == session.PlanReview && !run.PlanApproved {
+				transition, cancelErr := runcontrol.Cancel(run.Plan, "计划未执行，已由用户停止")
+				if cancelErr == nil {
+					now := time.Now().UTC()
+					run.Status, run.CompletedAt, run.UpdatedAt = session.RunCancelled, &now, now
+					sess.ActiveRunID = ""
+					runtimeEvents := make([]event.Event, 0, 2)
+					if transition.Changed {
+						runtimeEvents = append(runtimeEvents, s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, transition.Detail))
+					}
+					cancelled := event.New(event.TaskCancelled, sess.ID)
+					cancelled.RunID, cancelled.Message = run.ID, "计划已停止"
+					runtimeEvents = append(runtimeEvents, cancelled)
+					_, cancelErr = s.commitAndPublishMany(sess, runtimeEvents)
+				}
+				s.runMu.Unlock()
+				if cancelErr != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": cancelErr.Error()})
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]any{"status": "cancelling"})
+				return
+			}
+		}
 		s.runMu.Unlock()
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not active"})
 		return
@@ -1054,6 +1114,25 @@ func (s *Server) publish(e event.Event) {
 		default:
 		}
 	}
+}
+
+func (s *Server) commitAndPublish(sess *session.Session, runtimeEvent event.Event) (event.Event, error) {
+	committed, err := s.commitAndPublishMany(sess, []event.Event{runtimeEvent})
+	if err != nil {
+		return event.Event{}, err
+	}
+	return committed[0], nil
+}
+
+func (s *Server) commitAndPublishMany(sess *session.Session, runtimeEvents []event.Event) ([]event.Event, error) {
+	committed, err := s.store.CommitEvents(context.Background(), sess, runtimeEvents)
+	if err != nil {
+		return nil, err
+	}
+	for _, runtimeEvent := range committed {
+		s.publish(runtimeEvent)
+	}
+	return committed, nil
 }
 
 func (s *Server) resolveCredential(ctx context.Context, selection config.RuntimeSelection) (string, error) {

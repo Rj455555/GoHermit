@@ -5,7 +5,8 @@ profile = "coding"
 
 [model]
 # Presets: codex (Responses), openai (Responses), deepseek, qwen,
-# openai-chat, or openai-compatible. Explicit values override a preset.
+# alibaba-coding-plan, kimi-coding-plan, openai-chat, or openai-compatible.
+# Explicit values override a preset.
 provider = "openai-compatible"
 base_url = "https://api.openai.com/v1"
 model = ""

@@ -1,0 +1,12 @@
+{
+  "name": "gohermit-web-e2e",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}

@@ -1,6 +1,9 @@
 package taskplan
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPlanTracksSingleCurrentStepAndCompletion(t *testing.T) {
 	plan, err := DefaultSingle("run-1")
@@ -87,5 +90,64 @@ func TestValidateRejectsUnknownAndLogicallyCompleteActivePlan(t *testing.T) {
 	plan.Steps[0].Status = StepDone
 	if err := Validate(plan); err == nil {
 		t.Fatal("expected active all-completed plan rejection")
+	}
+}
+
+func TestForGoalBuildsBoundedTaskSpecificPlans(t *testing.T) {
+	goal := "修复 Codex 登录后没有流式输出，并增加断线恢复"
+	for _, agent := range []string{"coding", "team"} {
+		plan, err := ForGoal("run-1", goal, agent)
+		if err != nil {
+			t.Fatalf("agent=%s err=%v", agent, err)
+		}
+		if err = Validate(plan); err != nil {
+			t.Fatalf("agent=%s invalid plan: %v", agent, err)
+		}
+		joined := ""
+		for _, step := range plan.Steps {
+			joined += step.Title
+			if len(step.Title) > MaxTitleBytes || strings.Contains(step.Title, "\n") {
+				t.Fatalf("unbounded plan title: %q", step.Title)
+			}
+		}
+		if !strings.Contains(joined, "Codex 登录") {
+			t.Fatalf("plan is not task-specific: %+v", plan.Steps)
+		}
+	}
+}
+
+func TestParallelPlanCanTrackConcurrentStepsAndReopenVerification(t *testing.T) {
+	plan, err := NewParallel("plan-team", []StepSpec{
+		{ID: "inspect-code", Title: "Inspect code"},
+		{ID: "inspect-tests", Title: "Inspect tests"},
+		{ID: "repair", Title: "Repair"},
+		{ID: "verify", Title: "Verify"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = plan.Start("inspect-code", "running"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = plan.Start("inspect-tests", "running"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"inspect-code", "inspect-tests", "repair", "verify"} {
+		if plan.step(id).Status == Pending {
+			_, _ = plan.Start(id, "running")
+		}
+		if _, err = plan.Complete(id, "done"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if plan.Status != Completed {
+		t.Fatalf("plan=%+v", plan)
+	}
+	changed, err := plan.Reopen([]string{"repair", "verify"}, "verification failed")
+	if err != nil || !changed || plan.Status != Active || plan.step("repair").Status != Pending || plan.step("verify").Status != Pending {
+		t.Fatalf("plan=%+v changed=%v err=%v", plan, changed, err)
+	}
+	if err = Validate(plan); err != nil {
+		t.Fatal(err)
 	}
 }

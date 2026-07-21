@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.8
+          cache: true
+      - run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go vet ./...
+      - name: Build CLI and Web
+        run: go build ./cmd/hermit ./cmd/hermit-web
+      - name: Cross-platform builds
+        env:
+          CGO_ENABLED: 0
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o dist/linux/hermit ./cmd/hermit
+          GOOS=linux GOARCH=amd64 go build -o dist/linux/hermit-web ./cmd/hermit-web
+          GOOS=windows GOARCH=amd64 go build -o dist/windows/hermit.exe ./cmd/hermit
+          GOOS=windows GOARCH=amd64 go build -o dist/windows/hermit-web.exe ./cmd/hermit-web
+          GOOS=darwin GOARCH=arm64 go build -o dist/darwin/hermit ./cmd/hermit
+          GOOS=darwin GOARCH=arm64 go build -o dist/darwin/hermit-web ./cmd/hermit-web
+
+  web-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config
+      - run: docker build -t gohermit:ci .
