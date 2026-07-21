@@ -264,8 +264,16 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 	}
 	var batchErr error
 	for outcome := range results {
-		mission.Usage.ModelCalls += max(0, outcome.result.ModelCalls)
-		mission.Usage.Tokens += max(0, outcome.result.Tokens)
+		calls, tokens := max(0, outcome.result.ModelCalls), max(0, outcome.result.Tokens)
+		mission.Usage.ModelCalls += calls
+		mission.Usage.Tokens += tokens
+		if mission.UsageByRole == nil {
+			mission.UsageByRole = make(map[Role]Usage)
+		}
+		roleUsage := mission.UsageByRole[outcome.role]
+		roleUsage.ModelCalls += calls
+		roleUsage.Tokens += tokens
+		mission.UsageByRole[outcome.role] = roleUsage
 		if batchErr != nil {
 			continue
 		}

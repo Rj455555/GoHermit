@@ -147,6 +147,9 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 			if err == nil {
 				err = p.protectReasoning(&result.Message)
 			}
+			if err == nil {
+				result.Attempts = attempt + 1
+			}
 			return result, err
 		}
 		last = err
@@ -154,6 +157,10 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 		if !errors.As(err, &pe) || !pe.Retryable {
 			return GenerateResponse{}, err
 		}
+	}
+	var pe *ProviderError
+	if errors.As(last, &pe) {
+		pe.Attempts = p.maxRetries + 1
 	}
 	return GenerateResponse{}, last
 }

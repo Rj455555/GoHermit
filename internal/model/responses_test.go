@@ -3,10 +3,12 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -147,4 +149,68 @@ func bytesJoin(values []json.RawMessage) []byte {
 		out = append(out, value...)
 	}
 	return out
+}
+
+func responsesRetryProviderFor(t *testing.T, h http.HandlerFunc, retries int) *ResponsesProvider {
+	t.Helper()
+	server := httptest.NewServer(h)
+	t.Cleanup(server.Close)
+	provider, err := NewResponsesProvider(ResponsesConfig{BaseURL: server.URL, APIKey: "secret", Timeout: time.Second, MaxRetries: retries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return provider
+}
+
+func TestResponsesCountsAttemptsAcrossRetries(t *testing.T) {
+	var calls atomic.Int32
+	provider := responsesRetryProviderFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) <= 2 {
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		fmt.Fprint(w, `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}`)
+	}, 3)
+	response, err := provider.Generate(context.Background(), GenerateRequest{Model: "gpt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Attempts != 3 || response.Usage.TotalTokens != 7 {
+		t.Fatalf("attempts=%d usage=%+v", response.Attempts, response.Usage)
+	}
+}
+
+func TestResponsesAllAttemptsFailReportsAttempts(t *testing.T) {
+	var calls atomic.Int32
+	provider := responsesRetryProviderFor(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, "down", http.StatusInternalServerError)
+	}, 2)
+	_, err := provider.Generate(context.Background(), GenerateRequest{Model: "gpt"})
+	var pe *ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err=%v", err)
+	}
+	if pe.Attempts != 3 || calls.Load() != 3 {
+		t.Fatalf("attempts=%d calls=%d", pe.Attempts, calls.Load())
+	}
+}
+
+func TestResponsesStreamingCountsAttempts(t *testing.T) {
+	var calls atomic.Int32
+	provider := responsesRetryProviderFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}}\n\n")
+	}, 1)
+	response, err := provider.Generate(context.Background(), GenerateRequest{Model: "gpt", Stream: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Attempts != 2 || response.Message.Content != "ok" {
+		t.Fatalf("attempts=%d response=%+v", response.Attempts, response)
+	}
 }

@@ -128,16 +128,26 @@ func (p *ResponsesProvider) Generate(ctx context.Context, req GenerateRequest) (
 		}
 		resp, requestErr := p.do(ctx, payload)
 		if requestErr == nil {
+			var result GenerateResponse
 			if req.Stream {
-				return p.readStream(resp.Body, req.OnStream, body.toolNames)
+				result, err = p.readStream(resp.Body, req.OnStream, body.toolNames)
+			} else {
+				result, err = p.readJSON(resp.Body, body.toolNames)
 			}
-			return p.readJSON(resp.Body, body.toolNames)
+			if err == nil {
+				result.Attempts = attempt + 1
+			}
+			return result, err
 		}
 		last = requestErr
 		var pe *ProviderError
 		if !errors.As(requestErr, &pe) || !pe.Retryable {
 			return GenerateResponse{}, requestErr
 		}
+	}
+	var pe *ProviderError
+	if errors.As(last, &pe) {
+		pe.Attempts = p.maxRetries + 1
 	}
 	return GenerateResponse{}, last
 }
