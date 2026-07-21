@@ -273,3 +273,40 @@ func TestMutationRequiresSuccessfulTestBeforeCompletion(t *testing.T) {
 		t.Fatalf("run=%+v", s.Runs)
 	}
 }
+
+func TestFailedModelCallCountsProviderAttempts(t *testing.T) {
+	p := &scriptedProvider{fn: func(n int, r model.GenerateRequest) (model.GenerateResponse, error) {
+		return model.GenerateResponse{}, &model.ProviderError{Kind: model.ErrorUnavailable, Status: 500, Retryable: false, Attempts: 2, Message: "down"}
+	}}
+	runner, s := newRunner(t, p, 3, time.Second, agentTool{})
+	err := runner.Run(context.Background(), s)
+	if err == nil || len(s.Runs) != 1 || s.Runs[0].Status != session.RunFailed {
+		t.Fatalf("err=%v runs=%+v", err, s.Runs)
+	}
+	if s.Runs[0].ModelCalls != 2 || s.Runs[0].TotalTokens != 0 {
+		t.Fatalf("failed attempts must count without fabricated tokens: run=%+v", s.Runs[0])
+	}
+}
+
+func TestRetriedAndFailedCompressCallsAreCounted(t *testing.T) {
+	p := &scriptedProvider{fn: func(n int, r model.GenerateRequest) (model.GenerateResponse, error) {
+		if n == 0 {
+			return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: "done"}, FinishReason: "stop", Usage: model.Usage{TotalTokens: 15}, Attempts: 2}, nil
+		}
+		return model.GenerateResponse{}, &model.ProviderError{Kind: model.ErrorRateLimit, Status: 429, Retryable: false, Attempts: 2, Message: "slow down"}
+	}}
+	runner, s := newRunner(t, p, 3, time.Second, agentTool{})
+	if err := runner.Run(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	run := s.Runs[0]
+	if run.Status != session.RunCompleted {
+		t.Fatalf("run=%+v", run)
+	}
+	if run.ModelCalls != 4 || run.TotalTokens != 15 {
+		t.Fatalf("retried success and failed compress must count: run=%+v", run)
+	}
+	if strings.TrimSpace(s.Summary) == "" {
+		t.Fatal("deterministic summary fallback did not run after compress failure")
+	}
+}

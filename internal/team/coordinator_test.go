@@ -199,3 +199,67 @@ func TestCoordinatorRepairsAndReverifiesWithinBound(t *testing.T) {
 		t.Fatalf("mission=%+v verify=%d repair=%d", mission, worker.verifyCalls, worker.repairCalls)
 	}
 }
+
+func TestCoordinatorAggregatesUsageByRole(t *testing.T) {
+	mission, err := DefaultMission("mission-usage", "run-usage", "build it", DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = (&Coordinator{Worker: &fakeWorker{}}).Run(context.Background(), mission); err != nil {
+		t.Fatal(err)
+	}
+	if mission.Usage != (Usage{ModelCalls: 6, Tokens: 600}) {
+		t.Fatalf("usage=%+v", mission.Usage)
+	}
+	want := map[Role]Usage{
+		RoleExplorer: {ModelCalls: 1, Tokens: 100},
+		RoleBuilder:  {ModelCalls: 2, Tokens: 200},
+		RoleReviewer: {ModelCalls: 1, Tokens: 100},
+		RoleVerifier: {ModelCalls: 1, Tokens: 100},
+		RoleLead:     {ModelCalls: 1, Tokens: 100},
+	}
+	if len(mission.UsageByRole) != len(want) {
+		t.Fatalf("usage_by_role=%+v", mission.UsageByRole)
+	}
+	for role, usage := range want {
+		if mission.UsageByRole[role] != usage {
+			t.Fatalf("role %s usage=%+v want %+v (all=%+v)", role, mission.UsageByRole[role], usage, mission.UsageByRole)
+		}
+	}
+}
+
+type partialUsageWorker struct{}
+
+func (partialUsageWorker) Execute(_ context.Context, assignment Assignment) (Result, error) {
+	if assignment.WorkItem.ID == "explore" {
+		return Result{
+			Handoff:    Handoff{ID: "handoff-explore", WorkItemID: "explore", Role: assignment.WorkItem.Role, Summary: "done"},
+			ModelCalls: 2,
+			Tokens:     200,
+		}, nil
+	}
+	return Result{ModelCalls: 3, Tokens: 150}, fmt.Errorf("worker failed after retries")
+}
+
+func TestCoordinatorCountsRetriedAndFailedCallsPerRole(t *testing.T) {
+	mission, _ := NewMission("mission-partial", "run", "goal", DefaultBudget())
+	if err := mission.AddWork(WorkItem{ID: "explore", Title: "Explore", Goal: "inspect", Role: RoleExplorer}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mission.AddWork(WorkItem{ID: "review", Title: "Review", Goal: "review", Role: RoleReviewer}); err != nil {
+		t.Fatal(err)
+	}
+	err := (&Coordinator{Worker: partialUsageWorker{}, MaxParallel: 2}).Run(context.Background(), mission)
+	if err == nil || mission.Status != Failed {
+		t.Fatalf("status=%s err=%v", mission.Status, err)
+	}
+	if mission.Usage != (Usage{ModelCalls: 5, Tokens: 350}) {
+		t.Fatalf("usage=%+v", mission.Usage)
+	}
+	if got := mission.UsageByRole[RoleExplorer]; got != (Usage{ModelCalls: 2, Tokens: 200}) {
+		t.Fatalf("explorer usage=%+v", got)
+	}
+	if got := mission.UsageByRole[RoleReviewer]; got != (Usage{ModelCalls: 3, Tokens: 150}) {
+		t.Fatalf("failed reviewer usage=%+v", got)
+	}
+}

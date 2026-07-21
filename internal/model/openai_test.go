@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -235,5 +236,59 @@ func TestReasoningContentIsEncryptedAtRestAndReplayed(t *testing.T) {
 	}
 	if _, err = p.Generate(context.Background(), GenerateRequest{Model: "test", Messages: []Message{first.Message}}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGenerateCountsAttemptsAcrossRetries(t *testing.T) {
+	var calls atomic.Int32
+	p := providerFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) <= 2 {
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"total_tokens":7}}`)
+	}, 3)
+	r, err := p.Generate(context.Background(), GenerateRequest{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Attempts != 3 || r.Usage.TotalTokens != 7 {
+		t.Fatalf("attempts=%d usage=%+v", r.Attempts, r.Usage)
+	}
+}
+
+func TestGenerateAllAttemptsFailReportsAttempts(t *testing.T) {
+	var calls atomic.Int32
+	p := providerFor(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, "down", http.StatusInternalServerError)
+	}, 2)
+	_, err := p.Generate(context.Background(), GenerateRequest{Model: "test"})
+	var pe *ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err=%v", err)
+	}
+	if pe.Attempts != 3 || calls.Load() != 3 {
+		t.Fatalf("attempts=%d calls=%d", pe.Attempts, calls.Load())
+	}
+}
+
+func TestGenerateStreamingCountsAttempts(t *testing.T) {
+	var calls atomic.Int32
+	p := providerFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}, 1)
+	r, err := p.Generate(context.Background(), GenerateRequest{Model: "test", Stream: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Attempts != 2 || r.Message.Content != "ok" {
+		t.Fatalf("attempts=%d response=%+v", r.Attempts, r)
 	}
 }

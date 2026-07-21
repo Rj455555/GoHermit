@@ -150,10 +150,11 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			if runCtx.Err() != nil {
 				return r.stop(runCtx, s, runCtx.Err())
 			}
+			active.ModelCalls += modelAttempts(err)
 			s.LastError = err.Error()
 			return r.fail(runCtx, s, "model request failed", err)
 		}
-		active.ModelCalls++
+		active.ModelCalls += max(1, response.Attempts)
 		active.PromptTokens += response.Usage.PromptTokens
 		active.CompletionTokens += response.Usage.CompletionTokens
 		active.TotalTokens += response.Usage.TotalTokens
@@ -295,6 +296,16 @@ func appendBoundedTool(records []session.ToolRecord, r session.ToolRecord, max i
 	return records
 }
 
+// modelAttempts reports how many provider attempts a failed Generate made;
+// errors without an explicit attempt count are a single attempt.
+func modelAttempts(err error) int {
+	var pe *model.ProviderError
+	if errors.As(err, &pe) {
+		return max(1, pe.Attempts)
+	}
+	return 1
+}
+
 func (r *Runner) runState(s *session.Session, run *session.Run) string {
 	return fmt.Sprintf("Run %s is %s. Turn %d. Last mutation turn: %d. Last verified turn: %d. Pending work: %s", run.ID, run.Status, s.Turns, run.LastMutationTurn, run.LastVerificationTurn, strings.Join(s.PendingSteps, "; "))
 }
@@ -307,10 +318,11 @@ func (r *Runner) compress(ctx context.Context, s *session.Session, run *session.
 	}
 	response, err := r.Provider.Generate(ctx, model.GenerateRequest{Model: r.Config.Model, Messages: request, Stream: false})
 	if err != nil {
+		run.ModelCalls += modelAttempts(err)
 		s.Summary = deterministic
 		return
 	}
-	run.ModelCalls++
+	run.ModelCalls += max(1, response.Attempts)
 	run.PromptTokens += response.Usage.PromptTokens
 	run.CompletionTokens += response.Usage.CompletionTokens
 	run.TotalTokens += response.Usage.TotalTokens

@@ -112,18 +112,21 @@ type Handoff struct {
 }
 
 type Mission struct {
-	ID        string     `json:"id"`
-	RunID     string     `json:"run_id"`
-	Goal      string     `json:"goal"`
-	Template  string     `json:"template"`
-	Status    Status     `json:"status"`
-	Budget    Budget     `json:"budget"`
-	Usage     Usage      `json:"usage"`
-	WorkItems []WorkItem `json:"work_items"`
-	Handoffs  []Handoff  `json:"handoffs"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	Error     string     `json:"error,omitempty"`
+	ID       string `json:"id"`
+	RunID    string `json:"run_id"`
+	Goal     string `json:"goal"`
+	Template string `json:"template"`
+	Status   Status `json:"status"`
+	Budget   Budget `json:"budget"`
+	Usage    Usage  `json:"usage"`
+	// UsageByRole aggregates Usage per role across every outcome, including
+	// failed and retried calls. Values are counts only, never prompt text.
+	UsageByRole map[Role]Usage `json:"usage_by_role,omitempty"`
+	WorkItems   []WorkItem     `json:"work_items"`
+	Handoffs    []Handoff      `json:"handoffs"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	Error       string         `json:"error,omitempty"`
 }
 
 func DefaultBudget() Budget {
@@ -142,7 +145,7 @@ func NewMission(id, runID, goal string, budget Budget) (*Mission, error) {
 		return nil, errors.New("invalid mission budget")
 	}
 	now := time.Now().UTC()
-	return &Mission{ID: id, RunID: runID, Goal: goal, Template: DefaultTemplate, Status: Queued, Budget: budget, CreatedAt: now, UpdatedAt: now}, nil
+	return &Mission{ID: id, RunID: runID, Goal: goal, Template: DefaultTemplate, Status: Queued, Budget: budget, UsageByRole: map[Role]Usage{}, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 // AddWork validates dependency order and keeps the task graph acyclic by only

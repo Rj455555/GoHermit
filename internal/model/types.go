@@ -61,6 +61,9 @@ type GenerateResponse struct {
 	Message      Message `json:"message"`
 	FinishReason string  `json:"finish_reason"`
 	Usage        Usage   `json:"usage"`
+	// Attempts is the number of provider attempts behind this response,
+	// including retried failures; 0 or 1 means a single attempt.
+	Attempts int `json:"attempts,omitempty"`
 }
 type StreamEvent struct {
 	Delta    string    `json:"delta,omitempty"`
@@ -94,6 +97,8 @@ type ProviderError struct {
 	Retryable bool
 	Message   string
 	Cause     error
+	// Attempts is the number of provider attempts made before giving up.
+	Attempts int
 }
 
 func (e *ProviderError) Error() string {

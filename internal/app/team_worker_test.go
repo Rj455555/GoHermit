@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -95,5 +96,48 @@ func TestExplorerAssignmentPromptDocumentsSubstepSchema(t *testing.T) {
 	}
 	if strings.Contains(builder, "substeps") {
 		t.Fatalf("builder prompt must not propose substeps: %q", builder)
+	}
+}
+
+type failingTeamProvider struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *failingTeamProvider) Generate(context.Context, model.GenerateRequest) (model.GenerateResponse, error) {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+	if call == 1 {
+		return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{{ID: "c1", Name: "noop", Arguments: json.RawMessage(`{}`)}}}, FinishReason: "tool_calls", Usage: model.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}, Attempts: 1}, nil
+	}
+	return model.GenerateResponse{}, &model.ProviderError{Kind: model.ErrorUnavailable, Status: 500, Retryable: false, Attempts: 2, Message: "down"}
+}
+
+func (*failingTeamProvider) Capabilities() model.Capabilities { return model.Capabilities{} }
+
+func TestTeamWorkerReportsPartialUsageOnChildRunFailure(t *testing.T) {
+	root := t.TempDir()
+	store, err := session.NewStore(root, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &failingTeamProvider{}
+	build := func(context.Context, string, string, RuntimeOptions) (*Runtime, error) {
+		manager, managerErr := contextmgr.New(contextmgr.Config{MaxTokens: 4096, CompressionThreshold: .8, HardLimitThreshold: .92, ReserveOutputTokens: 512})
+		if managerErr != nil {
+			return nil, managerErr
+		}
+		return &Runtime{Workspace: root, Store: store, Runner: &agent.Runner{Provider: provider, Executor: tool.Executor{Registry: tool.NewRegistry(), DefaultTimeout: time.Second}, Context: manager, Store: store, Config: agent.Config{MaxTurns: 3, Timeout: time.Minute, Model: "test"}}}, nil
+	}
+	worker := TeamWorker{Workspace: root, ParentSessionID: "parent", ParentRunID: "run", ParentStore: store, Build: build}
+	assignment := team.Assignment{MissionID: "mission", Goal: "inspect", WorkItem: team.WorkItem{ID: "explore", Role: team.RoleExplorer, Title: "Explore", Goal: "inspect", ExecutionSessionID: "worker-mission-explore"}, MaxTokens: 1000, MaxDuration: time.Minute}
+	result, err := worker.Execute(context.Background(), assignment)
+	if err == nil {
+		t.Fatal("expected child run failure")
+	}
+	if result.ModelCalls != 3 || result.Tokens != 15 {
+		t.Fatalf("partial usage must report exactly what the failed run recorded: result=%+v", result)
 	}
 }

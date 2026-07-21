@@ -87,7 +87,7 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 	}
 	if !workerAlreadyCompleted(child) {
 		if err = runtime.Runner.Run(ctx, child); err != nil {
-			return team.Result{}, err
+			return workerPartialResult(child), err
 		}
 	}
 	relayMu.Lock()
@@ -97,6 +97,17 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 		return team.Result{}, fmt.Errorf("relay worker event: %w", err)
 	}
 	return workerResult(child, assignment, prompt)
+}
+
+// workerPartialResult reports the usage a failed child run actually recorded
+// so the coordinator can aggregate it. Unlike workerResult it applies no
+// minimum or token estimation; zero is reported as zero.
+func workerPartialResult(child *session.Session) team.Result {
+	if child == nil || len(child.Runs) == 0 {
+		return team.Result{}
+	}
+	run := child.Runs[len(child.Runs)-1]
+	return team.Result{ModelCalls: run.ModelCalls, Tokens: run.TotalTokens}
 }
 
 func workerAlreadyCompleted(child *session.Session) bool {

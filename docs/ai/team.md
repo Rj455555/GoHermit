@@ -30,6 +30,8 @@ Session schema v4 stores the parent `mission` plus each Run's optional Live Plan
 
 Coordinator checkpoints immediately after assigning an execution Session and starting a WorkItem. Parent events and relayed child activity are committed before SSE delivery. On restart, parent and child running state becomes `interrupted`. Resume reloads the same child Session. A completed child result is converted to the missing Handoff without another model call; an interrupted child resumes through the existing Runner.
 
+Mission usage counts every provider attempt — including failed and retried calls — and is aggregated per role in `mission.usage_by_role`; usage records are counts only and never contain prompt text.
+
 ## Owner profile
 
 `internal/owner` stores schema-v1 `owner.json` outside repositories. Default resolution uses `GOHERMIT_OWNER_STORE`, then the user config directory. Compose sets `/data/owner.json` in the private data volume.

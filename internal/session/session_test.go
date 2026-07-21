@@ -14,6 +14,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
+	"github.com/Rj455555/GoHermit/internal/team"
 )
 
 func TestSaveLoadAndExternalChange(t *testing.T) {
@@ -401,5 +402,52 @@ func TestCommitDetachedEventDurablyRelaysChildActivity(t *testing.T) {
 	loaded, err := fresh.Load(context.Background(), sess.ID)
 	if err != nil || loaded.NextEventSequence != committed.Sequence {
 		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+}
+
+func TestMissionUsageByRoleRoundTripAndPromptFree(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New("goal", root, "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mission, err := team.NewMission("mission-1", "run-1", "goal containing PROMPT-MARKER-7f3a", team.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mission.Status = team.Completed
+	mission.Usage = team.Usage{ModelCalls: 5, Tokens: 350}
+	mission.UsageByRole[team.RoleExplorer] = team.Usage{ModelCalls: 2, Tokens: 200}
+	mission.UsageByRole[team.RoleReviewer] = team.Usage{ModelCalls: 3, Tokens: 150}
+	s.Mission = mission
+	if err = store.Save(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Mission == nil || loaded.Mission.UsageByRole[team.RoleExplorer] != (team.Usage{ModelCalls: 2, Tokens: 200}) || loaded.Mission.UsageByRole[team.RoleReviewer] != (team.Usage{ModelCalls: 3, Tokens: 150}) {
+		t.Fatalf("usage_by_role did not round-trip: %+v", loaded.Mission)
+	}
+	usageJSON, err := json.Marshal(loaded.Mission.UsageByRole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(usageJSON), "PROMPT-MARKER-7f3a") {
+		t.Fatalf("usage records leaked prompt text: %s", usageJSON)
+	}
+	var decoded map[string]team.Usage
+	if err = json.Unmarshal(usageJSON, &decoded); err != nil {
+		t.Fatalf("usage_by_role must stay a role-keyed numbers-only object: %v", err)
+	}
+	for role := range decoded {
+		if role != string(team.RoleExplorer) && role != string(team.RoleReviewer) {
+			t.Fatalf("unexpected usage key %q", role)
+		}
 	}
 }
