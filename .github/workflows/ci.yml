@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -60,3 +61,30 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose config
       - run: docker build -t gohermit:ci .
+
+  # Live Codex smoke: manual dispatch only, never on push/PR. It makes one paid
+  # API call, so the repo owner must first add a GOHERMIT_CODEX_AUTH_JSON secret
+  # holding Codex CLI auth.json contents ({"tokens":{"access_token":...}}).
+  # Without the secret the test skips cleanly instead of failing.
+  live-smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.8
+          cache: true
+      - name: Configure Codex credentials
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.GOHERMIT_CODEX_AUTH_JSON }}
+        run: |
+          if [ -n "$CODEX_AUTH_JSON" ]; then
+            mkdir -p "$HOME/.codex"
+            printf '%s' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"
+            chmod 600 "$HOME/.codex/auth.json"
+          else
+            echo "GOHERMIT_CODEX_AUTH_JSON secret not set; smoke test will skip."
+          fi
+      - name: Run live Codex smoke
+        run: GOHERMIT_LIVE_CODEX_SMOKE=1 go test ./internal/evals/ -run TestLiveCodexSmoke -count=1 -v
