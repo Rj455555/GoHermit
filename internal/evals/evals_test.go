@@ -17,6 +17,11 @@ func TestPlanFidelityFixtures(t *testing.T) {
 			GradeTeamEventScript(t, script)
 		})
 	}
+	for _, script := range fixture.SubstepProposalScripts {
+		t.Run("substep_proposal/"+script.Name, func(t *testing.T) {
+			GradeSubstepProposalScript(t, script)
+		})
+	}
 }
 
 func TestHandoffQualityFixtures(t *testing.T) {

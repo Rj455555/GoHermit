@@ -2,6 +2,7 @@ package team
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,12 +32,14 @@ type Worker interface {
 type TeamEventType string
 
 const (
-	MissionStarted  TeamEventType = "mission_started"
-	WorkItemStarted TeamEventType = "work_started"
-	WorkItemDone    TeamEventType = "work_completed"
-	WorkItemFailed  TeamEventType = "work_failed"
-	MissionFinished TeamEventType = "mission_completed"
-	MissionFailed   TeamEventType = "mission_failed"
+	MissionStarted   TeamEventType = "mission_started"
+	WorkItemStarted  TeamEventType = "work_started"
+	WorkItemDone     TeamEventType = "work_completed"
+	WorkItemFailed   TeamEventType = "work_failed"
+	SubstepsAccepted TeamEventType = "substeps_accepted"
+	SubstepsRejected TeamEventType = "substeps_rejected"
+	MissionFinished  TeamEventType = "mission_completed"
+	MissionFailed    TeamEventType = "mission_failed"
 )
 
 type TeamEvent struct {
@@ -289,6 +292,18 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 			cancelBatch()
 			continue
 		}
+		if outcome.role == RoleExplorer && len(outcome.result.Handoff.Substeps) > 0 {
+			if substepErr := mission.AddSubsteps(outcome.result.Handoff.Substeps); substepErr != nil {
+				c.emit(TeamEvent{Type: SubstepsRejected, MissionID: mission.ID, WorkItemID: outcome.id, Role: outcome.role, Message: clip(substepErr.Error())})
+			} else {
+				c.emit(TeamEvent{Type: SubstepsAccepted, MissionID: mission.ID, WorkItemID: outcome.id, Role: outcome.role, Message: acceptedSubstepsMessage(outcome.result.Handoff.Substeps)})
+			}
+			if err := c.checkpoint(mission); err != nil {
+				batchErr = err
+				cancelBatch()
+				continue
+			}
+		}
 		if outcome.role == RoleVerifier && !handoffChecksPassed(outcome.result.Handoff) {
 			attempts := c.MaxRepairAttempts
 			if attempts <= 0 {
@@ -322,6 +337,26 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 		_ = c.checkpoint(mission)
 	}
 	return batchErr
+}
+
+// acceptedSubstep is the bounded owner-facing summary of one accepted substep.
+type acceptedSubstep struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+// acceptedSubstepsMessage encodes the accepted proposal as a bounded JSON
+// array of {id, title} pairs consumed by runcontrol for Live Plan steps.
+func acceptedSubstepsMessage(specs []SubstepSpec) string {
+	accepted := make([]acceptedSubstep, 0, min(len(specs), MaxProposedSubsteps))
+	for _, spec := range specs {
+		accepted = append(accepted, acceptedSubstep{ID: strings.TrimSpace(spec.ID), Title: strings.TrimSpace(spec.Title)})
+	}
+	data, err := json.Marshal(accepted)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func dependencyHandoffs(mission *Mission, item WorkItem) []Handoff {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -62,5 +63,37 @@ func TestTeamWorkerReusesCompletedExecutionSession(t *testing.T) {
 	}
 	if provider.calls != 2 {
 		t.Fatalf("provider calls=%d, completed worker was replayed", provider.calls)
+	}
+}
+
+func TestParseWorkerHandoffReadsOptionalSubsteps(t *testing.T) {
+	with := parseWorkerHandoff(`{"summary":"inspected","substeps":[{"id":"inspect_auth","title":"梳理认证流程","goal":"inspect the auth flow","role":"explorer","depends_on":["verify"]}]}`)
+	if with.Summary != "inspected" || len(with.Substeps) != 1 {
+		t.Fatalf("handoff=%+v", with)
+	}
+	substep := with.Substeps[0]
+	if substep.ID != "inspect_auth" || substep.Role != team.RoleExplorer || len(substep.DependsOn) != 1 || substep.DependsOn[0] != "verify" {
+		t.Fatalf("substep=%+v", substep)
+	}
+	without := parseWorkerHandoff(`{"summary":"inspected"}`)
+	if without.Summary != "inspected" || len(without.Substeps) != 0 {
+		t.Fatalf("handoff=%+v", without)
+	}
+}
+
+func TestExplorerAssignmentPromptDocumentsSubstepSchema(t *testing.T) {
+	explorer, err := assignmentPrompt(team.Assignment{Goal: "goal", WorkItem: team.WorkItem{ID: "explore", Role: team.RoleExplorer, Title: "Explore", Goal: "inspect"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(explorer, "substeps") || !strings.Contains(explorer, "read-only") {
+		t.Fatalf("explorer prompt lacks the substep schema: %q", explorer)
+	}
+	builder, err := assignmentPrompt(team.Assignment{Goal: "goal", WorkItem: team.WorkItem{ID: "build", Role: team.RoleBuilder, Title: "Build", Goal: "implement"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(builder, "substeps") {
+		t.Fatalf("builder prompt must not propose substeps: %q", builder)
 	}
 }

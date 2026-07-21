@@ -314,6 +314,41 @@ func (p *Plan) Reopen(ids []string, detail string) (bool, error) {
 	return true, nil
 }
 
+// AddSteps appends accepted task-specific substeps to an active plan. New
+// steps use their execution work-item IDs and start pending; existing steps,
+// including completed history, are never rewritten.
+func (p *Plan) AddSteps(specs []StepSpec) (bool, error) {
+	if p == nil || len(specs) == 0 {
+		return false, nil
+	}
+	if p.Status != Active {
+		return false, errors.New("plan is not active")
+	}
+	if len(p.Steps)+len(specs) > MaxSteps {
+		return false, errors.New("plan step limit exceeded")
+	}
+	seen := make(map[string]bool, len(p.Steps)+len(specs))
+	for _, step := range p.Steps {
+		seen[step.ID] = true
+	}
+	now := time.Now().UTC()
+	added := make([]Step, 0, len(specs))
+	for _, spec := range specs {
+		spec.ID, spec.Title = strings.TrimSpace(spec.ID), strings.TrimSpace(spec.Title)
+		if spec.ID == "" || strings.ContainsAny(spec.ID, "/\\") || strings.Contains(spec.ID, "..") || spec.Title == "" || len(spec.Title) > MaxTitleBytes {
+			return false, errors.New("plan step requires a safe id and bounded title")
+		}
+		if seen[spec.ID] {
+			return false, fmt.Errorf("duplicate plan step %q", spec.ID)
+		}
+		seen[spec.ID] = true
+		added = append(added, Step{ID: spec.ID, Title: spec.Title, Status: Pending, UpdatedAt: now})
+	}
+	p.Steps = append(p.Steps, added...)
+	p.changed(now)
+	return true, nil
+}
+
 func (p *Plan) Current() *Step {
 	if p == nil {
 		return nil

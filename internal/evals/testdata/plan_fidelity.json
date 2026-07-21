@@ -251,5 +251,129 @@
         }
       }
     }
+  ],
+  "substep_proposal_scripts": [
+    {
+      "name": "accept-valid-proposal",
+      "mission": {
+        "work_items": [
+          {"id": "explore", "role": "explorer", "status": "completed"},
+          {"id": "verify", "role": "verifier", "status": "queued", "depends_on": ["explore"]},
+          {"id": "lead", "role": "lead", "status": "queued", "depends_on": ["verify"]}
+        ],
+        "handoffs": [
+          {"id": "h-explore", "work_item_id": "explore", "role": "explorer", "summary": "分析完成"}
+        ]
+      },
+      "plan_steps": [
+        {"id": "explore", "title": "分析目标", "status": "completed"},
+        {"id": "verify", "title": "独立验证"},
+        {"id": "lead", "title": "汇总交付"}
+      ],
+      "proposal": [
+        {"id": "inspect_auth_flow", "title": "梳理认证流程", "role": "explorer", "depends_on": ["verify"]},
+        {"id": "cross_check_sessions", "title": "交叉核对会话存储", "role": "verifier", "depends_on": ["inspect_auth_flow"]}
+      ],
+      "expected": {
+        "accept": true,
+        "lead_depends_on": ["verify", "inspect_auth_flow", "cross_check_sessions"]
+      }
+    },
+    {
+      "name": "reject-completed-dependency",
+      "mission": {
+        "work_items": [
+          {"id": "explore", "role": "explorer", "status": "completed"},
+          {"id": "verify", "role": "verifier", "status": "queued", "depends_on": ["explore"]},
+          {"id": "lead", "role": "lead", "status": "queued", "depends_on": ["verify"]}
+        ]
+      },
+      "plan_steps": [
+        {"id": "explore", "title": "分析目标", "status": "completed"},
+        {"id": "verify", "title": "独立验证"},
+        {"id": "lead", "title": "汇总交付"}
+      ],
+      "proposal": [
+        {"id": "revisit_explore", "title": "重新勘探已完成项", "role": "explorer", "depends_on": ["explore"]}
+      ],
+      "expected": {
+        "accept": false,
+        "error_contains": "cannot depend on completed work item"
+      }
+    },
+    {
+      "name": "reject-unknown-dependency",
+      "mission": {
+        "work_items": [
+          {"id": "explore", "role": "explorer", "status": "completed"},
+          {"id": "verify", "role": "verifier", "status": "queued", "depends_on": ["explore"]},
+          {"id": "lead", "role": "lead", "status": "queued", "depends_on": ["verify"]}
+        ]
+      },
+      "plan_steps": [
+        {"id": "explore", "title": "分析目标", "status": "completed"},
+        {"id": "verify", "title": "独立验证"},
+        {"id": "lead", "title": "汇总交付"}
+      ],
+      "proposal": [
+        {"id": "inspect_ghost", "title": "检查不存在的依赖", "role": "reviewer", "depends_on": ["ghost"]}
+      ],
+      "expected": {
+        "accept": false,
+        "error_contains": "unknown dependency"
+      }
+    },
+    {
+      "name": "reject-id-colliding-with-completed-work-item",
+      "mission": {
+        "work_items": [
+          {"id": "explore", "role": "explorer", "status": "completed"},
+          {"id": "verify", "role": "verifier", "status": "queued", "depends_on": ["explore"]},
+          {"id": "lead", "role": "lead", "status": "queued", "depends_on": ["verify"]}
+        ]
+      },
+      "plan_steps": [
+        {"id": "explore", "title": "分析目标", "status": "completed"},
+        {"id": "verify", "title": "独立验证"},
+        {"id": "lead", "title": "汇总交付"}
+      ],
+      "proposal": [
+        {"id": "explore", "title": "复用已完成的标识", "role": "explorer"}
+      ],
+      "expected": {
+        "accept": false,
+        "error_contains": "already exists"
+      }
+    },
+    {
+      "name": "reject-oversized-proposal",
+      "mission": {
+        "work_items": [
+          {"id": "explore", "role": "explorer", "status": "completed"},
+          {"id": "verify", "role": "verifier", "status": "queued", "depends_on": ["explore"]},
+          {"id": "lead", "role": "lead", "status": "queued", "depends_on": ["verify"]}
+        ]
+      },
+      "plan_steps": [
+        {"id": "explore", "title": "分析目标", "status": "completed"},
+        {"id": "verify", "title": "独立验证"},
+        {"id": "lead", "title": "汇总交付"}
+      ],
+      "proposal": [
+        {"id": "substep_1", "title": "子步骤 1", "role": "explorer"},
+        {"id": "substep_2", "title": "子步骤 2", "role": "explorer"},
+        {"id": "substep_3", "title": "子步骤 3", "role": "reviewer"},
+        {"id": "substep_4", "title": "子步骤 4", "role": "reviewer"},
+        {"id": "substep_5", "title": "子步骤 5", "role": "verifier"},
+        {"id": "substep_6", "title": "子步骤 6", "role": "verifier"},
+        {"id": "substep_7", "title": "子步骤 7", "role": "explorer"},
+        {"id": "substep_8", "title": "子步骤 8", "role": "reviewer"},
+        {"id": "substep_9", "title": "子步骤 9", "role": "verifier"}
+      ],
+      "expected": {
+        "accept": false,
+        "error_contains": "must contain 1 to 8 entries"
+      }
+    }
   ]
 }
