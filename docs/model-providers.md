@@ -23,6 +23,8 @@ Legacy `codex`, `openai`, `openai-chat`, and `openai-compatible` TOML presets re
 
 The `kimi-coding-plan` provider targets the Kimi Code (coding plan) membership endpoint `https://api.kimi.com/coding/v1`, an OpenAI-compatible Chat Completions API. It uses the plan-issued API key from `KIMI_API_KEY` (or a key pasted in Web Provider Settings, which is stored server-side and takes precedence over the environment). The default model is `kimi-for-coding`; the Web catalog also offers `kimi-for-coding-highspeed` and `k3` under the Moonshot AI / Kimi group. A ready-made TOML preset ships as `configs/kimi-coding-plan.toml`.
 
+Kimi rejects function names containing dots, so this preset enables outbound tool-name sanitization: wire names replace invalid characters with underscores (`file.read` → `file_read`) in both tool definitions and replayed history `tool_calls`, and response tool calls are mapped back to the registry names before execution. Other providers keep their existing wire format.
+
 ## Codex Plan
 
 The Codex Plan path supports both GoHermit-managed device login and Hermes-style safe CLI import. Credential precedence is environment token, GoHermit credential store, then `CODEX_HOME/auth.json`. An expiring access token must refresh successfully before the access method is offered to Run. The Web catalog is discovered from the authenticated account's live Codex models endpoint; guessed or unsupported models are not offered. GoHermit never rewrites the Codex CLI file. Requests use the Codex Responses endpoint plus the `originator`, Codex-shaped user agent, and JWT-derived `ChatGPT-Account-ID` headers.

@@ -24,11 +24,16 @@ type OpenAIConfig struct {
 	BaseURL, APIKey string
 	Timeout         time.Duration
 	MaxRetries      int
+	// SanitizeToolNames rewrites tool names that strict function-calling APIs
+	// reject (for example names containing dots) to safe wire names and maps
+	// response tool calls back to the registry names.
+	SanitizeToolNames bool
 }
 type OpenAIProvider struct {
-	baseURL, apiKey string
-	client          *http.Client
-	maxRetries      int
+	baseURL, apiKey   string
+	client            *http.Client
+	maxRetries        int
+	sanitizeToolNames bool
 }
 
 func NewOpenAIProvider(c OpenAIConfig) (*OpenAIProvider, error) {
@@ -42,7 +47,7 @@ func NewOpenAIProvider(c OpenAIConfig) (*OpenAIProvider, error) {
 	if c.Timeout <= 0 {
 		c.Timeout = 120 * time.Second
 	}
-	return &OpenAIProvider{baseURL: strings.TrimRight(c.BaseURL, "/"), apiKey: c.APIKey, client: &http.Client{Timeout: c.Timeout}, maxRetries: c.MaxRetries}, nil
+	return &OpenAIProvider{baseURL: strings.TrimRight(c.BaseURL, "/"), apiKey: c.APIKey, client: &http.Client{Timeout: c.Timeout}, maxRetries: c.MaxRetries, sanitizeToolNames: c.SanitizeToolNames}, nil
 }
 
 func (p *OpenAIProvider) Capabilities() Capabilities {
@@ -87,6 +92,10 @@ type openAIResponse struct {
 
 func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
 	body := openAIRequest{Model: req.Model, Stream: req.Stream}
+	var names *toolNameMapper
+	if p.sanitizeToolNames {
+		names = newToolNameMapper()
+	}
 	for _, m := range req.Messages {
 		reasoning, err := p.reasoningForMessage(m)
 		if err != nil {
@@ -98,12 +107,18 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 			c.ID = tc.ID
 			c.Type = "function"
 			c.Function.Name = tc.Name
+			if names != nil {
+				c.Function.Name = names.wire(tc.Name)
+			}
 			c.Function.Arguments = string(tc.Arguments)
 			om.ToolCalls = append(om.ToolCalls, c)
 		}
 		body.Messages = append(body.Messages, om)
 	}
 	for _, t := range req.Tools {
+		if names != nil {
+			t.Name = names.wire(t.Name)
+		}
 		body.Tools = append(body.Tools, openAITool{Type: "function", Function: t})
 	}
 	payload, err := json.Marshal(body)
@@ -125,9 +140,9 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 		if err == nil {
 			var result GenerateResponse
 			if req.Stream {
-				result, err = p.readStream(resp.Body, req.OnStream)
+				result, err = p.readStream(resp.Body, req.OnStream, names.restore)
 			} else {
-				result, err = p.readJSON(resp.Body)
+				result, err = p.readJSON(resp.Body, names.restore)
 			}
 			if err == nil {
 				err = p.protectReasoning(&result.Message)
@@ -141,6 +156,96 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (Gen
 		}
 	}
 	return GenerateResponse{}, last
+}
+
+// toolNameMapper translates registry tool names to provider-safe wire names
+// and back within a single request. Names that are already valid are sent
+// unchanged; mappings are remembered so response tool calls restore exactly.
+type toolNameMapper struct {
+	forward map[string]string
+	reverse map[string]string
+}
+
+func newToolNameMapper() *toolNameMapper {
+	return &toolNameMapper{forward: map[string]string{}, reverse: map[string]string{}}
+}
+
+// wire returns the provider-safe name for a registry tool name.
+func (m *toolNameMapper) wire(name string) string {
+	if m == nil {
+		return name
+	}
+	if safe, ok := m.forward[name]; ok {
+		return safe
+	}
+	safe := name
+	if !validToolName(name) {
+		safe = sanitizeToolName(name)
+	}
+	base := safe
+	for i := 2; ; i++ {
+		original, taken := m.reverse[safe]
+		if !taken || original == name {
+			break
+		}
+		safe = fmt.Sprintf("%s_%d", base, i)
+	}
+	m.forward[name] = safe
+	m.reverse[safe] = name
+	return safe
+}
+
+// restore maps a wire tool call name back to the registry name; unknown names
+// pass through unchanged so providers may still answer with their own names.
+func (m *toolNameMapper) restore(name string) string {
+	if m == nil {
+		return name
+	}
+	if original, ok := m.reverse[name]; ok {
+		return original
+	}
+	return name
+}
+
+// validToolName reports whether name matches the strict function-calling
+// shape: starts with a letter, then letters, digits, underscores, or dashes.
+func validToolName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9' || c == '_' || c == '-':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func sanitizeToolName(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
+			b.WriteByte(c)
+		case c >= '0' && c <= '9' || c == '_' || c == '-':
+			if i == 0 {
+				b.WriteString("t_")
+			}
+			b.WriteByte(c)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 type protectedReasoning struct {
@@ -240,7 +345,7 @@ func (p *OpenAIProvider) do(ctx context.Context, payload []byte) (*http.Response
 	return nil, &ProviderError{Kind: kind, Status: resp.StatusCode, Retryable: retry, Message: msg}
 }
 
-func (p *OpenAIProvider) readJSON(body io.ReadCloser) (GenerateResponse, error) {
+func (p *OpenAIProvider) readJSON(body io.ReadCloser, restore func(string) string) (GenerateResponse, error) {
 	defer body.Close()
 	var r openAIResponse
 	if err := json.NewDecoder(io.LimitReader(body, 16<<20)).Decode(&r); err != nil {
@@ -249,10 +354,10 @@ func (p *OpenAIProvider) readJSON(body io.ReadCloser) (GenerateResponse, error) 
 	if len(r.Choices) == 0 {
 		return GenerateResponse{}, &ProviderError{Kind: ErrorProtocol, Message: "response has no choices"}
 	}
-	return convertChoice(r.Choices[0].Message, r.Choices[0].FinishReason, r.Usage)
+	return convertChoice(r.Choices[0].Message, r.Choices[0].FinishReason, r.Usage, restore)
 }
 
-func convertChoice(m openAIMessage, finish string, usage Usage) (GenerateResponse, error) {
+func convertChoice(m openAIMessage, finish string, usage Usage, restore func(string) string) (GenerateResponse, error) {
 	out := Message{Role: m.Role, Content: m.Content, ReasoningContent: m.ReasoningContent, ToolCallID: m.ToolCallID}
 	for _, c := range m.ToolCalls {
 		args := json.RawMessage(c.Function.Arguments)
@@ -262,12 +367,16 @@ func convertChoice(m openAIMessage, finish string, usage Usage) (GenerateRespons
 		if !json.Valid(args) {
 			return GenerateResponse{}, &ProviderError{Kind: ErrorProtocol, Message: "invalid tool call arguments"}
 		}
-		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: c.ID, Name: c.Function.Name, Arguments: args})
+		name := c.Function.Name
+		if restore != nil {
+			name = restore(name)
+		}
+		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: c.ID, Name: name, Arguments: args})
 	}
 	return GenerateResponse{Message: out, FinishReason: finish, Usage: usage}, nil
 }
 
-func (p *OpenAIProvider) readStream(body io.ReadCloser, on func(StreamEvent)) (GenerateResponse, error) {
+func (p *OpenAIProvider) readStream(body io.ReadCloser, on func(StreamEvent), restore func(string) string) (GenerateResponse, error) {
 	defer body.Close()
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64<<10), 4<<20)
@@ -326,7 +435,7 @@ func (p *OpenAIProvider) readStream(body io.ReadCloser, on func(StreamEvent)) (G
 			msg.ToolCalls = append(msg.ToolCalls, *c)
 		}
 	}
-	out, err := convertChoice(msg, finish, usage)
+	out, err := convertChoice(msg, finish, usage, restore)
 	if err == nil && on != nil {
 		on(StreamEvent{Done: true})
 	}

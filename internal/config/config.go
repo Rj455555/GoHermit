@@ -59,6 +59,9 @@ type ModelPreset struct {
 	BaseURL   string `json:"base_url"`
 	Model     string `json:"model"`
 	APIKeyEnv string `json:"api_key_env"`
+	// SanitizeToolNames rewrites dotted tool names to provider-safe wire names
+	// for function-calling APIs that reject characters such as dots.
+	SanitizeToolNames bool `json:"sanitize_tool_names,omitempty"`
 }
 
 // ModelOption is a selectable model within one provider access method.
@@ -113,7 +116,7 @@ var modelPresets = map[string]ModelPreset{
 	"alibaba":             {Provider: "alibaba", Protocol: "chat_completions", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen3.7-plus", APIKeyEnv: "DASHSCOPE_API_KEY"},
 	"qwen":                {Provider: "qwen", Protocol: "chat_completions", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen3.7-plus", APIKeyEnv: "DASHSCOPE_API_KEY"},
 	"alibaba-coding-plan": {Provider: "alibaba-coding-plan", Protocol: "chat_completions", BaseURL: "https://coding-intl.dashscope.aliyuncs.com/v1", Model: "qwen3-coder-plus", APIKeyEnv: "ALIBABA_CODING_PLAN_API_KEY"},
-	"kimi-coding-plan":    {Provider: "kimi-coding-plan", Protocol: "chat_completions", BaseURL: "https://api.kimi.com/coding/v1", Model: "kimi-for-coding", APIKeyEnv: "KIMI_API_KEY"},
+	"kimi-coding-plan":    {Provider: "kimi-coding-plan", Protocol: "chat_completions", BaseURL: "https://api.kimi.com/coding/v1", Model: "kimi-for-coding", APIKeyEnv: "KIMI_API_KEY", SanitizeToolNames: true},
 	"openai-compatible":   {Provider: "openai-compatible", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
 	"openai-chat":         {Provider: "openai-chat", Protocol: "chat_completions", BaseURL: "https://api.openai.com/v1", APIKeyEnv: "OPENAI_API_KEY"},
 }

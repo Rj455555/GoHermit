@@ -409,7 +409,11 @@ func NewProvider(conf config.Config) (model.Provider, error) {
 	case "responses":
 		return model.NewResponsesProvider(model.ResponsesConfig{BaseURL: conf.Model.BaseURL, APIKey: key, Timeout: conf.Model.RequestTimeout.Value(), MaxRetries: conf.Model.MaxRetries})
 	case "chat_completions":
-		return model.NewOpenAIProvider(model.OpenAIConfig{BaseURL: conf.Model.BaseURL, APIKey: key, Timeout: conf.Model.RequestTimeout.Value(), MaxRetries: conf.Model.MaxRetries})
+		sanitizeToolNames := false
+		if preset, ok := conf.Model.Preset(); ok {
+			sanitizeToolNames = preset.SanitizeToolNames
+		}
+		return model.NewOpenAIProvider(model.OpenAIConfig{BaseURL: conf.Model.BaseURL, APIKey: key, Timeout: conf.Model.RequestTimeout.Value(), MaxRetries: conf.Model.MaxRetries, SanitizeToolNames: sanitizeToolNames})
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", conf.Model.Provider)
 	}
