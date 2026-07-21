@@ -182,19 +182,24 @@ func assignmentPrompt(assignment team.Assignment) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Owner goal:\n%s\n\nYour assigned role: %s\nWork item: %s\nSpecific goal:\n%s\n\nDependency handoffs (bounded JSON):\n%s\n\nComplete only this work item. Your final response must be JSON with keys summary, evidence, issues, and next_steps. Do not include private reasoning, credentials, full prompts, or raw tool output.", assignment.Goal, assignment.WorkItem.Role, assignment.WorkItem.Title, assignment.WorkItem.Goal, inputs), nil
+	prompt := fmt.Sprintf("Owner goal:\n%s\n\nYour assigned role: %s\nWork item: %s\nSpecific goal:\n%s\n\nDependency handoffs (bounded JSON):\n%s\n\nComplete only this work item. Your final response must be JSON with keys summary, evidence, issues, and next_steps. Do not include private reasoning, credentials, full prompts, or raw tool output.", assignment.Goal, assignment.WorkItem.Role, assignment.WorkItem.Title, assignment.WorkItem.Goal, inputs)
+	if assignment.WorkItem.Role == team.RoleExplorer {
+		prompt += "\n\nAs the Explorer you may optionally propose bounded follow-up substeps by adding a `substeps` key to your final JSON: an array of at most 8 objects {id, title, goal, role, depends_on}. Rules: role must be one of explorer, reviewer, or verifier and substeps are always read-only; ids must be unique snake_case without '/', '\\', or '..' and must not reuse any existing work item id; depends_on may reference queued or running work item ids or peer substep ids, but never completed work item ids. Substeps are optional; omit the key when the existing topology suffices."
+	}
+	return prompt, nil
 }
 
 func parseWorkerHandoff(value string) team.Handoff {
 	value = strings.TrimSpace(value)
 	payload := struct {
-		Summary   string   `json:"summary"`
-		Evidence  []string `json:"evidence"`
-		Issues    []string `json:"issues"`
-		NextSteps []string `json:"next_steps"`
+		Summary   string             `json:"summary"`
+		Evidence  []string           `json:"evidence"`
+		Issues    []string           `json:"issues"`
+		NextSteps []string           `json:"next_steps"`
+		Substeps  []team.SubstepSpec `json:"substeps"`
 	}{}
 	if json.Unmarshal([]byte(value), &payload) == nil && strings.TrimSpace(payload.Summary) != "" {
-		return team.Handoff{Summary: strings.TrimSpace(payload.Summary), Evidence: payload.Evidence, Issues: payload.Issues, NextSteps: payload.NextSteps}
+		return team.Handoff{Summary: strings.TrimSpace(payload.Summary), Evidence: payload.Evidence, Issues: payload.Issues, NextSteps: payload.NextSteps, Substeps: payload.Substeps}
 	}
 	if value == "" {
 		value = "Worker completed without a textual summary."

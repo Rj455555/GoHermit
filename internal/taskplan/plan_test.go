@@ -1,6 +1,7 @@
 package taskplan
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -66,6 +67,75 @@ func TestPlanRejectsDuplicateAndUnsafeSteps(t *testing.T) {
 	}
 	if _, err := New("plan", []StepSpec{{ID: "../bad", Title: "bad"}}); err == nil {
 		t.Fatal("expected unsafe id rejection")
+	}
+}
+
+func TestAddStepsAppendsSubstepsWithoutRewritingHistory(t *testing.T) {
+	plan, err := New("plan", []StepSpec{{ID: "explore", Title: "Explore"}, {ID: "lead", Title: "Lead"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = plan.Start("explore", "running")
+	_, _ = plan.Complete("explore", "done")
+	revision := plan.Revision
+	changed, err := plan.AddSteps([]StepSpec{{ID: "inspect_auth", Title: "梳理认证流程"}, {ID: "cross_check", Title: "交叉核对"}})
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if plan.Revision != revision+1 {
+		t.Fatalf("revision=%d want %d", plan.Revision, revision+1)
+	}
+	if plan.step("explore").Status != StepDone || plan.step("inspect_auth").Status != Pending || plan.step("cross_check").Status != Pending {
+		t.Fatalf("plan=%+v", plan.Steps)
+	}
+	if err = Validate(plan); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err = plan.AddSteps(nil); changed || err != nil {
+		t.Fatalf("empty specs changed=%v err=%v", changed, err)
+	}
+}
+
+func TestAddStepsRejectsDuplicatesOverflowAndInactivePlan(t *testing.T) {
+	plan, _ := New("plan", []StepSpec{{ID: "explore", Title: "Explore"}, {ID: "lead", Title: "Lead"}})
+	_, _ = plan.Start("explore", "running")
+	_, _ = plan.Complete("explore", "done")
+	if _, err := plan.AddSteps([]StepSpec{{ID: "explore", Title: "Rewrite history"}}); err == nil {
+		t.Fatal("expected duplicate-with-completed-id rejection")
+	}
+	if _, err := plan.AddSteps([]StepSpec{{ID: "lead", Title: "Duplicate pending"}}); err == nil {
+		t.Fatal("expected duplicate-with-pending-id rejection")
+	}
+	if _, err := plan.AddSteps([]StepSpec{{ID: "../unsafe", Title: "Unsafe"}}); err == nil {
+		t.Fatal("expected unsafe id rejection")
+	}
+	if plan.Revision != 3 || len(plan.Steps) != 2 {
+		t.Fatalf("rejected AddSteps mutated the plan: %+v", plan)
+	}
+
+	specs := make([]StepSpec, 0, MaxSteps-1)
+	for i := 0; i < MaxSteps-1; i++ {
+		specs = append(specs, StepSpec{ID: fmt.Sprintf("step_%d", i), Title: "Step"})
+	}
+	full, err := New("plan-full", specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = full.AddSteps([]StepSpec{{ID: "extra_a", Title: "Extra"}, {ID: "extra_b", Title: "Extra"}}); err == nil {
+		t.Fatal("expected step-limit rejection")
+	}
+	if len(full.Steps) != MaxSteps-1 {
+		t.Fatalf("overflow attempt mutated the plan: %d steps", len(full.Steps))
+	}
+
+	inactive, _ := New("plan-inactive", []StepSpec{{ID: "only", Title: "Only"}})
+	_, _ = inactive.Start("only", "running")
+	_, _ = inactive.Fail("only", "failed")
+	if _, err = inactive.AddSteps([]StepSpec{{ID: "late", Title: "Late"}}); err == nil {
+		t.Fatal("expected non-active plan rejection")
+	}
+	if len(inactive.Steps) != 1 {
+		t.Fatalf("non-active AddSteps mutated the plan: %+v", inactive.Steps)
 	}
 }
 

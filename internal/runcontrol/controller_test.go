@@ -81,3 +81,52 @@ func TestVerifierFailureReopensControllerPlanWhenMissionQueuedRepair(t *testing.
 		t.Fatalf("transition=%+v plan=%+v err=%v", transition, plan, err)
 	}
 }
+
+func TestSubstepsAcceptedExtendsPlanFromExplorerProposal(t *testing.T) {
+	plan, err := taskplan.New("plan-run", []taskplan.StepSpec{{ID: "explore", Title: "Explore"}, {ID: "lead", Title: "Lead"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = plan.Start("explore", "running")
+	message := `[{"id":"inspect_auth","title":"梳理认证流程"},{"id":"cross_check","title":"交叉核对"}]`
+	transition, err := ApplyTeamEvent(plan, team.TeamEvent{Type: team.SubstepsAccepted, WorkItemID: "explore", Role: team.RoleExplorer, Message: message}, nil)
+	if err != nil || !transition.Changed || transition.StepID != "inspect_auth" || transition.Detail == "" {
+		t.Fatalf("transition=%+v err=%v", transition, err)
+	}
+	if len(plan.Steps) != 4 || plan.Steps[2].Status != taskplan.Pending || plan.Steps[3].ID != "cross_check" {
+		t.Fatalf("plan=%+v", plan.Steps)
+	}
+	if err = taskplan.Validate(plan); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSubstepsRejectedLeavesPlanUntouched(t *testing.T) {
+	plan, err := taskplan.New("plan-run", []taskplan.StepSpec{{ID: "explore", Title: "Explore"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := plan.Revision
+	transition, err := ApplyTeamEvent(plan, team.TeamEvent{Type: team.SubstepsRejected, WorkItemID: "explore", Role: team.RoleExplorer, Message: "substep id \"explore\" already exists in the mission"}, nil)
+	if err != nil || transition.Changed || transition.StepID != "" {
+		t.Fatalf("transition=%+v err=%v", transition, err)
+	}
+	if plan.Revision != revision || len(plan.Steps) != 1 {
+		t.Fatalf("rejected proposal changed the plan: %+v", plan)
+	}
+}
+
+func TestSubstepsAcceptedWithMalformedMessageDoesNotPanic(t *testing.T) {
+	plan, err := taskplan.New("plan-run", []taskplan.StepSpec{{ID: "explore", Title: "Explore"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := plan.Revision
+	transition, err := ApplyTeamEvent(plan, team.TeamEvent{Type: team.SubstepsAccepted, WorkItemID: "explore", Role: team.RoleExplorer, Message: "not-json"}, nil)
+	if err != nil || transition.Changed {
+		t.Fatalf("transition=%+v err=%v", transition, err)
+	}
+	if plan.Revision != revision || len(plan.Steps) != 1 {
+		t.Fatalf("malformed message changed the plan: %+v", plan)
+	}
+}

@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	DefaultTemplate = "personal-development-team"
-	MaxWorkItems    = 24
-	MaxHandoffs     = 48
-	MaxTextBytes    = 32 << 10
+	DefaultTemplate     = "personal-development-team"
+	MaxWorkItems        = 24
+	MaxHandoffs         = 48
+	MaxTextBytes        = 32 << 10
+	MaxProposedSubsteps = 8
 )
 
 type Role string
@@ -84,19 +85,30 @@ type Check struct {
 	Summary string `json:"summary,omitempty"`
 }
 
+// SubstepSpec is one bounded task-specific substep proposed by the Explorer.
+// Accepted substeps become real read-only work items.
+type SubstepSpec struct {
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Goal      string   `json:"goal"`
+	Role      Role     `json:"role"`
+	DependsOn []string `json:"depends_on,omitempty"`
+}
+
 // Handoff is the only durable agent-to-agent communication format. It excludes
 // private reasoning, full prompts, stream chunks, and raw unbounded tool output.
 type Handoff struct {
-	ID            string    `json:"id"`
-	WorkItemID    string    `json:"work_item_id"`
-	Role          Role      `json:"role"`
-	Summary       string    `json:"summary"`
-	Evidence      []string  `json:"evidence,omitempty"`
-	ModifiedFiles []string  `json:"modified_files,omitempty"`
-	Checks        []Check   `json:"checks,omitempty"`
-	Issues        []string  `json:"issues,omitempty"`
-	NextSteps     []string  `json:"next_steps,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            string        `json:"id"`
+	WorkItemID    string        `json:"work_item_id"`
+	Role          Role          `json:"role"`
+	Summary       string        `json:"summary"`
+	Evidence      []string      `json:"evidence,omitempty"`
+	ModifiedFiles []string      `json:"modified_files,omitempty"`
+	Checks        []Check       `json:"checks,omitempty"`
+	Issues        []string      `json:"issues,omitempty"`
+	NextSteps     []string      `json:"next_steps,omitempty"`
+	Substeps      []SubstepSpec `json:"substeps,omitempty"`
+	CreatedAt     time.Time     `json:"created_at"`
 }
 
 type Mission struct {
@@ -166,6 +178,182 @@ func (m *Mission) AddWork(item WorkItem) error {
 	m.WorkItems = append(m.WorkItems, item)
 	m.UpdatedAt = now
 	return nil
+}
+
+// ValidateSubstepProposal strictly checks an Explorer substep proposal against
+// the live mission without changing it. Ids must be safe and unused — completed
+// work-item ids are never reused — roles stay read-only, dependencies must
+// reference runnable work or peer substeps and never completed work, and the
+// combined graph must remain acyclic.
+func ValidateSubstepProposal(m *Mission, specs []SubstepSpec) error {
+	if m == nil {
+		return errors.New("mission is required")
+	}
+	if len(specs) == 0 || len(specs) > MaxProposedSubsteps {
+		return fmt.Errorf("substep proposal must contain 1 to %d entries", MaxProposedSubsteps)
+	}
+	if len(m.WorkItems)+len(specs) > m.Budget.MaxWorkItems {
+		return errors.New("substep proposal exceeds the mission work-item budget")
+	}
+	existing := make(map[string]WorkStatus, len(m.WorkItems))
+	for _, item := range m.WorkItems {
+		existing[item.ID] = item.Status
+	}
+	proposalIDs := make(map[string]bool, len(specs))
+	for _, spec := range specs {
+		id, title, goal := strings.TrimSpace(spec.ID), strings.TrimSpace(spec.Title), strings.TrimSpace(spec.Goal)
+		if id == "" || strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
+			return fmt.Errorf("substep id %q is empty or unsafe", spec.ID)
+		}
+		if _, taken := existing[id]; taken {
+			return fmt.Errorf("substep id %q already exists in the mission", id)
+		}
+		if proposalIDs[id] {
+			return fmt.Errorf("duplicate substep id %q in proposal", id)
+		}
+		proposalIDs[id] = true
+		if title == "" || len(title) > 200 {
+			return fmt.Errorf("substep %q requires a bounded title", id)
+		}
+		if goal == "" || len(goal) > MaxTextBytes {
+			return fmt.Errorf("substep %q requires a bounded goal", id)
+		}
+		switch spec.Role {
+		case RoleExplorer, RoleReviewer, RoleVerifier:
+		default:
+			return fmt.Errorf("substep %q role %q is not a read-only role", id, spec.Role)
+		}
+		if len(spec.DependsOn) > MaxProposedSubsteps {
+			return fmt.Errorf("substep %q has too many dependencies", id)
+		}
+	}
+	for _, spec := range specs {
+		id := strings.TrimSpace(spec.ID)
+		for _, dependency := range spec.DependsOn {
+			if proposalIDs[dependency] {
+				continue
+			}
+			status, known := existing[dependency]
+			if !known {
+				return fmt.Errorf("substep %q has unknown dependency %q", id, dependency)
+			}
+			switch status {
+			case WorkCompleted, WorkFailed, WorkCancelled:
+				return fmt.Errorf("substep %q cannot depend on %s work item %q", id, status, dependency)
+			}
+		}
+	}
+	// Existing work items are acyclic by construction, so only dependencies
+	// between peer substeps can close a cycle.
+	const (
+		unvisited = iota
+		visiting
+		visited
+	)
+	state := make(map[string]int, len(specs))
+	deps := make(map[string][]string, len(specs))
+	for _, spec := range specs {
+		deps[strings.TrimSpace(spec.ID)] = spec.DependsOn
+	}
+	var visit func(id string) bool
+	visit = func(id string) bool {
+		state[id] = visiting
+		for _, dependency := range deps[id] {
+			if !proposalIDs[dependency] {
+				continue
+			}
+			if state[dependency] == visiting || (state[dependency] == unvisited && visit(dependency)) {
+				return true
+			}
+		}
+		state[id] = visited
+		return false
+	}
+	for _, spec := range specs {
+		id := strings.TrimSpace(spec.ID)
+		if state[id] == unvisited && visit(id) {
+			return fmt.Errorf("substep proposal contains a dependency cycle involving %q", id)
+		}
+	}
+	return nil
+}
+
+// AddSubsteps atomically accepts a validated Explorer proposal: every spec
+// becomes a real read-only queued work item and every queued lead is rewired
+// to depend on the new items so the final synthesis receives their handoffs.
+// Specs are applied in dependency order so a proposal may list peers in any
+// order; validation guarantees AddWork cannot fail afterwards. Prior handoffs
+// and history are preserved.
+func (m *Mission) AddSubsteps(specs []SubstepSpec) error {
+	if err := ValidateSubstepProposal(m, specs); err != nil {
+		return err
+	}
+	newIDs := make([]string, 0, len(specs))
+	for _, spec := range orderSubsteps(specs) {
+		item := WorkItem{ID: strings.TrimSpace(spec.ID), Title: spec.Title, Goal: spec.Goal, Role: spec.Role, DependsOn: spec.DependsOn}
+		if err := m.AddWork(item); err != nil {
+			return fmt.Errorf("add substep %q: %w", spec.ID, err)
+		}
+		newIDs = append(newIDs, item.ID)
+	}
+	now := time.Now().UTC()
+	for i := range m.WorkItems {
+		item := &m.WorkItems[i]
+		if item.Role == RoleLead && item.Status == WorkQueued {
+			item.DependsOn = append(item.DependsOn, newIDs...)
+			item.UpdatedAt = now
+		}
+	}
+	if m.Status == Completed {
+		m.Status = Running
+	}
+	m.UpdatedAt = now
+	return nil
+}
+
+// orderSubsteps returns the proposal in a stable dependency order so peer
+// dependencies are always added before their dependents. The proposal is
+// acyclic by validation, and edges to pre-existing work are already satisfied.
+func orderSubsteps(specs []SubstepSpec) []SubstepSpec {
+	ordered := make([]SubstepSpec, 0, len(specs))
+	added := make(map[string]bool, len(specs))
+	remaining := make([]SubstepSpec, len(specs))
+	copy(remaining, specs)
+	for len(remaining) > 0 {
+		next := remaining[:0]
+		progressed := false
+		for _, spec := range remaining {
+			ready := true
+			for _, dependency := range spec.DependsOn {
+				if added[dependency] {
+					continue
+				}
+				for _, peer := range specs {
+					if strings.TrimSpace(peer.ID) == dependency {
+						ready = false
+						break
+					}
+				}
+				if !ready {
+					break
+				}
+			}
+			if ready {
+				ordered = append(ordered, spec)
+				added[strings.TrimSpace(spec.ID)] = true
+				progressed = true
+			} else {
+				next = append(next, spec)
+			}
+		}
+		if !progressed {
+			// Unreachable after validation; keep the original order rather
+			// than looping forever.
+			return specs
+		}
+		remaining = next
+	}
+	return ordered
 }
 
 func (m *Mission) Ready() []string {
@@ -339,7 +527,7 @@ func validateHandoff(item *WorkItem, handoff *Handoff) error {
 	if handoff.ID == "" || handoff.WorkItemID != item.ID || handoff.Role != item.Role || handoff.Summary == "" {
 		return errors.New("handoff identity, role, and summary must match the work item")
 	}
-	if len(handoff.Summary) > MaxTextBytes || len(handoff.Evidence) > 128 || len(handoff.ModifiedFiles) > 128 || len(handoff.Checks) > 64 || len(handoff.Issues) > 128 || len(handoff.NextSteps) > 128 {
+	if len(handoff.Summary) > MaxTextBytes || len(handoff.Evidence) > 128 || len(handoff.ModifiedFiles) > 128 || len(handoff.Checks) > 64 || len(handoff.Issues) > 128 || len(handoff.NextSteps) > 128 || len(handoff.Substeps) > MaxProposedSubsteps {
 		return errors.New("handoff exceeds bounded limits")
 	}
 	return nil

@@ -31,8 +31,9 @@ func LoadFixture[T any](path string) (T, error) {
 }
 
 type StepSpecFixture struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status,omitempty"`
 }
 
 type CheckFixture struct {
@@ -130,7 +131,7 @@ type MissionFixture struct {
 }
 
 func (m MissionFixture) Build() *team.Mission {
-	mission := &team.Mission{ID: "mission-eval", RunID: "run-eval", Goal: "eval"}
+	mission := &team.Mission{ID: "mission-eval", RunID: "run-eval", Goal: "eval", Budget: team.DefaultBudget()}
 	for _, item := range m.WorkItems {
 		mission.WorkItems = append(mission.WorkItems, item.Build())
 	}
@@ -143,8 +144,9 @@ func (m MissionFixture) Build() *team.Mission {
 // Plan fidelity fixtures.
 
 type PlanFidelityFixture struct {
-	TransitionScripts []TransitionScriptFixture `json:"transition_scripts"`
-	TeamEventScripts  []TeamEventScriptFixture  `json:"team_event_scripts"`
+	TransitionScripts      []TransitionScriptFixture      `json:"transition_scripts"`
+	TeamEventScripts       []TeamEventScriptFixture       `json:"team_event_scripts"`
+	SubstepProposalScripts []SubstepProposalScriptFixture `json:"substep_proposal_scripts,omitempty"`
 }
 
 type TransitionScriptFixture struct {
@@ -194,6 +196,40 @@ type TeamEventExpectFixture struct {
 type TransitionFixture struct {
 	Changed bool   `json:"changed"`
 	StepID  string `json:"step_id"`
+}
+
+// Substep proposal fixtures.
+
+type SubstepSpecFixture struct {
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Goal      string   `json:"goal,omitempty"`
+	Role      string   `json:"role"`
+	DependsOn []string `json:"depends_on,omitempty"`
+}
+
+func (s SubstepSpecFixture) Build() team.SubstepSpec {
+	goal := s.Goal
+	if goal == "" {
+		goal = s.ID
+	}
+	return team.SubstepSpec{ID: s.ID, Title: s.Title, Goal: goal, Role: team.Role(s.Role), DependsOn: s.DependsOn}
+}
+
+// SubstepProposalScriptFixture proposes Explorer substeps against a mission
+// snapshot; accepted proposals are then mapped onto the Live Plan 1:1.
+type SubstepProposalScriptFixture struct {
+	Name      string               `json:"name"`
+	Mission   MissionFixture       `json:"mission"`
+	PlanSteps []StepSpecFixture    `json:"plan_steps"`
+	Proposal  []SubstepSpecFixture `json:"proposal"`
+	Expected  SubstepExpectFixture `json:"expected"`
+}
+
+type SubstepExpectFixture struct {
+	Accept        bool     `json:"accept"`
+	ErrorContains string   `json:"error_contains,omitempty"`
+	LeadDependsOn []string `json:"lead_depends_on,omitempty"`
 }
 
 // Handoff quality fixtures.

@@ -3,7 +3,9 @@
 package runcontrol
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
@@ -40,6 +42,22 @@ func ApplyTeamEvent(plan *taskplan.Plan, teamEvent team.TeamEvent, mission *team
 		}
 	case team.WorkItemFailed:
 		changed, err = plan.Fail(stepID, detail)
+	case team.SubstepsAccepted:
+		// The coordinator message is a bounded JSON array of {id, title};
+		// a malformed payload must never panic or change the plan.
+		var specs []taskplan.StepSpec
+		if decodeErr := json.Unmarshal([]byte(teamEvent.Message), &specs); decodeErr != nil {
+			return Transition{}, nil
+		}
+		changed, err = plan.AddSteps(specs)
+		if changed {
+			stepID = specs[0].ID
+			detail = fmt.Sprintf("Explorer 提议 %d 个任务子步骤", len(specs))
+		}
+	case team.SubstepsRejected:
+		// Rejected proposals never change the plan; the reason still reaches
+		// the owner as a session event via the web sink's default mapping.
+		return Transition{}, nil
 	case team.MissionFailed:
 		if stepID == "" {
 			if current := plan.Current(); current != nil {
