@@ -27,6 +27,9 @@ type Config struct {
 	CheckpointEveryTurns       int
 	CheckpointOnToolCompletion bool
 	MaxVerificationAttempts    int
+	// ApprovalTTL optionally shortens the approval-request lifetime (tests);
+	// zero uses the contract TTL (approval.TTL, 15 minutes).
+	ApprovalTTL time.Duration
 }
 type Runner struct {
 	Provider model.Provider
@@ -35,6 +38,10 @@ type Runner struct {
 	Store    *session.Store
 	Config   Config
 	Sink     event.Sink
+	// Approvals delivers owner decisions for parked approval requests. Nil
+	// keeps the pre-C3 behavior exactly: the denial data goes straight to the
+	// model and no approval request is ever created (fail closed).
+	Approvals ApprovalDecisions
 }
 
 func (r *Runner) Run(ctx context.Context, s *session.Session) error {
@@ -220,7 +227,16 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 				return err
 			}
 			result, _ := r.Executor.Execute(runCtx, tool.Call{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
-			if result.Error != nil && (result.Error.Code == "confirmation_required" || result.Error.Code == "blocked") {
+			if result.Error != nil && result.Error.Code == tool.CodeApprovalRequired && r.Approvals != nil {
+				result, err = r.awaitApproval(runCtx, s, active, turn, call, result)
+				if err != nil {
+					if runCtx.Err() != nil {
+						return r.stop(runCtx, s, runCtx.Err())
+					}
+					return err
+				}
+			}
+			if result.Error != nil && (result.Error.Code == "confirmation_required" || result.Error.Code == "blocked" || result.Error.Code == tool.CodeApprovalRequired) {
 				pe := event.New(event.PermissionRequired, s.ID)
 				pe.RunID = active.ID
 				pe.Turn = turn

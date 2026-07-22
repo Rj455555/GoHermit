@@ -28,3 +28,29 @@ func TestExecutorTimeoutAndTruncation(t *testing.T) {
 		t.Fatalf("result=%+v", res)
 	}
 }
+
+// TestExecuteApprovedMarksOnlyTheSingleInvocation: the approved marker is
+// visible to the tool only inside ExecuteApproved and can never leak into a
+// plain Execute — the unexported key is set by the executor alone.
+func TestExecuteApprovedMarksOnlyTheSingleInvocation(t *testing.T) {
+	r := NewRegistry()
+	_ = r.Register(fakeTool{def: Definition{Name: "probe", InputSchema: json.RawMessage(`{}`)}, run: func(ctx context.Context, c Call) (Result, error) {
+		if IsApproved(ctx) {
+			return Result{Output: "approved"}, nil
+		}
+		return Result{Error: &Error{Code: CodeApprovalRequired, Message: "parked"}, Approval: &ApprovalHint{Paths: []string{"a.txt"}, Summary: "probe a.txt"}}, nil
+	}})
+	executor := Executor{Registry: r}
+	res, _ := executor.Execute(context.Background(), Call{Name: "probe"})
+	if res.Error == nil || res.Error.Code != CodeApprovalRequired || res.Approval == nil || res.Approval.Paths[0] != "a.txt" {
+		t.Fatalf("plain execute result=%+v", res)
+	}
+	res, _ = executor.ExecuteApproved(context.Background(), Call{Name: "probe"})
+	if res.Error != nil || res.Output != "approved" {
+		t.Fatalf("approved execute result=%+v", res)
+	}
+	res, _ = executor.Execute(context.Background(), Call{Name: "probe"})
+	if res.Error == nil || res.Error.Code != CodeApprovalRequired {
+		t.Fatalf("marker leaked beyond the single invocation: %+v", res)
+	}
+}

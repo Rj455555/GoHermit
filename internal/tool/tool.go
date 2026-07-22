@@ -37,20 +37,41 @@ type Call struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 type Result struct {
-	CallID       string `json:"call_id"`
-	Name         string `json:"name"`
-	Output       string `json:"output,omitempty"`
-	Stdout       string `json:"stdout,omitempty"`
-	Stderr       string `json:"stderr,omitempty"`
-	Truncated    bool   `json:"truncated"`
-	OriginalSize int    `json:"original_size"`
-	ReturnedSize int    `json:"returned_size"`
-	Error        *Error `json:"error,omitempty"`
+	CallID       string        `json:"call_id"`
+	Name         string        `json:"name"`
+	Output       string        `json:"output,omitempty"`
+	Stdout       string        `json:"stdout,omitempty"`
+	Stderr       string        `json:"stderr,omitempty"`
+	Truncated    bool          `json:"truncated"`
+	OriginalSize int           `json:"original_size"`
+	ReturnedSize int           `json:"returned_size"`
+	Error        *Error        `json:"error,omitempty"`
+	Approval     *ApprovalHint `json:"approval,omitempty"`
 }
 type Error struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	Retryable bool   `json:"retryable"`
+}
+
+// CodeApprovalRequired marks a parked call, not a failure: the tool declined
+// to run a confirmation-required call until the owner decides a durable
+// approval request (ADR 0011). Only runners with an approval-decision source
+// handle it; every other path treats it as the denial data it always was.
+const CodeApprovalRequired = "approval_required"
+
+// CodeApprovalDenied is the structured tool-result code a parked call
+// resolves to when the owner denies the request, the request expires, or no
+// decision can be waited for. The run continues without the side effect.
+const CodeApprovalDenied = "approval_denied"
+
+// ApprovalHint carries the bounded scope a tool proposes for the approval
+// request: workspace-relative resource paths plus a redacted argument
+// summary. It is a hint, not a security boundary — approval.Create
+// re-validates every field.
+type ApprovalHint struct {
+	Paths   []string `json:"paths,omitempty"`
+	Summary string   `json:"summary,omitempty"`
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
@@ -106,6 +127,26 @@ func (r *Registry) ModelDefinitions() []model.ToolDefinition {
 type Executor struct {
 	Registry       *Registry
 	DefaultTimeout time.Duration
+}
+
+// approvedKey marks one executor invocation as owner-approved. It is
+// unexported and set only by ExecuteApproved, so no caller or tool input can
+// forge approval: the marker exists solely inside the single re-execution
+// the runner performs after a consumed approval (ADR 0011).
+type approvedKey struct{}
+
+// ExecuteApproved executes exactly this one call with the single-invocation
+// approval marker injected. The marker never propagates beyond this call.
+func (e Executor) ExecuteApproved(ctx context.Context, call Call) (Result, error) {
+	return e.Execute(context.WithValue(ctx, approvedKey{}, true), call)
+}
+
+// IsApproved reports whether the executor marked this invocation approved.
+// Tool implementations check it to skip their own confirmation gate for the
+// one approved re-execution.
+func IsApproved(ctx context.Context) bool {
+	approved, _ := ctx.Value(approvedKey{}).(bool)
+	return approved
 }
 
 func (e Executor) Execute(ctx context.Context, call Call) (Result, error) {

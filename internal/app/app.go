@@ -52,6 +52,10 @@ type RuntimeOptions struct {
 	Selection *config.RuntimeSelection
 	APIKey    string
 	Models    []config.ModelOption
+	// Approvals, when set, lets the runner park confirmation-required calls
+	// until the owner decides (ADR 0011). Nil keeps deny-by-default: no
+	// approval request is ever created.
+	Approvals agent.ApprovalDecisions
 }
 
 func (r *Runtime) Close() {
@@ -386,7 +390,7 @@ func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, 
 		cleanup()
 		return nil, err
 	}
-	runner := &agent.Runner{Provider: provider, Executor: tool.Executor{Registry: registry, DefaultTimeout: conf.Tools.DefaultTimeout.Value()}, Context: manager, Store: store, Config: agent.Config{MaxTurns: conf.Agent.MaxTurns, Timeout: conf.Agent.Timeout.Value(), Model: conf.Model.Name, Stream: conf.Model.Stream, CheckpointEveryTurns: conf.Storage.CheckpointEveryTurns, CheckpointOnToolCompletion: conf.Storage.CheckpointOnToolCompletion}}
+	runner := &agent.Runner{Provider: provider, Executor: tool.Executor{Registry: registry, DefaultTimeout: conf.Tools.DefaultTimeout.Value()}, Context: manager, Store: store, Config: agent.Config{MaxTurns: conf.Agent.MaxTurns, Timeout: conf.Agent.Timeout.Value(), Model: conf.Model.Name, Stream: conf.Model.Stream, CheckpointEveryTurns: conf.Storage.CheckpointEveryTurns, CheckpointOnToolCompletion: conf.Storage.CheckpointOnToolCompletion}, Approvals: options.Approvals}
 	return &Runtime{Workspace: workspace, Config: conf, Store: store, Runner: runner, close: cleanup}, nil
 }
 

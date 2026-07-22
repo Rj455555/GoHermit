@@ -58,7 +58,10 @@ type Request struct {
 
 // CreateSpec is the input to Create. ArgsPayload is the canonical argument
 // payload; only its sha256 digest is kept. RequestID is optional and is
-// derived from the digest when empty (Create performs no IO).
+// derived from the digest when empty (Create performs no IO). TTL optionally
+// shortens the fixed 15-minute lifetime (e.g. for tests): zero or any value
+// outside (0, TTL] falls back to the package TTL, so a caller can never
+// extend the contract lifetime.
 type CreateSpec struct {
 	RequestID         string
 	SessionID         string
@@ -72,11 +75,13 @@ type CreateSpec struct {
 	ArgsPayload       string
 	PolicyFingerprint string
 	PlanRevision      int
+	TTL               time.Duration
 }
 
-// Create validates the scope, computes the argument digest, stamps the fixed
-// 15-minute expiry, and returns a pending request. Only tests invoke it in C2;
-// real tool-call request production lands in C3.
+// Create validates the scope, computes the argument digest, stamps the
+// expiry (CreateSpec.TTL, bounded by the fixed 15-minute contract lifetime),
+// and returns a pending request. Real tool calls produce requests through it
+// since C3.
 func Create(spec CreateSpec, now time.Time) (Request, error) {
 	if strings.TrimSpace(spec.SessionID) == "" || strings.TrimSpace(spec.RunID) == "" || strings.TrimSpace(spec.Tool) == "" {
 		return Request{}, errors.New("approval request requires session, run, and tool")
@@ -107,6 +112,10 @@ func Create(spec CreateSpec, now time.Time) (Request, error) {
 		}
 	}
 	now = now.UTC()
+	ttl := spec.TTL
+	if ttl <= 0 || ttl > TTL {
+		ttl = TTL
+	}
 	digest := sha256.Sum256([]byte(spec.ArgsPayload))
 	requestID := strings.TrimSpace(spec.RequestID)
 	if requestID == "" {
@@ -126,7 +135,7 @@ func Create(spec CreateSpec, now time.Time) (Request, error) {
 		PolicyFingerprint: spec.PolicyFingerprint,
 		PlanRevision:      spec.PlanRevision,
 		CreatedAt:         now,
-		ExpiresAt:         now.Add(TTL),
+		ExpiresAt:         now.Add(ttl),
 		Status:            Pending,
 	}, nil
 }
