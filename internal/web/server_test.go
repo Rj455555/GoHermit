@@ -15,6 +15,7 @@ import (
 
 	"github.com/Rj455555/GoHermit/internal/agent"
 	"github.com/Rj455555/GoHermit/internal/app"
+	"github.com/Rj455555/GoHermit/internal/approval"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
 	"github.com/Rj455555/GoHermit/internal/event"
@@ -1027,5 +1028,236 @@ func TestTeamRunFailsClosedWhenTemplateUnloadable(t *testing.T) {
 	}
 	if loaded.Mission.Status == team.Running || loaded.Mission.Status == team.Completed {
 		t.Fatalf("mission must not have run: %s", loaded.Mission.Status)
+	}
+}
+
+var approvalTestStart = time.Now().UTC().Add(-time.Minute)
+
+func newApprovalRequest(t *testing.T, sessionID, requestID string, created time.Time) approval.Request {
+	t.Helper()
+	if sessionID == "" {
+		// Create validates a non-empty session; seedApprovalSession rebinds the
+		// request to the real session before persisting.
+		sessionID = "session-unassigned"
+	}
+	req, err := approval.Create(approval.CreateSpec{
+		RequestID: requestID, SessionID: sessionID, RunID: "run-1", Tool: "shell",
+		ResourcePaths: []string{"src/main.go"}, ArgsSummary: "go build ./...",
+		ArgsPayload: `{"command":"go build ./..."}`, PolicyFingerprint: "fp-1", PlanRevision: 1,
+	}, created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
+
+func seedApprovalSession(t *testing.T, server *Server, requests ...approval.Request) *session.Session {
+	t.Helper()
+	sess, err := session.NewConversation("Approvals", server.Workspace, "digest", session.Selection{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range requests {
+		requests[i].SessionID = sess.ID
+	}
+	sess.ApprovalRequests = requests
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	return sess
+}
+
+func decideApprovalRequest(server *Server, sessionID, requestID, origin, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/approvals/"+requestID+"/decide", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	if origin != "" {
+		request.Header.Set("Origin", origin)
+	}
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	return response
+}
+
+func loadApprovalStatus(t *testing.T, server *Server, sessionID, requestID string) approval.Status {
+	t.Helper()
+	fresh, err := session.NewStore(server.Workspace, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := fresh.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range loaded.ApprovalRequests {
+		if req.RequestID == requestID {
+			return req.Status
+		}
+	}
+	t.Fatalf("request %q missing from fresh store", requestID)
+	return ""
+}
+
+func approvalEvents(t *testing.T, server *Server, sessionID string) []event.Event {
+	t.Helper()
+	fresh, err := session.NewStore(server.Workspace, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := fresh.Events(sessionID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
+
+func TestListApprovalsFiltersByStatusAndReportsLazyExpiryWithoutPersisting(t *testing.T) {
+	server := testServer(t)
+	live := newApprovalRequest(t, "", "apr-live", approvalTestStart)
+	stale := newApprovalRequest(t, "", "apr-stale", time.Now().UTC().Add(-20*time.Minute))
+	approved := newApprovalRequest(t, "", "apr-approved", approvalTestStart)
+	approved.Status = approval.Approved
+	sess := seedApprovalSession(t, server, live, stale, approved)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID+"/approvals", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Approvals []approval.Request `json:"approvals"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Approvals) != 1 || body.Approvals[0].RequestID != "apr-live" {
+		t.Fatalf("default filter must list live pending only: %+v", body.Approvals)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID+"/approvals?status=expired", nil)
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Approvals) != 1 || body.Approvals[0].RequestID != "apr-stale" {
+		t.Fatalf("expired filter must report the lazily expired request: %+v", body.Approvals)
+	}
+	// The lazy expiry is reported but never persisted by a read.
+	if status := loadApprovalStatus(t, server, sess.ID, "apr-stale"); status != approval.Pending {
+		t.Fatalf("read mutated durable state: %s", status)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID+"/approvals?status=bogus", nil)
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown status filter=%d", response.Code)
+	}
+}
+
+func TestDecideApprovalPersistsApprovedBeforeAnySubscriber(t *testing.T) {
+	server := testServer(t)
+	sess := seedApprovalSession(t, server, newApprovalRequest(t, "", "apr-1", approvalTestStart))
+	response := decideApprovalRequest(server, sess.ID, "apr-1", "", `{"decision":"approve"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("decide status=%d body=%s", response.Code, response.Body.String())
+	}
+	// Durable-before-visible: with no subscriber at all, a FRESH store already
+	// reads the approved checkpoint and the committed event.
+	if status := loadApprovalStatus(t, server, sess.ID, "apr-1"); status != approval.Approved {
+		t.Fatalf("persisted status=%s", status)
+	}
+	events := approvalEvents(t, server, sess.ID)
+	if len(events) != 1 || events[0].Type != event.ApprovalDecided || events[0].Sequence != 1 {
+		t.Fatalf("events=%+v", events)
+	}
+}
+
+func TestDecideApprovalDenyPersistsDenied(t *testing.T) {
+	server := testServer(t)
+	sess := seedApprovalSession(t, server, newApprovalRequest(t, "", "apr-1", approvalTestStart))
+	response := decideApprovalRequest(server, sess.ID, "apr-1", "", `{"decision":"deny"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("decide status=%d body=%s", response.Code, response.Body.String())
+	}
+	if status := loadApprovalStatus(t, server, sess.ID, "apr-1"); status != approval.Denied {
+		t.Fatalf("persisted status=%s", status)
+	}
+}
+
+func TestDecideApprovalAlreadyDecidedConflictsWithoutChangingState(t *testing.T) {
+	server := testServer(t)
+	sess := seedApprovalSession(t, server, newApprovalRequest(t, "", "apr-1", approvalTestStart))
+	if response := decideApprovalRequest(server, sess.ID, "apr-1", "", `{"decision":"approve"}`); response.Code != http.StatusOK {
+		t.Fatalf("first decide status=%d", response.Code)
+	}
+	response := decideApprovalRequest(server, sess.ID, "apr-1", "", `{"decision":"deny"}`)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("re-decide status=%d body=%s", response.Code, response.Body.String())
+	}
+	if status := loadApprovalStatus(t, server, sess.ID, "apr-1"); status != approval.Approved {
+		t.Fatalf("failed re-decide changed state: %s", status)
+	}
+	if events := approvalEvents(t, server, sess.ID); len(events) != 1 {
+		t.Fatalf("failed re-decide committed an event: %+v", events)
+	}
+}
+
+func TestDecideApprovalExpiredPendingBecomesExpiredAndCannotBeApproved(t *testing.T) {
+	server := testServer(t)
+	stale := newApprovalRequest(t, "", "apr-stale", time.Now().UTC().Add(-20*time.Minute))
+	sess := seedApprovalSession(t, server, stale)
+	response := decideApprovalRequest(server, sess.ID, "apr-stale", "", `{"decision":"approve"}`)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expired decide status=%d body=%s", response.Code, response.Body.String())
+	}
+	if status := loadApprovalStatus(t, server, sess.ID, "apr-stale"); status != approval.Expired {
+		t.Fatalf("persisted status=%s", status)
+	}
+	events := approvalEvents(t, server, sess.ID)
+	if len(events) != 1 || events[0].Type != event.ApprovalExpired {
+		t.Fatalf("events=%+v", events)
+	}
+	// The expired request stays terminal: a later decision still fails.
+	if response = decideApprovalRequest(server, sess.ID, "apr-stale", "", `{"decision":"approve"}`); response.Code != http.StatusConflict {
+		t.Fatalf("expired terminal decide status=%d", response.Code)
+	}
+}
+
+func TestDecideApprovalRejectsUnknownAndCrossSessionIDs(t *testing.T) {
+	server := testServer(t)
+	sess := seedApprovalSession(t, server, newApprovalRequest(t, "", "apr-1", approvalTestStart))
+	other := seedApprovalSession(t, server, newApprovalRequest(t, "", "apr-other", approvalTestStart))
+
+	if response := decideApprovalRequest(server, sess.ID, "apr-missing", "", `{"decision":"approve"}`); response.Code != http.StatusNotFound {
+		t.Fatalf("unknown id status=%d", response.Code)
+	}
+	// A request_id that exists only in another session must not be decidable here.
+	if response := decideApprovalRequest(server, sess.ID, "apr-other", "", `{"decision":"approve"}`); response.Code != http.StatusNotFound {
+		t.Fatalf("cross-session id status=%d", response.Code)
+	}
+	if status := loadApprovalStatus(t, server, other.ID, "apr-other"); status != approval.Pending {
+		t.Fatalf("cross-session attempt mutated the other session: %s", status)
+	}
+	if events := approvalEvents(t, server, sess.ID); len(events) != 0 {
+		t.Fatalf("failed decides committed events: %+v", events)
+	}
+}
+
+func TestDecideApprovalRejectsCrossOriginBadDecisionAndUnknownFields(t *testing.T) {
+	server := testServer(t)
+	sess := seedApprovalSession(t, server, newApprovalRequest(t, "", "apr-1", approvalTestStart))
+	if response := decideApprovalRequest(server, sess.ID, "apr-1", "https://attacker.example", `{"decision":"approve"}`); response.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin status=%d", response.Code)
+	}
+	if response := decideApprovalRequest(server, sess.ID, "apr-1", "", `{"decision":"maybe"}`); response.Code != http.StatusBadRequest {
+		t.Fatalf("bad decision status=%d", response.Code)
+	}
+	if response := decideApprovalRequest(server, sess.ID, "apr-1", "", `{"decision":"approve","note":"x"}`); response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field status=%d", response.Code)
+	}
+	if status := loadApprovalStatus(t, server, sess.ID, "apr-1"); status != approval.Pending {
+		t.Fatalf("rejected requests changed state: %s", status)
 	}
 }

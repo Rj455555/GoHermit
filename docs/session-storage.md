@@ -4,6 +4,8 @@
 
 Schema v4 separates a durable `open`/`archived` Session from its Runs and adds an optional Team Mission plus a bounded public Run Plan. `session.json` records fixed provider/model/Agent selection, Run states and Plan revisions, active Run, recent bounded messages, summary, tool lifecycles, file hashes, tests, workspace/Git digests, the next event sequence, and bounded Mission/WorkItem/Handoff state. `messages.jsonl` stores only visible owner/Lead messages. `events.jsonl` stores sequenced audit events. `summary.md` is the human recovery view.
 
+Schema v5 adds the Session-scoped `approval_requests` list (ADR 0011): bounded, one-shot, expiring approval records for side-effecting calls. v4 checkpoints migrate by simply advancing the version — the field loads empty; unknown versions still fail closed. Approval decisions and expirations travel the same durable-before-visible commit path as Plan events.
+
 ## Checkpoint lifecycle
 
 State stays in memory during streaming. Checkpoints occur after completed tool calls, every configured number of turns, at final success/failure/cancellation, and before normal process exit. Stream chunks and full request bodies are never checkpointed. Event records are written in batches rather than one file or fsync per event.
