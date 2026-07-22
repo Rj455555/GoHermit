@@ -6,7 +6,7 @@ services:
         GO_IMAGE: "${GOHERMIT_GO_IMAGE:-golang:1.26-bookworm}"
     user: "${GOHERMIT_UID:-501}:${GOHERMIT_GID:-20}"
     ports:
-      - "127.0.0.1:${GOHERMIT_WEB_PORT:-8787}:8787"
+      - "${GOHERMIT_WEB_BIND:-127.0.0.1}:${GOHERMIT_WEB_PORT:-8787}:8787"
     environment:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
