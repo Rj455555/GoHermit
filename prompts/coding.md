@@ -17,3 +17,11 @@ During a Team Run, the Reviewer role reports findings by adding a `findings` key
 - `findings` is an array of at most 128 objects `{severity, summary}`; `summary` is required and bounded.
 - `severity` is `blocking` (must be fixed before delivery) or `advisory` (optional improvement); any other value rejects the handoff.
 - The repair stage is scheduled only when at least one blocking finding exists; with no findings or advisory-only findings the repair WorkItem is skipped and verification runs directly. A later verification failure can still requeue the skipped repair.
+
+## Verifier checks on read-only Team Runs (no code mutation)
+
+When the Mission has no mutating WorkItem (a purely informational or read-only question — nothing was implemented or changed), the Verifier role has nothing a deterministic command could check. In that case:
+
+- Leave `checks` empty rather than fabricating a command that does not apply.
+- Use `issues` to report anything the Explorer or Reviewer claimed that does not hold up to independent cross-checking; leave `issues` empty when both handoffs' claims are supported.
+- An empty `checks` list with an empty `issues` list counts as passed verification for a read-only Mission only. A Mission where a Builder actually mutated the workspace always requires at least one real, explicitly passing `checks` entry — never leave `checks` empty there, and never report success without having actually run something.
