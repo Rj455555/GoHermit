@@ -42,3 +42,7 @@ CI later flaked two more tests of the same class — `TestMutationRequiresSucces
 ## Addendum (A5c): web test deadlines
 
 The same timing-flake class reached `internal/web`: `TestReviewPlanWaitsForApprovalBeforeTeamExecution` flaked on CI because a 2-second wall-clock deadline raced the full team run on a loaded runner. The three tight deadlines in `internal/web/server_test.go` (1s publish wait, two 2s completion deadlines) were widened to 30s — they only bound pathological hangs; the fake workers finish in milliseconds. The 20ms cancellation timers and the 10s SSE deadline are unchanged by design.
+
+## Addendum (A5d): plugin lifecycle test timeouts
+
+`TestNodeEchoLifecycle` flaked on CI (`internal/plugin`): spawning the node plugin process and the 1s shutdown deadline raced a loaded runner. Startup contexts widened 3s → 30s, shutdown/lifecycle contexts 1s → 10s. The 20ms timeout-behavior assertions in `TestPluginTimeoutCancellation` are unchanged — they test cancellation, not wall clock.

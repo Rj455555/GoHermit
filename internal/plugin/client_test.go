@@ -29,7 +29,7 @@ func TestPythonEchoLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "examples", "plugins", "python-echo", "plugin.py")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	p, err := Start(ctx, Config{Command: []string{python(t), path}, Directory: root, DefaultTimeout: time.Second, MaxMessageBytes: 1 << 20})
 	if err != nil {
@@ -55,7 +55,7 @@ func TestPythonEchoLifecycle(t *testing.T) {
 	if err != nil || toolResult.Output != "registered" {
 		t.Fatalf("registered result=%+v err=%v", toolResult, err)
 	}
-	shutdownCtx, stop := context.WithTimeout(context.Background(), time.Second)
+	shutdownCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stop()
 	if err = p.Shutdown(shutdownCtx); err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestNodeEchoLifecycle(t *testing.T) {
 	}
 	root, _ := filepath.Abs(filepath.Join("..", ".."))
 	path := filepath.Join(root, "examples", "plugins", "node-echo", "plugin.js")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	p, err := Start(ctx, Config{Command: []string{node, path}, Directory: root, DefaultTimeout: time.Second, MaxMessageBytes: 1 << 20})
 	if err != nil {
@@ -104,14 +104,14 @@ func TestNodeEchoLifecycle(t *testing.T) {
 	if err != nil || result.Output != "node" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	shutdownCtx, stop := context.WithTimeout(context.Background(), time.Second)
+	shutdownCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stop()
 	if err = p.Shutdown(shutdownCtx); err != nil {
 		t.Fatal(err)
 	}
 }
 func TestInvalidJSONAndCrash(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, err := Start(ctx, Config{Command: []string{python(t), "-c", "import time; print('not-json', flush=True); time.sleep(.1)"}, Directory: t.TempDir(), DefaultTimeout: time.Second, MaxMessageBytes: 4096})
 	if err == nil || !strings.Contains(err.Error(), "invalid JSON") {
@@ -137,7 +137,7 @@ for line in sys.stdin:
 	if err := os.WriteFile(path, []byte(script), 0600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	p, err := Start(ctx, Config{Command: []string{python(t), path}, Directory: t.TempDir(), DefaultTimeout: time.Second, MaxMessageBytes: 4096})
 	if err != nil {
