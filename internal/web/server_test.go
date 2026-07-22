@@ -12,12 +12,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rj455555/GoHermit/internal/agent"
+	"github.com/Rj455555/GoHermit/internal/app"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
+	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/runcontrol"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
+	"github.com/Rj455555/GoHermit/internal/teamtemplate"
 )
 
 func testServer(t *testing.T) *Server {
@@ -474,4 +478,162 @@ func TestTeamCancellationAndTimeoutHaveDistinctRecoverySemantics(t *testing.T) {
 			}
 		})
 	}
+}
+
+type noToolCallsProvider struct{}
+
+func (noToolCallsProvider) Generate(context.Context, model.GenerateRequest) (model.GenerateResponse, error) {
+	return model.GenerateResponse{}, nil
+}
+
+func (noToolCallsProvider) Capabilities() model.Capabilities {
+	return model.Capabilities{Streaming: true}
+}
+
+func injectTeamTemplate(t *testing.T, server *Server, template *teamtemplate.Template) {
+	t.Helper()
+	store, err := teamtemplate.NewStore(filepath.Join(t.TempDir(), "team-template.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if template != nil {
+		if err := store.Save(*template); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server.teamTemplates = store
+}
+
+func createSessionRequest(t *testing.T, handler http.Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func assertNoSessionPersisted(t *testing.T, server *Server) {
+	t.Helper()
+	ids, err := server.store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("rejected creation left sessions behind: %v", ids)
+	}
+}
+
+func TestCreateTeamSessionRejectsRoleWithoutCredential(t *testing.T) {
+	server := testServer(t)
+	t.Setenv("DASHSCOPE_API_KEY", "")
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "mixed",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+		Roles: map[string]teamtemplate.RoleSelection{
+			"builder": {Company: "alibaba", Access: "alibaba", Model: "qwen3.7-plus"},
+		},
+	})
+	response := createSessionRequest(t, server.Handler(), `{"company":"deepseek","access":"deepseek","model":"deepseek-chat","agent":"team"}`)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "builder") {
+		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+	}
+	assertNoSessionPersisted(t, server)
+}
+
+func TestCreateTeamSessionRejectsUnknownRoleModel(t *testing.T) {
+	server := testServer(t)
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "unknown-model",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+		Roles: map[string]teamtemplate.RoleSelection{
+			"reviewer": {Company: "deepseek", Access: "deepseek", Model: "no-such-model"},
+		},
+	})
+	response := createSessionRequest(t, server.Handler(), `{"company":"deepseek","access":"deepseek","model":"deepseek-chat","agent":"team"}`)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "reviewer") || !strings.Contains(response.Body.String(), "no-such-model") {
+		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+	}
+	assertNoSessionPersisted(t, server)
+}
+
+func TestCreateTeamSessionWithValidTemplate(t *testing.T) {
+	server := testServer(t)
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "valid",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+		Roles: map[string]teamtemplate.RoleSelection{
+			"verifier": {Company: "deepseek", Access: "deepseek", Model: "deepseek-reasoner"},
+		},
+	})
+	response := createSessionRequest(t, server.Handler(), `{"company":"deepseek","access":"deepseek","model":"deepseek-chat","agent":"team"}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+	}
+	var created session.Session
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Selection.Agent != "team" {
+		t.Fatalf("created=%+v", created)
+	}
+}
+
+func TestCreateTeamSessionWithoutTemplateStaysBackwardCompatible(t *testing.T) {
+	server := testServer(t)
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	injectTeamTemplate(t, server, nil)
+	response := createSessionRequest(t, server.Handler(), `{"company":"deepseek","access":"deepseek","model":"deepseek-chat","agent":"team"}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCreateNonTeamSessionIgnoresInvalidTemplate(t *testing.T) {
+	server := testServer(t)
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := teamtemplate.NewStore(filepath.Join(t.TempDir(), "team-template.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.Path(), []byte(`{"schema_version": 99}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server.teamTemplates = store
+	response := createSessionRequest(t, server.Handler(), `{"company":"deepseek","access":"deepseek","model":"deepseek-chat","agent":"coding"}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCreateTeamSessionRejectsProviderWithoutToolCalls(t *testing.T) {
+	server := testServer(t)
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "no-tools",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+	})
+	server.build = func(_ context.Context, workspace, _ string, _ config.RuntimeSelection, _ string, _ []config.ModelOption) (*app.Runtime, error) {
+		return &app.Runtime{Workspace: workspace, Runner: &agent.Runner{Provider: noToolCallsProvider{}}}, nil
+	}
+	response := createSessionRequest(t, server.Handler(), `{"company":"deepseek","access":"deepseek","model":"deepseek-chat","agent":"team"}`)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "tool calls") {
+		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+	}
+	assertNoSessionPersisted(t, server)
 }
