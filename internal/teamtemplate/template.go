@@ -50,6 +50,31 @@ var allowedOverrides = map[string]bool{
 	string(team.RoleVerifier): true,
 }
 
+// Empty reports whether the template holds no usable default selection —
+// the case for a store whose file was never written.
+func (t Template) Empty() bool {
+	return clean(t.Default.Company) == "" || clean(t.Default.Access) == "" || clean(t.Default.Model) == ""
+}
+
+// SelectionForRole returns the role's override when present, else the
+// template default.
+func (t Template) SelectionForRole(role string) RoleSelection {
+	if selection, ok := t.Roles[role]; ok {
+		return selection
+	}
+	return t.Default
+}
+
+// EffectiveSelections resolves the selection every validatable team role
+// ends up with: the per-role override when set, the default otherwise.
+func EffectiveSelections(t Template) map[string]RoleSelection {
+	selections := make(map[string]RoleSelection, len(allowedOverrides))
+	for role := range allowedOverrides {
+		selections[role] = t.SelectionForRole(role)
+	}
+	return selections
+}
+
 type Store struct {
 	path string
 	mu   sync.Mutex

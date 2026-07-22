@@ -256,3 +256,50 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestEmptyReportsMissingDefaultSelection(t *testing.T) {
+	if !(Template{}).Empty() {
+		t.Fatal("zero template must be empty")
+	}
+	if !(Template{SchemaVersion: SchemaVersion}).Empty() {
+		t.Fatal("template from a missing file must be empty")
+	}
+	partial := Template{Default: RoleSelection{Company: "openai", Access: "api"}}
+	if !partial.Empty() {
+		t.Fatal("default without a model must be empty")
+	}
+	if validTemplate().Empty() {
+		t.Fatal("fully populated template must not be empty")
+	}
+}
+
+func TestSelectionForRolePrefersOverride(t *testing.T) {
+	template := validTemplate()
+	if got := template.SelectionForRole(string(team.RoleLead)); got != template.Roles[string(team.RoleLead)] {
+		t.Fatalf("lead selection = %+v, want override %+v", got, template.Roles[string(team.RoleLead)])
+	}
+	if got := template.SelectionForRole(string(team.RoleVerifier)); got != template.Default {
+		t.Fatalf("verifier selection = %+v, want default %+v", got, template.Default)
+	}
+}
+
+func TestEffectiveSelectionsCoversEveryValidatableRole(t *testing.T) {
+	template := validTemplate()
+	selections := EffectiveSelections(template)
+	wantRoles := []string{
+		string(team.RoleLead), string(team.RoleExplorer), string(team.RoleBuilder),
+		string(team.RoleReviewer), string(team.RoleVerifier),
+	}
+	if len(selections) != len(wantRoles) {
+		t.Fatalf("selections = %+v", selections)
+	}
+	for _, role := range wantRoles {
+		selection, ok := selections[role]
+		if !ok {
+			t.Fatalf("role %q missing from %+v", role, selections)
+		}
+		if selection != template.SelectionForRole(role) {
+			t.Fatalf("role %q selection = %+v, want %+v", role, selection, template.SelectionForRole(role))
+		}
+	}
+}

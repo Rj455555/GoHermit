@@ -26,6 +26,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
+	"github.com/Rj455555/GoHermit/internal/teamtemplate"
 )
 
 //go:embed assets/*
@@ -51,6 +52,10 @@ type Server struct {
 	codexModels   []config.ModelOption
 	codexModelsAt time.Time
 	teamWorker    team.Worker
+	teamTemplates *teamtemplate.Store
+	// teamTemplatesErr defers store-resolution failure to request time so a
+	// team session fails closed instead of the server failing to start.
+	teamTemplatesErr error
 }
 
 func New(workspace, configPath string) (*Server, error) {
@@ -70,6 +75,7 @@ func New(workspace, configPath string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	teamTemplates, teamTemplatesErr := teamtemplate.NewStore("")
 	store, err := session.NewStore(workspace, conf.Storage.Directory)
 	if err != nil {
 		return nil, err
@@ -81,12 +87,13 @@ func New(workspace, configPath string) (*Server, error) {
 	}
 	return &Server{
 		Workspace: workspace, ConfigPath: configPath,
-		static:      http.FileServer(http.FS(root)),
-		store:       store,
-		credentials: credentials,
-		owner:       ownerStore,
-		logins:      modelauth.NewLoginManager(credentials),
-		subscribers: map[string]map[chan event.Event]struct{}{},
+		static:        http.FileServer(http.FS(root)),
+		store:         store,
+		credentials:   credentials,
+		owner:         ownerStore,
+		logins:        modelauth.NewLoginManager(credentials),
+		subscribers:   map[string]map[chan event.Event]struct{}{},
+		teamTemplates: teamTemplates, teamTemplatesErr: teamTemplatesErr,
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
 			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models}, nil)
 		},
@@ -439,6 +446,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
+	}
+	if selection.Agent == "team" {
+		if err := s.validateTeamSelections(r.Context(), selection); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
 	}
 	runtime, err := s.build(r.Context(), s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
 	if err != nil {
@@ -945,6 +958,84 @@ func (s *Server) validateSelection(ctx context.Context, selection config.Runtime
 		return nil, err
 	}
 	return liveModels, nil
+}
+
+// teamValidationRoles fixes a stable order so the first reported validation
+// failure is deterministic.
+var teamValidationRoles = []string{
+	string(team.RoleLead), string(team.RoleExplorer), string(team.RoleBuilder),
+	string(team.RoleReviewer), string(team.RoleVerifier),
+}
+
+// validateTeamSelections checks every team role's effective provider/model
+// selection from the team template before any session state exists. An empty
+// template keeps the legacy behavior: every role runs on the session-level
+// selection, which createSession already validated.
+func (s *Server) validateTeamSelections(ctx context.Context, sessionSelection config.RuntimeSelection) error {
+	if s.teamTemplatesErr != nil {
+		return fmt.Errorf("team template store unavailable: %w", s.teamTemplatesErr)
+	}
+	if s.teamTemplates == nil {
+		return errors.New("team template store unavailable")
+	}
+	template, err := s.teamTemplates.Load()
+	if err != nil {
+		return fmt.Errorf("load team template: %w", err)
+	}
+	if template.Empty() {
+		return nil
+	}
+	selections := teamtemplate.EffectiveSelections(template)
+	checked := map[string]bool{}
+	for _, role := range teamValidationRoles {
+		roleSelection := selections[role]
+		selection := config.RuntimeSelection{Company: roleSelection.Company, Access: roleSelection.Access, Model: roleSelection.Model, Agent: sessionSelection.Agent}
+		key := selection.Company + "\x00" + selection.Access + "\x00" + selection.Model
+		if checked[key] {
+			continue
+		}
+		checked[key] = true
+		if err := s.validateTeamRoleSelection(ctx, selection); err != nil {
+			return fmt.Errorf("team role %q: %w", role, err)
+		}
+	}
+	return nil
+}
+
+// validateTeamRoleSelection reruns the session-level catalog, credential, and
+// provider capability checks for one role's effective selection.
+func (s *Server) validateTeamRoleSelection(ctx context.Context, selection config.RuntimeSelection) error {
+	liveModels, err := s.validateSelection(ctx, selection)
+	if err != nil {
+		return err
+	}
+	preset, _, err := config.ResolveSelectionWithModels(selection, liveModels)
+	if err != nil {
+		return err
+	}
+	access, ok := config.AccessProfile(selection.Company, selection.Access)
+	if !ok {
+		return errors.New("未知的接入方式")
+	}
+	configured, _, detail := s.accessStatus(ctx, access)
+	if !configured {
+		return fmt.Errorf("%s: %s", access.Label, detail)
+	}
+	apiKey, err := s.resolveCredential(ctx, selection)
+	if err != nil {
+		return err
+	}
+	runtime, err := s.build(ctx, s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
+	if err != nil {
+		return err
+	}
+	defer runtime.Close()
+	// Team roles always send tools, so a provider without tool-call support
+	// can never serve them.
+	if runtime.Runner == nil || runtime.Runner.Provider == nil || !runtime.Runner.Provider.Capabilities().ToolCalls {
+		return fmt.Errorf("provider %q does not support the tool calls every team role requires", preset.Provider)
+	}
+	return nil
 }
 
 func (s *Server) failLaunchedRun(sess *session.Session, runID string, cause error) {
