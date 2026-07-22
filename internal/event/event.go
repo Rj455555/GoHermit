@@ -34,6 +34,14 @@ const (
 	WorkItemFailed     Type = "work_item_failed"
 	PlanCreated        Type = "plan_created"
 	PlanUpdated        Type = "plan_updated"
+	// Approval lifecycle events (ADR 0011) travel the existing durable
+	// commit.json path — committed before any subscriber sees them, like every
+	// other state-changing event. Their bounded payloads carry request IDs and
+	// statuses only, never raw tool arguments.
+	ApprovalRequested Type = "approval_requested"
+	ApprovalDecided   Type = "approval_decided"
+	ApprovalExpired   Type = "approval_expired"
+	ApprovalConsumed  Type = "approval_consumed"
 	// ProviderFallback is the mandatory audit event for any future
 	// provider-to-provider fallback: it MUST be committed BEFORE switching
 	// providers, and a fallback without this event is a bug. Its bounded

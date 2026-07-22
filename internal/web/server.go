@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/app"
+	"github.com/Rj455555/GoHermit/internal/approval"
 	modelauth "github.com/Rj455555/GoHermit/internal/auth"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
@@ -120,6 +121,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/runs/{run}/cancel", s.cancelSessionRun)
 	mux.HandleFunc("POST /api/sessions/{id}/runs/{run}/resume", s.resumeSessionRun)
 	mux.HandleFunc("POST /api/sessions/{id}/runs/{run}/approve", s.approveSessionRun)
+	mux.HandleFunc("GET /api/sessions/{id}/approvals", s.listApprovals)
+	mux.HandleFunc("POST /api/sessions/{id}/approvals/{requestID}/decide", s.decideApproval)
 	mux.HandleFunc("PUT /api/settings/providers/{provider}/api-key", s.saveAPIKey)
 	mux.HandleFunc("DELETE /api/settings/providers/{provider}/credentials", s.deleteCredentials)
 	mux.HandleFunc("POST /api/settings/providers/openai-codex/login", s.startCodexLogin)
@@ -663,6 +666,125 @@ func (s *Server) approveSessionRun(w http.ResponseWriter, r *http.Request) {
 }
 
 var errRunActive = errors.New("another run is already active in this workspace")
+
+// listApprovals answers the session's approval requests filtered by status
+// (default pending). Expiry is evaluated lazily in memory only: the response
+// reports the effective status WITHOUT persisting it, so a read can never
+// mutate the durable checkpoint — a lazy expiry becomes durable at the next
+// decide or batch trigger that travels the commit path.
+func (s *Server) listApprovals(w http.ResponseWriter, r *http.Request) {
+	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	filter := strings.TrimSpace(r.URL.Query().Get("status"))
+	if filter == "" {
+		filter = string(approval.Pending)
+	}
+	switch approval.Status(filter) {
+	case approval.Pending, approval.Approved, approval.Denied, approval.Expired, approval.Consumed:
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "status must be pending, approved, denied, expired, or consumed"})
+		return
+	}
+	now := time.Now().UTC()
+	items := make([]approval.Request, 0, len(sess.ApprovalRequests))
+	for _, req := range sess.ApprovalRequests {
+		if approval.IsExpired(&req, now) {
+			req.Status = approval.Expired
+		}
+		if string(req.Status) == filter {
+			items = append(items, req)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"approvals": items})
+}
+
+// decideApproval records the owner decision for one approval request of this
+// session. A request_id from any other session is a 404: approvals never
+// cross session boundaries. The decision persists through the same
+// durable-before-visible commit path as plan approval: mutated checkpoint
+// plus a sequenced approval event, committed before anyone is notified.
+func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	var request struct {
+		Decision string `json:"decision"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid decision: " + err.Error()})
+		return
+	}
+	var approve bool
+	switch strings.TrimSpace(request.Decision) {
+	case "approve":
+		approve = true
+	case "deny":
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "decision must be approve or deny"})
+		return
+	}
+	requestID := r.PathValue("requestID")
+	if requestID == "" || len(requestID) > approval.MaxIDBytes {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid approval request id"})
+		return
+	}
+	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		return
+	}
+	var target *approval.Request
+	for i := range sess.ApprovalRequests {
+		if sess.ApprovalRequests[i].RequestID == requestID {
+			target = &sess.ApprovalRequests[i]
+			break
+		}
+	}
+	if target == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "approval request not found"})
+		return
+	}
+	now := time.Now().UTC()
+	if approval.IsExpired(target, now) {
+		// An expired pending request becomes expired and can never be decided;
+		// persist that lazily-detected expiry through the commit path.
+		target.Status = approval.Expired
+		expired := s.approvalRuntimeEvent(sess, target, event.ApprovalExpired)
+		if _, err = s.commitAndPublish(sess, expired); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "approval request expired", "request": target})
+		return
+	}
+	if err = approval.Decide(target, approve, now); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "request": target})
+		return
+	}
+	decided, err := s.commitAndPublish(sess, s.approvalRuntimeEvent(sess, target, event.ApprovalDecided))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"request": target, "event": decided})
+}
+
+// approvalRuntimeEvent builds the bounded audit event for an approval
+// lifecycle transition: request ID, tool name, and status only — never raw
+// tool arguments.
+func (s *Server) approvalRuntimeEvent(sess *session.Session, req *approval.Request, eventType event.Type) event.Event {
+	runtimeEvent := event.New(eventType, sess.ID)
+	runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.WorkItemID = req.RunID, req.MissionID, req.WorkItemID
+	runtimeEvent.Message = fmt.Sprintf("approval %s %s", req.RequestID, req.Status)
+	runtimeEvent.Data, _ = json.Marshal(map[string]any{"request_id": req.RequestID, "tool": req.Tool, "status": req.Status})
+	return runtimeEvent
+}
 
 func (s *Server) launchSessionRun(sess *session.Session, message string) (string, error) {
 	selection := config.RuntimeSelection{Company: sess.Selection.Company, Access: sess.Selection.Access, Model: sess.Selection.Model, Agent: sess.Selection.Agent}

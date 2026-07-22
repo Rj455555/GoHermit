@@ -33,3 +33,34 @@ func TestProviderFallbackTypeRoundTripsJSON(t *testing.T) {
 		t.Fatalf("round-trip mismatch: got %+v want %+v", decoded, original)
 	}
 }
+
+// TestApprovalLifecycleTypesRoundTripJSON proves the approval contract event
+// types (ADR 0011) serialize like every other event type. Nothing emits them
+// from a real tool call yet; request production lands in C3.
+func TestApprovalLifecycleTypesRoundTripJSON(t *testing.T) {
+	want := map[Type]string{
+		ApprovalRequested: "approval_requested",
+		ApprovalDecided:   "approval_decided",
+		ApprovalExpired:   "approval_expired",
+		ApprovalConsumed:  "approval_consumed",
+	}
+	for eventType, name := range want {
+		if string(eventType) != name {
+			t.Fatalf("type=%q want %q", eventType, name)
+		}
+		original := New(eventType, "session-1")
+		original.RunID = "run-1"
+		original.Message = "apr-1"
+		data, err := json.Marshal(original)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Event
+		if err = json.Unmarshal(data, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.Type != eventType || decoded.RunID != original.RunID || decoded.Message != original.Message || !decoded.Time.Equal(original.Time) {
+			t.Fatalf("round-trip mismatch: got %+v want %+v", decoded, original)
+		}
+	}
+}

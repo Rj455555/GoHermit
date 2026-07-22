@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rj455555/GoHermit/internal/approval"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
@@ -216,6 +217,79 @@ func TestSchemaV3MigrationAddsOptionalRunPlans(t *testing.T) {
 	loaded, err := store.Load(context.Background(), s.ID)
 	if err != nil || loaded.SchemaVersion != SchemaVersion || len(loaded.Runs) != 1 || loaded.Runs[0].ID != run.ID || loaded.Runs[0].Plan != nil {
 		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+}
+
+func TestSchemaV4MigrationAddsOptionalApprovalRequests(t *testing.T) {
+	root := t.TempDir()
+	store, _ := NewStore(root, ".gohermit")
+	s, _ := New("v4 goal", root, "digest")
+	run, err := s.NewRun("continue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Save(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".gohermit", "sessions", s.ID, "session.json")
+	raw, _ := os.ReadFile(path)
+	var document map[string]any
+	_ = json.Unmarshal(raw, &document)
+	document["schema_version"] = float64(4)
+	raw, _ = json.Marshal(document)
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), s.ID)
+	if err != nil || loaded.SchemaVersion != SchemaVersion || len(loaded.ApprovalRequests) != 0 || len(loaded.Runs) != 1 || loaded.Runs[0].ID != run.ID {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+}
+
+func TestApprovalRequestsSurviveRestartWithFreshStore(t *testing.T) {
+	root := t.TempDir()
+	store, _ := NewStore(root, ".gohermit")
+	s, _ := New("approval goal", root, "digest")
+	created := time.Now().UTC().Add(-time.Minute)
+	pending, err := approval.Create(approval.CreateSpec{
+		RequestID: "apr-pending", SessionID: s.ID, RunID: "run-1", Tool: "shell",
+		ResourcePaths: []string{"a.txt"}, ArgsPayload: `{"command":"ls"}`,
+		PolicyFingerprint: "fp", PlanRevision: 1,
+	}, created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumed, err := approval.Create(approval.CreateSpec{
+		RequestID: "apr-consumed", SessionID: s.ID, RunID: "run-1", Tool: "shell",
+		ResourcePaths: []string{"b.txt"}, ArgsPayload: `{"command":"pwd"}`,
+		PolicyFingerprint: "fp", PlanRevision: 1,
+	}, created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = approval.Decide(&consumed, true, created.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err = approval.Consume(&consumed, created.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	s.ApprovalRequests = []approval.Request{pending, consumed}
+	if err = store.Save(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := NewStore(root, ".gohermit")
+	loaded, err := fresh.Load(context.Background(), s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.ApprovalRequests) != 2 {
+		t.Fatalf("approvals=%+v", loaded.ApprovalRequests)
+	}
+	if loaded.ApprovalRequests[0].Status != approval.Pending || !loaded.ApprovalRequests[0].ExpiresAt.Equal(pending.ExpiresAt) {
+		t.Fatalf("pending request did not survive restart intact: %+v", loaded.ApprovalRequests[0])
+	}
+	if loaded.ApprovalRequests[1].Status != approval.Consumed {
+		t.Fatalf("consumed request did not survive restart: %+v", loaded.ApprovalRequests[1])
 	}
 }
 

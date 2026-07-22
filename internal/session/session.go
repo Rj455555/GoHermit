@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Rj455555/GoHermit/internal/approval"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/storage"
@@ -25,7 +26,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/team"
 )
 
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 const commitJournalVersion = 1
 
@@ -173,6 +174,10 @@ type Session struct {
 	ParentSessionID   string            `json:"parent_session_id,omitempty"`
 	ParentRunID       string            `json:"parent_run_id,omitempty"`
 	WorkItemID        string            `json:"work_item_id,omitempty"`
+	// ApprovalRequests stores the scoped, expiring call-approval records
+	// (ADR 0011) inside the session checkpoint — no second persistence
+	// mechanism. Decisions travel the commit.json durable-before-visible path.
+	ApprovalRequests []approval.Request `json:"approval_requests,omitempty"`
 }
 
 func New(goal, workspace, configDigest string) (*Session, error) {
@@ -590,7 +595,7 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	if err = json.Unmarshal(b, &header); err != nil {
 		return nil, fmt.Errorf("corrupt checkpoint: %w", err)
 	}
-	if header.SchemaVersion != 1 && header.SchemaVersion != 2 && header.SchemaVersion != 3 && header.SchemaVersion != SchemaVersion {
+	if header.SchemaVersion != 1 && header.SchemaVersion != 2 && header.SchemaVersion != 3 && header.SchemaVersion != 4 && header.SchemaVersion != SchemaVersion {
 		return nil, fmt.Errorf("unsupported session schema version %d", header.SchemaVersion)
 	}
 	var out Session
@@ -605,6 +610,8 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 		migrateV2(&out)
 	} else if out.SchemaVersion == 3 {
 		migrateV3(&out)
+	} else if out.SchemaVersion == 4 {
+		migrateV4(&out)
 	}
 	mode, modeErr := NormalizePlanMode(string(out.PlanMode))
 	if modeErr != nil {
@@ -828,6 +835,15 @@ func migrateV2(s *Session) {
 }
 
 func migrateV3(s *Session) {
+	s.SchemaVersion = SchemaVersion
+	if s.ModifiedFiles == nil {
+		s.ModifiedFiles = map[string]string{}
+	}
+}
+
+// migrateV4 bumps v4 checkpoints to v5. Approval requests are new in v5 and
+// simply stay absent (empty) on older checkpoints.
+func migrateV4(s *Session) {
 	s.SchemaVersion = SchemaVersion
 	if s.ModifiedFiles == nil {
 		s.ModifiedFiles = map[string]string{}
