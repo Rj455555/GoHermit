@@ -56,6 +56,10 @@
           <p>GoHermit 会读取项目、修改代码、运行测试，并保存可恢复的工作状态。</p>
         </div>
         <div id="messages" class="messages"></div>
+        <section id="approval-panel" class="approval-panel hidden" aria-label="待批准操作">
+          <header><div><strong>待批准操作</strong><span id="approval-heading">0 个操作等待批准</span></div></header>
+          <div id="approval-list" class="approval-list"></div>
+        </section>
         <details id="plan-panel" class="plan-panel hidden" open>
           <summary><div><strong>执行计划</strong><span id="plan-current">等待开始</span></div><span id="plan-progress-text">0 / 0</span></summary>
           <div class="plan-progress"><i id="plan-progress-bar"></i></div>
