@@ -206,6 +206,98 @@ func validateSelection(label string, selection RoleSelection) error {
 	return nil
 }
 
+// ErrImportSecret marks an import rejected because a field matched the
+// credential markers in owner.LooksSecret. It stays distinct from generic
+// validation failures so a poisoned file is refused explicitly.
+var ErrImportSecret = errors.New("team template import contains a credential or token marker")
+
+// Export returns the template as indented JSON for download, with redaction
+// applied to a copy: every string field is screened with owner.LooksSecret
+// and any match is blanked to "". Blanking (rather than dropping the role
+// entry) keeps the document structure so the owner sees which fields to
+// refill. A clean template exports byte-identical to a plain marshal; a
+// tampered in-memory template exports with zero secret content.
+func Export(t Template) ([]byte, error) {
+	t.SchemaVersion = SchemaVersion
+	t.Name = redact(t.Name)
+	t.Default = redactSelection(t.Default)
+	if len(t.Roles) > 0 {
+		roles := make(map[string]RoleSelection, len(t.Roles))
+		for role, selection := range t.Roles {
+			roles[role] = redactSelection(selection)
+		}
+		t.Roles = roles
+	}
+	raw, err := json.MarshalIndent(t, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode team template: %w", err)
+	}
+	return raw, nil
+}
+
+// Import parses an exported template file without saving it. The input is
+// size-capped and strictly decoded like the store file, then every string
+// field is screened with owner.LooksSecret BEFORE generic validation so a
+// poisoned file is rejected with ErrImportSecret, never silently accepted.
+func Import(data []byte) (Template, error) {
+	if len(data) > 256<<10 {
+		return Template{}, errors.New("team template exceeds size limit")
+	}
+	template := Template{SchemaVersion: SchemaVersion}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&template); err != nil {
+		return Template{}, fmt.Errorf("decode team template: %w", err)
+	}
+	if template.SchemaVersion != SchemaVersion {
+		return Template{}, fmt.Errorf("unsupported team template version %d", template.SchemaVersion)
+	}
+	for _, field := range secretFields(template) {
+		if owner.LooksSecret(field.value) {
+			return Template{}, fmt.Errorf("%w: %s", ErrImportSecret, field.label)
+		}
+	}
+	if err := Validate(template); err != nil {
+		return Template{}, err
+	}
+	return template, nil
+}
+
+// secretField pairs a bounded location label with a value to screen; labels
+// name the field, never the value, so errors carry no secret content.
+type secretField struct{ label, value string }
+
+func secretFields(t Template) []secretField {
+	fields := []secretField{
+		{"name", t.Name},
+		{"default selection company", t.Default.Company},
+		{"default selection access", t.Default.Access},
+		{"default selection model", t.Default.Model},
+	}
+	for _, selection := range t.Roles {
+		fields = append(fields,
+			secretField{"role override company", selection.Company},
+			secretField{"role override access", selection.Access},
+			secretField{"role override model", selection.Model},
+		)
+	}
+	return fields
+}
+
+func redact(value string) string {
+	if owner.LooksSecret(value) {
+		return ""
+	}
+	return value
+}
+
+func redactSelection(selection RoleSelection) RoleSelection {
+	selection.Company = redact(selection.Company)
+	selection.Access = redact(selection.Access)
+	selection.Model = redact(selection.Model)
+	return selection
+}
+
 func validateText(value string) error {
 	if len(value) > MaxTextBytes {
 		return errors.New("team template text exceeds size limit")
