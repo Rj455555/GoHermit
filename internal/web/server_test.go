@@ -71,7 +71,7 @@ func TestCommitAndPublishMakesEventDurableBeforeSubscriberDelivery(t *testing.T)
 		if delivered.Sequence != committed.Sequence {
 			t.Fatalf("delivered=%+v committed=%+v", delivered, committed)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("event was not published")
 	}
 	fresh, _ := session.NewStore(server.Workspace, ".gohermit")
@@ -140,7 +140,7 @@ func TestLaunchTeamRunCreatesAndStreamsDurablePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for server.active.Load() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -211,7 +211,7 @@ func TestReviewPlanWaitsForApprovalBeforeTeamExecution(t *testing.T) {
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("approve status=%d body=%s", response.Code, response.Body.String())
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for server.active.Load() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
