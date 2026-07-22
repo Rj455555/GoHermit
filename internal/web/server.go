@@ -702,7 +702,17 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 		return "", errors.New("session has no active run")
 	}
 	if selection.Agent == "team" && (sess.Mission == nil || sess.Mission.RunID != run.ID) {
-		mission, missionErr := team.AdaptiveMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget())
+		budget := team.DefaultBudget()
+		rolePlan, planErr := s.resolveTeamRolePlan(context.Background(), selection)
+		if planErr != nil {
+			s.active.Store(false)
+			s.runMu.Unlock()
+			return "", planErr
+		}
+		if rolePlan != nil && len(rolePlan.roleLimits) > 0 {
+			budget.RoleLimits = rolePlan.roleLimits
+		}
+		mission, missionErr := team.AdaptiveMission("mission-"+run.ID, run.ID, run.Message, budget)
 		if missionErr != nil {
 			s.active.Store(false)
 			s.runMu.Unlock()
@@ -798,6 +808,13 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 		s.failLaunchedRun(sess, runID, errors.New("team mission is missing"))
 		return
 	}
+	// A non-empty team template pins roles to their own validated runtimes; a
+	// load or resolution failure fails the launch closed, like creation.
+	rolePlan, planErr := s.resolveTeamRolePlan(ctx, selection)
+	if planErr != nil {
+		s.failLaunchedRun(sess, runID, planErr)
+		return
+	}
 	now := time.Now().UTC()
 	run.Status, run.UpdatedAt = session.RunRunning, now
 	started := event.New(event.TaskStarted, sess.ID)
@@ -807,10 +824,17 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 		return
 	}
 	profile, _ := s.owner.Load()
-	var worker team.Worker = &app.TeamWorker{
+	teamWorker := &app.TeamWorker{
 		Workspace: s.Workspace, ConfigPath: s.ConfigPath, Selection: selection, APIKey: apiKey, Models: liveModels,
 		OwnerContext: owner.Markdown(profile), ParentSessionID: sess.ID, ParentRunID: runID, ParentStore: s.store, Sink: s.publish,
+		Build: func(ctx context.Context, workspace, configPath string, options app.RuntimeOptions) (*app.Runtime, error) {
+			return s.build(ctx, workspace, configPath, *options.Selection, options.APIKey, options.Models)
+		},
 	}
+	if rolePlan != nil {
+		teamWorker.RoleSelections = rolePlan.overrides
+	}
+	var worker team.Worker = teamWorker
 	if s.teamWorker != nil {
 		worker = s.teamWorker
 	}
@@ -1063,26 +1087,90 @@ func (s *Server) validateTeamSelections(ctx context.Context, sessionSelection co
 	return nil
 }
 
+// teamRolePlan holds the per-role execution overrides and budget limits a
+// non-empty team template implies for one launch.
+type teamRolePlan struct {
+	overrides  map[string]app.RoleRuntime
+	roleLimits map[team.Role]team.Usage
+}
+
+// resolveTeamRolePlan loads the team template and resolves every role's
+// effective selection into validated runtime inputs plus per-role budget
+// limits. A nil plan means the template is empty and the launch keeps legacy
+// session-level behavior. Like creation-time validation, load and resolution
+// failures are fail-closed.
+func (s *Server) resolveTeamRolePlan(ctx context.Context, sessionSelection config.RuntimeSelection) (*teamRolePlan, error) {
+	if s.teamTemplatesErr != nil {
+		return nil, fmt.Errorf("team template store unavailable: %w", s.teamTemplatesErr)
+	}
+	if s.teamTemplates == nil {
+		return nil, errors.New("team template store unavailable")
+	}
+	template, err := s.teamTemplates.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load team template: %w", err)
+	}
+	if template.Empty() {
+		return nil, nil
+	}
+	selections := teamtemplate.EffectiveSelections(template)
+	resolved := map[string]app.RoleRuntime{}
+	plan := &teamRolePlan{overrides: map[string]app.RoleRuntime{}}
+	for _, role := range teamValidationRoles {
+		roleSelection := selections[role]
+		selection := config.RuntimeSelection{Company: roleSelection.Company, Access: roleSelection.Access, Model: roleSelection.Model, Agent: sessionSelection.Agent}
+		key := selection.Company + "\x00" + selection.Access + "\x00" + selection.Model
+		runtime, ok := resolved[key]
+		if !ok {
+			_, apiKey, liveModels, resolveErr := s.resolveTeamRoleSelection(ctx, selection)
+			if resolveErr != nil {
+				return nil, fmt.Errorf("team role %q: %w", role, resolveErr)
+			}
+			runtime = app.RoleRuntime{Selection: selection, APIKey: apiKey, Models: liveModels}
+			resolved[key] = runtime
+		}
+		plan.overrides[role] = runtime
+		if roleSelection.MaxModelCalls > 0 || roleSelection.MaxTokens > 0 {
+			if plan.roleLimits == nil {
+				plan.roleLimits = map[team.Role]team.Usage{}
+			}
+			plan.roleLimits[team.Role(role)] = team.Usage{ModelCalls: roleSelection.MaxModelCalls, Tokens: roleSelection.MaxTokens}
+		}
+	}
+	return plan, nil
+}
+
+// resolveTeamRoleSelection validates one role's effective selection against
+// the live catalog and resolves its credential, returning the validated
+// selection with everything execution needs to build the role's runtime.
+func (s *Server) resolveTeamRoleSelection(ctx context.Context, selection config.RuntimeSelection) (config.RuntimeSelection, string, []config.ModelOption, error) {
+	liveModels, err := s.validateSelection(ctx, selection)
+	if err != nil {
+		return config.RuntimeSelection{}, "", nil, err
+	}
+	access, ok := config.AccessProfile(selection.Company, selection.Access)
+	if !ok {
+		return config.RuntimeSelection{}, "", nil, errors.New("未知的接入方式")
+	}
+	configured, _, detail := s.accessStatus(ctx, access)
+	if !configured {
+		return config.RuntimeSelection{}, "", nil, fmt.Errorf("%s: %s", access.Label, detail)
+	}
+	apiKey, err := s.resolveCredential(ctx, selection)
+	if err != nil {
+		return config.RuntimeSelection{}, "", nil, err
+	}
+	return selection, apiKey, liveModels, nil
+}
+
 // validateTeamRoleSelection reruns the session-level catalog, credential, and
 // provider capability checks for one role's effective selection.
 func (s *Server) validateTeamRoleSelection(ctx context.Context, selection config.RuntimeSelection) error {
-	liveModels, err := s.validateSelection(ctx, selection)
+	selection, apiKey, liveModels, err := s.resolveTeamRoleSelection(ctx, selection)
 	if err != nil {
 		return err
 	}
 	preset, _, err := config.ResolveSelectionWithModels(selection, liveModels)
-	if err != nil {
-		return err
-	}
-	access, ok := config.AccessProfile(selection.Company, selection.Access)
-	if !ok {
-		return errors.New("未知的接入方式")
-	}
-	configured, _, detail := s.accessStatus(ctx, access)
-	if !configured {
-		return fmt.Errorf("%s: %s", access.Label, detail)
-	}
-	apiKey, err := s.resolveCredential(ctx, selection)
 	if err != nil {
 		return err
 	}

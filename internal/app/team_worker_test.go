@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/agent"
+	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/session"
@@ -170,5 +171,78 @@ func TestTeamWorkerReportsPartialUsageOnChildRunFailure(t *testing.T) {
 	}
 	if result.ModelCalls != 3 || result.Tokens != 15 {
 		t.Fatalf("partial usage must report exactly what the failed run recorded: result=%+v", result)
+	}
+}
+
+// TestTeamWorkerRoleOverrideSelectsTemplateRuntime: a role pinned by the team
+// template runs on its own selection/credential/catalog, and its hidden
+// execution session records the override — while a role without an override
+// keeps the session-level inputs.
+func TestTeamWorkerRoleOverrideSelectsTemplateRuntime(t *testing.T) {
+	root := t.TempDir()
+	store, err := session.NewStore(root, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := session.New("parent goal", root, "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent.ID = "parent"
+	if err = store.Save(context.Background(), parent); err != nil {
+		t.Fatal(err)
+	}
+	type built struct {
+		selection config.RuntimeSelection
+		apiKey    string
+	}
+	var mu sync.Mutex
+	builds := map[string]built{}
+	provider := &teamProvider{}
+	build := func(_ context.Context, _, _ string, options RuntimeOptions) (*Runtime, error) {
+		mu.Lock()
+		builds[options.Selection.Agent] = built{selection: *options.Selection, apiKey: options.APIKey}
+		mu.Unlock()
+		manager, managerErr := contextmgr.New(contextmgr.Config{MaxTokens: 4096, CompressionThreshold: .8, HardLimitThreshold: .92, ReserveOutputTokens: 512})
+		if managerErr != nil {
+			return nil, managerErr
+		}
+		return &Runtime{Workspace: root, Store: store, Runner: &agent.Runner{Provider: provider, Executor: tool.Executor{Registry: tool.NewRegistry(), DefaultTimeout: time.Second}, Context: manager, Store: store, Config: agent.Config{MaxTurns: 2, Timeout: time.Minute, Model: "test"}}}, nil
+	}
+	worker := TeamWorker{
+		Workspace: root, ParentSessionID: "parent", ParentRunID: "run", ParentStore: store, Build: build,
+		Selection: config.RuntimeSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+		APIKey:    "session-key",
+		RoleSelections: map[string]RoleRuntime{
+			"builder": {Selection: config.RuntimeSelection{Company: "alibaba", Access: "alibaba", Model: "qwen3.7-plus"}, APIKey: "builder-key"},
+		},
+	}
+	builderAssignment := team.Assignment{MissionID: "mission", Goal: "build", WorkItem: team.WorkItem{ID: "build", Role: team.RoleBuilder, Title: "Build", Goal: "implement", ExecutionSessionID: "worker-mission-build"}, MaxTokens: 1000, MaxDuration: time.Minute}
+	if _, err = worker.Execute(context.Background(), builderAssignment); err != nil {
+		t.Fatal(err)
+	}
+	explorerAssignment := team.Assignment{MissionID: "mission", Goal: "inspect", WorkItem: team.WorkItem{ID: "explore", Role: team.RoleExplorer, Title: "Explore", Goal: "inspect", ExecutionSessionID: "worker-mission-explore"}, MaxTokens: 1000, MaxDuration: time.Minute}
+	if _, err = worker.Execute(context.Background(), explorerAssignment); err != nil {
+		t.Fatal(err)
+	}
+	if got := builds["coding"]; got.selection.Company != "alibaba" || got.selection.Model != "qwen3.7-plus" || got.apiKey != "builder-key" {
+		t.Fatalf("builder runtime inputs = %+v, want the template override", got)
+	}
+	if got := builds["explorer"]; got.selection.Company != "deepseek" || got.selection.Model != "deepseek-chat" || got.apiKey != "session-key" {
+		t.Fatalf("explorer runtime inputs = %+v, want the session-level inputs", got)
+	}
+	builderChild, err := store.Load(context.Background(), "worker-mission-build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if builderChild.Selection.Company != "alibaba" || builderChild.Selection.Access != "alibaba" || builderChild.Selection.Model != "qwen3.7-plus" || builderChild.Selection.Agent != "coding" {
+		t.Fatalf("builder child selection = %+v, want the template override", builderChild.Selection)
+	}
+	explorerChild, err := store.Load(context.Background(), "worker-mission-explore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explorerChild.Selection.Company != "deepseek" || explorerChild.Selection.Model != "deepseek-chat" || explorerChild.Selection.Agent != "explorer" {
+		t.Fatalf("explorer child selection = %+v, want the session-level selection", explorerChild.Selection)
 	}
 }
