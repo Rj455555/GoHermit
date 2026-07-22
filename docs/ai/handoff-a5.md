@@ -38,3 +38,7 @@
 ## Addendum (A5b): remaining agent test timeouts
 
 CI later flaked two more tests of the same class — `TestMutationRequiresSuccessfulTestBeforeCompletion` and `TestNormalStopAndToolResultReturned` — so the remaining 1s/3s runner timeouts in `internal/agent/agent_test.go` were widened to 30s as well (six call sites). `TestTotalTimeout`'s 10ms timeout is unchanged: it tests the timeout mechanism itself. Verified with `go test ./internal/agent/ -count=10`, `-race -count=3`, and the full suite.
+
+## Addendum (A5c): web test deadlines
+
+The same timing-flake class reached `internal/web`: `TestReviewPlanWaitsForApprovalBeforeTeamExecution` flaked on CI because a 2-second wall-clock deadline raced the full team run on a loaded runner. The three tight deadlines in `internal/web/server_test.go` (1s publish wait, two 2s completion deadlines) were widened to 30s — they only bound pathological hangs; the fake workers finish in milliseconds. The 20ms cancellation timers and the 10s SSE deadline are unchanged by design.
