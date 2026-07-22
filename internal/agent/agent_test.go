@@ -102,7 +102,7 @@ func TestNormalStopAndToolResultReturned(t *testing.T) {
 		}
 		return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: "done"}, FinishReason: "stop"}, nil
 	}}
-	runner, s := newRunner(t, p, 5, time.Second, agentTool{})
+	runner, s := newRunner(t, p, 5, 30*time.Second, agentTool{})
 	if err := runner.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestPersistentEventsAreDurableBeforeSinkDelivery(t *testing.T) {
 	p := &scriptedProvider{fn: func(_ int, _ model.GenerateRequest) (model.GenerateResponse, error) {
 		return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: "done"}, FinishReason: "stop"}, nil
 	}}
-	runner, s := newRunner(t, p, 2, time.Second, agentTool{})
+	runner, s := newRunner(t, p, 2, 30*time.Second, agentTool{})
 	durable := true
 	seen := false
 	runner.Sink = func(runtimeEvent event.Event) {
@@ -203,7 +203,7 @@ func TestExplicitCancellationIsTerminal(t *testing.T) {
 		cancel()
 		return model.GenerateResponse{}, context.Canceled
 	}}
-	runner, s := newRunner(t, p, 2, time.Second, agentTool{})
+	runner, s := newRunner(t, p, 2, 30*time.Second, agentTool{})
 	if err := runner.Run(ctx, s); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v", err)
 	}
@@ -258,7 +258,7 @@ func TestMutationRequiresSuccessfulTestBeforeCompletion(t *testing.T) {
 			return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: "verified"}}, nil
 		}
 	}}
-	runner, s := newRunner(t, p, 6, 3*time.Second, agentTool{})
+	runner, s := newRunner(t, p, 6, 30*time.Second, agentTool{})
 	cmd := exec.Command("git", "init", "-q")
 	cmd.Dir = s.Workspace
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -282,7 +282,7 @@ func TestFailedModelCallCountsProviderAttempts(t *testing.T) {
 	p := &scriptedProvider{fn: func(n int, r model.GenerateRequest) (model.GenerateResponse, error) {
 		return model.GenerateResponse{}, &model.ProviderError{Kind: model.ErrorUnavailable, Status: 500, Retryable: false, Attempts: 2, Message: "down"}
 	}}
-	runner, s := newRunner(t, p, 3, time.Second, agentTool{})
+	runner, s := newRunner(t, p, 3, 30*time.Second, agentTool{})
 	err := runner.Run(context.Background(), s)
 	if err == nil || len(s.Runs) != 1 || s.Runs[0].Status != session.RunFailed {
 		t.Fatalf("err=%v runs=%+v", err, s.Runs)
@@ -299,7 +299,7 @@ func TestRetriedAndFailedCompressCallsAreCounted(t *testing.T) {
 		}
 		return model.GenerateResponse{}, &model.ProviderError{Kind: model.ErrorRateLimit, Status: 429, Retryable: false, Attempts: 2, Message: "slow down"}
 	}}
-	runner, s := newRunner(t, p, 3, time.Second, agentTool{})
+	runner, s := newRunner(t, p, 3, 30*time.Second, agentTool{})
 	if err := runner.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}

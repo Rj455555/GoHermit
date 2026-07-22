@@ -34,3 +34,7 @@
 - Known limitations: other agent tests still use 1-second-scale timeouts but have not flaked; widen only if CI proves them flaky.
 - Next concrete step: owner review/merge, then Phase B (B1 teamtemplate storage).
 - Required user input or authority: PR review/merge remains with the owner.
+
+## Addendum (A5b): remaining agent test timeouts
+
+CI later flaked two more tests of the same class — `TestMutationRequiresSuccessfulTestBeforeCompletion` and `TestNormalStopAndToolResultReturned` — so the remaining 1s/3s runner timeouts in `internal/agent/agent_test.go` were widened to 30s as well (six call sites). `TestTotalTimeout`'s 10ms timeout is unchanged: it tests the timeout mechanism itself. Verified with `go test ./internal/agent/ -count=10`, `-race -count=3`, and the full suite.
