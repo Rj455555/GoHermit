@@ -9,13 +9,19 @@ let loginTimer = null;
 let connectionState = 'connecting';
 let reconnecting = false;
 let ownerProfile = null;
+let approvals = [];
+let approvalTimer = null;
 
 async function request(url, options) {
   try {
     const response = await fetch(url, options);
     setConnectivity('online');
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || '请求失败');
+    if (!response.ok) {
+      const error = new Error(data.error || '请求失败');
+      error.status = response.status;
+      throw error;
+    }
     return data;
   } catch (error) {
     if (error instanceof TypeError) {
@@ -222,6 +228,8 @@ function showNewTask(focus = true) {
   $('#welcome').classList.remove('hidden');
   $('#thread').classList.add('empty-thread');
   $('#messages').replaceChildren();
+  approvals = [];
+  renderApprovals();
   $('#plan-panel').classList.add('hidden');
   $('#team-panel').classList.add('hidden');
   resetActivity();
@@ -269,6 +277,7 @@ async function openSession(id) {
   renderMission();
   resetActivity();
   renderRunState();
+  await loadApprovals();
   lastSequence = 0;
   connectEvents(id);
   renderSessionList();
@@ -454,7 +463,7 @@ function connectEvents(sessionID) {
   closeEvents();
   eventSource = new EventSource(`/api/sessions/${sessionID}/events?after=${lastSequence}`);
   eventSource.sessionID = sessionID;
-  const types = ['task_started', 'turn_started', 'model_started', 'model_delta', 'model_completed', 'tool_started', 'tool_completed', 'permission_required', 'checkpoint_saved', 'run_verifying', 'run_interrupted', 'workspace_changed', 'memory_updated', 'session_updated', 'plan_created', 'plan_updated', 'mission_started', 'mission_completed', 'mission_failed', 'work_item_started', 'work_item_completed', 'work_item_failed', 'task_completed', 'task_failed', 'task_cancelled'];
+  const types = ['task_started', 'turn_started', 'model_started', 'model_delta', 'model_completed', 'tool_started', 'tool_completed', 'permission_required', 'checkpoint_saved', 'run_verifying', 'run_interrupted', 'workspace_changed', 'memory_updated', 'session_updated', 'plan_created', 'plan_updated', 'mission_started', 'mission_completed', 'mission_failed', 'work_item_started', 'work_item_completed', 'work_item_failed', 'approval_requested', 'approval_decided', 'approval_expired', 'approval_consumed', 'task_completed', 'task_failed', 'task_cancelled'];
   for (const type of types) eventSource.addEventListener(type, source => consumeEvent(type, source));
   eventSource.onerror = () => {
     if (current && current.session.id === sessionID) $('#composer-note').textContent = '事件连接正在重试…';
@@ -487,6 +496,14 @@ function consumeEvent(type, sourceEvent) {
     renderPlan();
   }
   renderMissionEvent(type, runtimeEvent);
+  if (type === 'approval_requested') loadApprovals();
+  if (['approval_decided', 'approval_expired', 'approval_consumed'].includes(type)) {
+    const requestID = runtimeEvent.data && runtimeEvent.data.request_id;
+    if (requestID && approvals.some(item => item.request_id === requestID)) {
+      approvals = approvals.filter(item => item.request_id !== requestID);
+      renderApprovals();
+    }
+  }
   if (type === 'task_started') setBusyState('运行中', 'running');
   if (type === 'run_verifying') setBusyState('验证中', 'running');
   if (['task_completed', 'task_failed', 'task_cancelled'].includes(type)) {
@@ -523,14 +540,15 @@ function addActivity(type, message) {
 
 function eventIcon(type) {
   if (type.includes('tool')) return '⌘';
-  if (type.includes('failed') || type.includes('cancelled')) return '!';
+  if (type.includes('failed') || type.includes('cancelled') || type.includes('expired')) return '!';
+  if (type.includes('approval')) return '✋';
   if (type.includes('verif')) return '✓';
   if (type.includes('memory') || type.includes('checkpoint')) return '◇';
   return '·';
 }
 
 function eventLabel(type) {
-  return ({task_started: '开始运行', turn_started: '新一轮', model_started: '模型处理中', model_completed: '模型响应完成', tool_started: '调用工具', tool_completed: '工具完成', permission_required: '需要权限', checkpoint_saved: '已保存状态', run_verifying: '验证改动', run_interrupted: '运行中断', workspace_changed: '工作区已变化', memory_updated: '项目记忆已更新', plan_created: '执行计划已创建', plan_updated: '执行计划已更新', mission_started: '团队任务开始', mission_completed: '团队任务完成', mission_failed: '团队任务失败', work_item_started: 'Agent 开始工作', work_item_completed: 'Agent 完成交接', work_item_failed: 'Agent 执行失败', task_completed: '任务完成', task_failed: '任务失败', task_cancelled: '任务已停止'})[type] || type;
+  return ({task_started: '开始运行', turn_started: '新一轮', model_started: '模型处理中', model_completed: '模型响应完成', tool_started: '调用工具', tool_completed: '工具完成', permission_required: '需要权限', checkpoint_saved: '已保存状态', run_verifying: '验证改动', run_interrupted: '运行中断', workspace_changed: '工作区已变化', memory_updated: '项目记忆已更新', plan_created: '执行计划已创建', plan_updated: '执行计划已更新', mission_started: '团队任务开始', mission_completed: '团队任务完成', mission_failed: '团队任务失败', work_item_started: 'Agent 开始工作', work_item_completed: 'Agent 完成交接', work_item_failed: 'Agent 执行失败', approval_requested: '操作等待批准', approval_decided: '审批已决定', approval_expired: '审批请求已过期', approval_consumed: '审批已执行', task_completed: '任务完成', task_failed: '任务失败', task_cancelled: '任务已停止'})[type] || type;
 }
 
 function setBusyState(text, state) {
@@ -549,6 +567,7 @@ async function refreshCurrent() {
   renderPlan();
   renderMission();
   renderRunState();
+  await loadApprovals();
   $('#composer-note').textContent = '模型可能出错，请检查重要改动。';
   await loadSessions(false);
   await loadInfo();
@@ -585,6 +604,91 @@ async function resumeRun() {
     await request(`/api/sessions/${current.session.id}/runs/${run.id}/resume`, {method: 'POST'});
     setBusyState('恢复中', 'running');
   } catch (error) { toast(error.message, true); }
+}
+
+async function loadApprovals() {
+  if (!current) { approvals = []; renderApprovals(); return; }
+  try {
+    const data = await request(`/api/sessions/${current.session.id}/approvals?status=pending`);
+    approvals = data.approvals || [];
+  } catch (_) {
+    approvals = [];
+  }
+  renderApprovals();
+}
+
+function renderApprovals() {
+  const panel = $('#approval-panel');
+  const root = $('#approval-list');
+  root.replaceChildren();
+  if (!current || !approvals.length) {
+    panel.classList.add('hidden');
+    clearInterval(approvalTimer);
+    approvalTimer = null;
+    return;
+  }
+  panel.classList.remove('hidden');
+  $('#approval-heading').textContent = `${approvals.length} 个操作等待你的批准，过期将自动拒绝`;
+  for (const item of approvals) root.append(approvalCard(item));
+  updateApprovalCountdowns();
+  if (!approvalTimer) approvalTimer = setInterval(updateApprovalCountdowns, 1000);
+}
+
+function approvalCard(item) {
+  const card = document.createElement('article');
+  card.className = 'approval-card';
+  card.dataset.requestId = item.request_id;
+  card.innerHTML = '<div class="approval-copy"><strong></strong><span class="approval-paths"></span><span class="approval-args"></span></div><div class="approval-side"><span class="approval-countdown"></span><div class="approval-actions"><button class="small-button primary approval-approve">批准</button><button class="small-button danger-text approval-deny">拒绝</button></div></div>';
+  card.querySelector('strong').textContent = item.tool;
+  card.querySelector('.approval-paths').textContent = (item.resource_paths || []).join('、');
+  const args = card.querySelector('.approval-args');
+  args.textContent = item.args_summary || '';
+  args.classList.toggle('hidden', !item.args_summary);
+  card.querySelector('.approval-approve').addEventListener('click', () => decideApproval(item.request_id, 'approve', card));
+  card.querySelector('.approval-deny').addEventListener('click', () => decideApproval(item.request_id, 'deny', card));
+  return card;
+}
+
+async function decideApproval(requestID, decision, card) {
+  const buttons = card.querySelectorAll('button');
+  for (const button of buttons) button.disabled = true;
+  try {
+    await request(`/api/sessions/${current.session.id}/approvals/${requestID}/decide`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({decision})
+    });
+    approvals = approvals.filter(item => item.request_id !== requestID);
+    renderApprovals();
+    toast(decision === 'approve' ? '已批准该操作' : '已拒绝该操作');
+  } catch (error) {
+    if (error.status === 409) {
+      toast('该请求已被处理或已过期', true);
+      await loadApprovals();
+    } else {
+      toast(error.message, true);
+      updateApprovalCountdowns();
+      for (const button of buttons) button.disabled = card.classList.contains('expired');
+    }
+  }
+}
+
+function updateApprovalCountdowns() {
+  const now = Date.now();
+  for (const card of document.querySelectorAll('.approval-card')) {
+    const item = approvals.find(entry => entry.request_id === card.dataset.requestId);
+    if (!item) continue;
+    const countdown = card.querySelector('.approval-countdown');
+    const remaining = new Date(item.expires_at).getTime() - now;
+    if (remaining <= 0) {
+      card.classList.add('expired');
+      countdown.textContent = '已过期，等待确认';
+      for (const button of card.querySelectorAll('button')) button.disabled = true;
+      continue;
+    }
+    const seconds = Math.floor(remaining / 1000);
+    countdown.textContent = `剩余 ${Math.floor(seconds / 60)} 分 ${String(seconds % 60).padStart(2, '0')} 秒`;
+  }
 }
 
 async function openSettings() {

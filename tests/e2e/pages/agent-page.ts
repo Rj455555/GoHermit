@@ -6,6 +6,8 @@ export class AgentPage {
   readonly send: Locator
   readonly approvePlan: Locator
   readonly planSteps: Locator
+  readonly approvalPanel: Locator
+  readonly approvalCards: Locator
 
   constructor(page: Page) {
     this.page = page
@@ -13,6 +15,8 @@ export class AgentPage {
     this.send = page.locator('#send')
     this.approvePlan = page.locator('#approve-plan')
     this.planSteps = page.locator('#plan-steps .plan-step')
+    this.approvalPanel = page.locator('#approval-panel')
+    this.approvalCards = page.locator('#approval-list .approval-card')
   }
 
   async goto() {
