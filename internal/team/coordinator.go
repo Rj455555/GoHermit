@@ -326,7 +326,7 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 				continue
 			}
 		}
-		if outcome.role == RoleVerifier && !handoffChecksPassed(outcome.result.Handoff) {
+		if outcome.role == RoleVerifier && !handoffChecksPassed(mission, outcome.result.Handoff) {
 			attempts := c.MaxRepairAttempts
 			if attempts <= 0 {
 				attempts = 3
@@ -412,11 +412,35 @@ func dependencyHandoffs(mission *Mission, item WorkItem) []Handoff {
 	return result
 }
 
+// missionHasMutation reports whether any WorkItem in the mission mutates the
+// workspace. A mission with none is purely read-only/informational: there is
+// no code change a Verifier could run a deterministic Check against, so
+// "verification" for that mission means something different (see
+// handoffChecksPassed) than for a mission where a Builder actually ran.
+func missionHasMutation(mission *Mission) bool {
+	for _, item := range mission.WorkItems {
+		if item.MutatesWorkspace {
+			return true
+		}
+	}
+	return false
+}
+
 func verificationPassed(mission *Mission) bool {
+	mutating := missionHasMutation(mission)
 	for i := len(mission.Handoffs) - 1; i >= 0; i-- {
 		handoff := mission.Handoffs[i]
-		if handoff.Role != RoleVerifier || len(handoff.Checks) == 0 {
+		if handoff.Role != RoleVerifier {
 			continue
+		}
+		if len(handoff.Checks) == 0 {
+			if mutating {
+				continue
+			}
+			// Read-only mission, nothing to run a Check against: the
+			// Verifier's own cross-check reporting no issues is the pass
+			// signal instead (handoffChecksPassed applies the same rule).
+			return len(handoff.Issues) == 0
 		}
 		for _, check := range handoff.Checks {
 			if !check.Passed {
@@ -428,9 +452,22 @@ func verificationPassed(mission *Mission) bool {
 	return false
 }
 
-func handoffChecksPassed(handoff Handoff) bool {
+// handoffChecksPassed reports whether one Verifier handoff counts as passed.
+// A mutation mission (a Builder actually ran) always requires at least one
+// real, explicitly passing Check — never treat "nothing was run" as
+// verified, that would let an unverified mutation through. A purely
+// read-only/informational mission has nothing a deterministic Check could
+// run against; there, an empty Issues list on the Verifier's own independent
+// cross-check is the pass signal instead. A Verifier that actually found a
+// problem must report it via Issues, which still fails the mission — this
+// only changes the "genuinely nothing to check" case from an unconditional
+// failure to a real signal.
+func handoffChecksPassed(mission *Mission, handoff Handoff) bool {
 	if len(handoff.Checks) == 0 {
-		return false
+		if missionHasMutation(mission) {
+			return false
+		}
+		return len(handoff.Issues) == 0
 	}
 	for _, check := range handoff.Checks {
 		if !check.Passed {
