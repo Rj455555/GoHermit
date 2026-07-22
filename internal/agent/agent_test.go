@@ -165,7 +165,9 @@ func TestMaximumTurns(t *testing.T) {
 	p := &scriptedProvider{fn: func(n int, r model.GenerateRequest) (model.GenerateResponse, error) {
 		return toolResponse(string(rune('a' + n))), nil
 	}}
-	runner, s := newRunner(t, p, 2, time.Second, agentTool{})
+	// The generous total timeout only bounds pathological hangs; the scripted
+	// provider answers immediately, so CI machine load cannot race the turn cap.
+	runner, s := newRunner(t, p, 2, 30*time.Second, agentTool{})
 	err := runner.Run(context.Background(), s)
 	if err == nil || !strings.Contains(err.Error(), "maximum turns") {
 		t.Fatalf("err=%v", err)
@@ -226,7 +228,9 @@ func TestToolErrorReturnedToModel(t *testing.T) {
 		}
 		return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: "handled"}}, nil
 	}}
-	runner, s := newRunner(t, p, 3, time.Second, agentTool{err: errors.New("boom")})
+	// The generous total timeout only bounds pathological hangs; the scripted
+	// provider answers immediately, so CI machine load cannot race it.
+	runner, s := newRunner(t, p, 3, 30*time.Second, agentTool{err: errors.New("boom")})
 	if err := runner.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}
