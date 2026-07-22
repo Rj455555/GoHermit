@@ -33,6 +33,7 @@ async function request(url, options) {
 }
 
 function setConnectivity(state) {
+  const wasOnline = connectionState === 'online';
   connectionState = state;
   const online = state === 'online';
   const reconnectingNow = state === 'reconnecting';
@@ -53,7 +54,12 @@ function setConnectivity(state) {
     setRunStatus(current ? '状态未知' : '离线', 'error');
   } else {
     $('#composer-note').textContent = '模型可能出错，请检查重要改动。';
-    if (catalog) renderCatalog();
+    // Only re-render the catalog on an actual offline->online transition
+    // (loadInfo() already re-renders it whenever catalog data itself
+    // changes). Calling it on every steady-state health tick used to reset
+    // the company/access/model dropdowns to the last-loaded selection every
+    // 5 seconds, silently discarding whatever the owner had just picked.
+    if (catalog && !wasOnline) renderCatalog();
     if (current) renderRunState();
   }
 }
