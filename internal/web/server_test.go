@@ -637,3 +637,125 @@ func TestCreateTeamSessionRejectsProviderWithoutToolCalls(t *testing.T) {
 	}
 	assertNoSessionPersisted(t, server)
 }
+
+func TestTeamTemplateExportEndpoint(t *testing.T) {
+	server := testServer(t)
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "exportable",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+		Roles: map[string]teamtemplate.RoleSelection{
+			"verifier": {Company: "deepseek", Access: "deepseek", Model: "deepseek-reasoner"},
+		},
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/team-template/export", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content type = %q", got)
+	}
+	if got := response.Header().Get("Content-Disposition"); got != `attachment; filename="team-template.json"` {
+		t.Fatalf("content disposition = %q", got)
+	}
+	stored, err := server.teamTemplates.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := teamtemplate.Export(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Body.String() != string(want) {
+		t.Fatalf("export body = %s, want %s", response.Body.String(), want)
+	}
+}
+
+func TestTeamTemplateImportRejectsPoisonedBody(t *testing.T) {
+	server := testServer(t)
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "previous",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+	})
+	poisoned := `{"schema_version": 1, "name": "core api_key=abc123", "default": {"company": "deepseek", "access": "deepseek", "model": "deepseek-chat"}}`
+	request := httptest.NewRequest(http.MethodPost, "/api/team-template/import", strings.NewReader(poisoned))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("import status=%d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "api_key=abc123") {
+		t.Fatalf("error response echoed the secret: %s", response.Body.String())
+	}
+	stored, err := server.teamTemplates.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "previous" {
+		t.Fatalf("poisoned import overwrote the store: %+v", stored)
+	}
+}
+
+func TestTeamTemplateImportExportRoundTrip(t *testing.T) {
+	server := testServer(t)
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "round-trip",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+		Roles: map[string]teamtemplate.RoleSelection{
+			"verifier": {Company: "deepseek", Access: "deepseek", Model: "deepseek-reasoner"},
+		},
+	})
+	handler := server.Handler()
+	request := httptest.NewRequest(http.MethodGet, "/api/team-template/export", nil)
+	exportResponse := httptest.NewRecorder()
+	handler.ServeHTTP(exportResponse, request)
+	if exportResponse.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", exportResponse.Code, exportResponse.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPost, "/api/team-template/import", strings.NewReader(exportResponse.Body.String()))
+	request.Header.Set("Content-Type", "application/json")
+	importResponse := httptest.NewRecorder()
+	handler.ServeHTTP(importResponse, request)
+	if importResponse.Code != http.StatusOK {
+		t.Fatalf("import status=%d body=%s", importResponse.Code, importResponse.Body.String())
+	}
+	if !strings.Contains(importResponse.Body.String(), `"name":"round-trip"`) || !strings.Contains(importResponse.Body.String(), "verifier") {
+		t.Fatalf("import summary = %s", importResponse.Body.String())
+	}
+	stored, err := server.teamTemplates.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "round-trip" || stored.Roles["verifier"].Model != "deepseek-reasoner" {
+		t.Fatalf("stored = %+v", stored)
+	}
+}
+
+func TestTeamTemplateImportRejectsCrossOriginAndWrongMethod(t *testing.T) {
+	server := testServer(t)
+	injectTeamTemplate(t, server, nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/team-template/import", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://attacker.example")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin status=%d", response.Code)
+	}
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		request = httptest.NewRequest(method, "/api/team-template/import", nil)
+		response = httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s import status=%d", method, response.Code)
+		}
+	}
+	request = httptest.NewRequest(http.MethodPost, "/api/team-template/export", nil)
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST export status=%d", response.Code)
+	}
+}

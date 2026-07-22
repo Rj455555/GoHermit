@@ -1,6 +1,8 @@
 package teamtemplate
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -301,5 +303,145 @@ func TestEffectiveSelectionsCoversEveryValidatableRole(t *testing.T) {
 		if selection != template.SelectionForRole(role) {
 			t.Fatalf("role %q selection = %+v, want %+v", role, selection, template.SelectionForRole(role))
 		}
+	}
+}
+
+func TestExportImportRoundTrip(t *testing.T) {
+	want := validTemplate()
+	want.SchemaVersion = SchemaVersion
+	raw, err := Export(want)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	plain, err := json.MarshalIndent(want, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(raw) != string(plain) {
+		t.Fatalf("clean export must equal a plain marshal:\n%s\nvs\n%s", raw, plain)
+	}
+	got, err := Import(raw)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round trip = %+v, want %+v", got, want)
+	}
+}
+
+func TestExportRedactsSecretFields(t *testing.T) {
+	template := validTemplate()
+	template.Name = "core api_key=abc123"
+	template.Default.Access = "sk-proj-xyz"
+	template.Roles[string(team.RoleLead)] = RoleSelection{Company: "openai", Access: "api", Model: "ghp_tok123"}
+	raw, err := Export(template)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	body := string(raw)
+	for _, marker := range []string{"api_key=abc123", "sk-proj-xyz", "ghp_tok123"} {
+		if strings.Contains(body, marker) {
+			t.Fatalf("export leaked %q:\n%s", marker, body)
+		}
+	}
+	var redacted Template
+	if err := json.Unmarshal(raw, &redacted); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	// Redaction blanks the field but keeps the role entry's structure.
+	if redacted.Name != "" || redacted.Default.Access != "" || redacted.Roles[string(team.RoleLead)].Model != "" {
+		t.Fatalf("redacted = %+v", redacted)
+	}
+	if redacted.Default.Company != template.Default.Company || len(redacted.Roles) != len(template.Roles) {
+		t.Fatalf("redaction must keep clean fields and entries: %+v", redacted)
+	}
+	// The tampered source template is untouched.
+	if template.Name != "core api_key=abc123" {
+		t.Fatalf("export mutated its input: %+v", template)
+	}
+}
+
+func TestImportRejectsSecretMarkers(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Template)
+	}{
+		{"name", func(t *Template) { t.Name = "core api_key=abc123" }},
+		{"default company", func(t *Template) { t.Default.Company = "ghp_tok123" }},
+		{"default access", func(t *Template) { t.Default.Access = "sk-proj-xyz" }},
+		{"default model", func(t *Template) { t.Default.Model = "password=hunter2" }},
+		{"role company", func(t *Template) {
+			t.Roles[string(team.RoleLead)] = RoleSelection{Company: "github_pat_abc", Access: "api", Model: "gpt-5"}
+		}},
+		{"role access", func(t *Template) {
+			t.Roles[string(team.RoleLead)] = RoleSelection{Company: "openai", Access: "access_token=xyz", Model: "gpt-5"}
+		}},
+		{"role model", func(t *Template) {
+			t.Roles[string(team.RoleLead)] = RoleSelection{Company: "openai", Access: "api", Model: "refresh_token=xyz"}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			template := validTemplate()
+			tc.mutate(&template)
+			template.SchemaVersion = SchemaVersion
+			raw, err := json.Marshal(template)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if _, err := Import(raw); !errors.Is(err, ErrImportSecret) {
+				t.Fatalf("import err = %v, want ErrImportSecret", err)
+			}
+		})
+	}
+}
+
+func TestImportRejectsMalformedFiles(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"corrupt json", `{not json`},
+		{"unknown field", `{"schema_version": 1, "bogus": true}`},
+		{"unknown schema version", `{"schema_version": 99}`},
+		{"oversized file", strings.Repeat(" ", 257<<10)},
+		{"missing required fields", `{"schema_version": 1, "name": "core"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Import([]byte(tc.content)); err == nil {
+				t.Fatal("import succeeded, want error")
+			}
+		})
+	}
+}
+
+func TestImportRedactedExportOnlyFailsForMissingFields(t *testing.T) {
+	template := validTemplate()
+	template.Default.Access = "sk-proj-xyz"
+	raw, err := Export(template)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	// The redacted document carries no secret, so a refusal must come from
+	// validation of the blanked fields, not the secret screen.
+	if _, err := Import(raw); err == nil || errors.Is(err, ErrImportSecret) {
+		t.Fatalf("import err = %v, want a validation error about missing fields", err)
+	}
+	var redacted Template
+	if err := json.Unmarshal(raw, &redacted); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	redacted.Default.Access = "api"
+	refilled, err := json.Marshal(redacted)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got, err := Import(refilled)
+	if err != nil {
+		t.Fatalf("import refilled export: %v", err)
+	}
+	if got.Default.Access != "api" || !reflect.DeepEqual(got.Roles, template.Roles) {
+		t.Fatalf("import = %+v", got)
 	}
 }

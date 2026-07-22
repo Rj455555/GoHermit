@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -108,6 +109,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/owner", s.saveOwner)
 	mux.HandleFunc("PUT /api/owner/facts/{id}", s.saveOwnerFact)
 	mux.HandleFunc("DELETE /api/owner/facts/{id}", s.deleteOwnerFact)
+	mux.HandleFunc("GET /api/team-template/export", s.exportTeamTemplate)
+	mux.HandleFunc("POST /api/team-template/import", s.importTeamTemplate)
 	mux.HandleFunc("POST /api/run", s.run)
 	mux.HandleFunc("POST /api/sessions", s.createSession)
 	mux.HandleFunc("GET /api/sessions", s.listSessions)
@@ -194,6 +197,64 @@ func (s *Server) deleteOwnerFact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, profile)
+}
+
+// exportTeamTemplate downloads the stored team template with credential
+// redaction applied, so the exported file carries zero secret content even
+// if the in-memory template was tampered with.
+func (s *Server) exportTeamTemplate(w http.ResponseWriter, _ *http.Request) {
+	if s.teamTemplatesErr != nil || s.teamTemplates == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "team template store unavailable"})
+		return
+	}
+	template, err := s.teamTemplates.Load()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	raw, err := teamtemplate.Export(template)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="team-template.json"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+// importTeamTemplate replaces the stored team template with an uploaded
+// export. teamtemplate.Import screens for credential markers and validates
+// before anything is saved, so a poisoned file never overwrites the store.
+func (s *Server) importTeamTemplate(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
+		return
+	}
+	if s.teamTemplatesErr != nil || s.teamTemplates == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "team template store unavailable"})
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<10))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid team template: " + err.Error()})
+		return
+	}
+	template, err := teamtemplate.Import(body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := s.teamTemplates.Save(template); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	roles := make([]string, 0, len(template.Roles))
+	for role := range template.Roles {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	writeJSON(w, http.StatusOK, map[string]any{"name": template.Name, "roles": roles})
 }
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
