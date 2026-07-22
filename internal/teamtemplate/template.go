@@ -22,6 +22,10 @@ const (
 	SchemaVersion  = 1
 	MaxRoleEntries = 5
 	MaxTextBytes   = 8 << 10
+	// MaxRoleModelCalls and MaxRoleTokens bound the optional per-role cost
+	// ceilings so a tampered template cannot carry absurd limits.
+	MaxRoleModelCalls = 1_000
+	MaxRoleTokens     = 10_000_000
 )
 
 // RoleSelection pins one role to a provider/model pair. It mirrors
@@ -30,6 +34,11 @@ type RoleSelection struct {
 	Company string `json:"company"`
 	Access  string `json:"access"`
 	Model   string `json:"model"`
+	// MaxModelCalls and MaxTokens optionally cap the role's usage on top of
+	// the mission budget; zero means unlimited. Both are additive so files
+	// written before the keys existed load unchanged.
+	MaxModelCalls int `json:"max_model_calls,omitempty"`
+	MaxTokens     int `json:"max_tokens,omitempty"`
 }
 
 type Template struct {
@@ -202,6 +211,12 @@ func validateSelection(label string, selection RoleSelection) error {
 		if err := validateText(value); err != nil {
 			return fmt.Errorf("%s selection: %w", label, err)
 		}
+	}
+	if selection.MaxModelCalls < 0 || selection.MaxModelCalls > MaxRoleModelCalls {
+		return fmt.Errorf("%s max_model_calls must be between 0 and %d", label, MaxRoleModelCalls)
+	}
+	if selection.MaxTokens < 0 || selection.MaxTokens > MaxRoleTokens {
+		return fmt.Errorf("%s max_tokens must be between 0 and %d", label, MaxRoleTokens)
 	}
 	return nil
 }

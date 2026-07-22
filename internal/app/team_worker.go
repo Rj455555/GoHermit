@@ -15,6 +15,14 @@ import (
 	"github.com/Rj455555/GoHermit/internal/team"
 )
 
+// RoleRuntime carries the validated runtime inputs for one team role when the
+// team template pins that role to a different provider/model than the session.
+type RoleRuntime struct {
+	Selection config.RuntimeSelection
+	APIKey    string
+	Models    []config.ModelOption
+}
+
 // TeamWorker adapts the existing bounded single-Agent Runner into one role of
 // a Mission. Child Sessions are durable for recovery but hidden from the
 // owner's top-level conversation list.
@@ -30,10 +38,18 @@ type TeamWorker struct {
 	ParentStore     *session.Store
 	Sink            event.Sink
 	Build           func(context.Context, string, string, RuntimeOptions) (*Runtime, error)
+	// RoleSelections optionally pins individual roles to their own validated
+	// selection, credential, and catalog (the team template). A nil or empty
+	// map keeps the session-level inputs for every role.
+	RoleSelections map[string]RoleRuntime
 }
 
 func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (team.Result, error) {
 	selection := w.Selection
+	apiKey, models := w.APIKey, w.Models
+	if override, ok := w.RoleSelections[string(assignment.WorkItem.Role)]; ok {
+		selection, apiKey, models = override.Selection, override.APIKey, override.Models
+	}
 	selection.Agent = profileForRole(assignment.WorkItem.Role)
 	build := w.Build
 	if build == nil {
@@ -41,7 +57,7 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 			return BuildRuntimeWithOptions(ctx, workspace, configPath, options, nil)
 		}
 	}
-	runtime, err := build(ctx, w.Workspace, w.ConfigPath, RuntimeOptions{Selection: &selection, APIKey: w.APIKey, Models: w.Models})
+	runtime, err := build(ctx, w.Workspace, w.ConfigPath, RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models})
 	if err != nil {
 		return team.Result{}, err
 	}

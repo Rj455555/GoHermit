@@ -445,3 +445,107 @@ func TestImportRedactedExportOnlyFailsForMissingFields(t *testing.T) {
 		t.Fatalf("import = %+v", got)
 	}
 }
+
+func TestRoleLimitsRoundTripThroughStoreAndExport(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "team-template.json"))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	want := validTemplate()
+	builder := want.Roles[string(team.RoleBuilder)]
+	builder.MaxModelCalls, builder.MaxTokens = 4, 40_000
+	want.Roles[string(team.RoleBuilder)] = builder
+	want.Default.MaxTokens = 250_000
+	if err := store.Save(want); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Roles[string(team.RoleBuilder)] != builder {
+		t.Fatalf("builder selection = %+v, want %+v", got.Roles[string(team.RoleBuilder)], builder)
+	}
+	if got.Default != want.Default {
+		t.Fatalf("default = %+v, want %+v", got.Default, want.Default)
+	}
+	// Export/import is the owner-visible path; the limits must survive it.
+	raw, err := Export(got)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	imported, err := Import(raw)
+	if err != nil {
+		t.Fatalf("import export: %v", err)
+	}
+	if imported.Roles[string(team.RoleBuilder)] != builder || imported.Default != want.Default {
+		t.Fatalf("import = %+v", imported)
+	}
+}
+
+func TestRoleLimitsOmittedWhenZero(t *testing.T) {
+	raw, err := Export(validTemplate())
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if strings.Contains(string(raw), "max_model_calls") || strings.Contains(string(raw), "max_tokens") {
+		t.Fatalf("zero limits must be omitted from the export: %s", raw)
+	}
+}
+
+func TestValidateRejectsOutOfRangeRoleLimits(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*RoleSelection)
+		wantErr string
+	}{
+		{"negative model calls", func(s *RoleSelection) { s.MaxModelCalls = -1 }, "max_model_calls"},
+		{"negative tokens", func(s *RoleSelection) { s.MaxTokens = -1 }, "max_tokens"},
+		{"model calls above cap", func(s *RoleSelection) { s.MaxModelCalls = MaxRoleModelCalls + 1 }, "max_model_calls"},
+		{"tokens above cap", func(s *RoleSelection) { s.MaxTokens = MaxRoleTokens + 1 }, "max_tokens"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			template := validTemplate()
+			tc.mutate(&template.Default)
+			if err := Validate(template); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("default validate err = %v, want %q", err, tc.wantErr)
+			}
+			template = validTemplate()
+			role := template.Roles[string(team.RoleBuilder)]
+			tc.mutate(&role)
+			template.Roles[string(team.RoleBuilder)] = role
+			if err := Validate(template); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("role validate err = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsBoundaryRoleLimits(t *testing.T) {
+	template := validTemplate()
+	template.Default.MaxModelCalls, template.Default.MaxTokens = MaxRoleModelCalls, MaxRoleTokens
+	if err := Validate(template); err != nil {
+		t.Fatalf("validate boundary limits: %v", err)
+	}
+}
+
+// A template file written before the limit keys existed must load with zero
+// (unlimited) limits.
+func TestLegacyFileWithoutLimitsLoadsUnlimited(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "team-template.json"))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	legacy := `{"schema_version": 1, "name": "core", "default": {"company": "anthropic", "access": "api", "model": "claude-sonnet-4"}, "roles": {"builder": {"company": "anthropic", "access": "api", "model": "claude-opus-4"}}, "updated_at": "2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(store.Path(), []byte(legacy), 0600); err != nil {
+		t.Fatalf("write legacy file: %v", err)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatalf("load legacy: %v", err)
+	}
+	if got.Default.MaxModelCalls != 0 || got.Default.MaxTokens != 0 || got.Roles["builder"].MaxModelCalls != 0 || got.Roles["builder"].MaxTokens != 0 {
+		t.Fatalf("legacy file gained limits: %+v", got)
+	}
+}

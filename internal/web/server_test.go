@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/agent"
 	"github.com/Rj455555/GoHermit/internal/app"
 	"github.com/Rj455555/GoHermit/internal/config"
+	"github.com/Rj455555/GoHermit/internal/contextmgr"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/runcontrol"
@@ -22,6 +24,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
 	"github.com/Rj455555/GoHermit/internal/teamtemplate"
+	"github.com/Rj455555/GoHermit/internal/tool"
 )
 
 func testServer(t *testing.T) *Server {
@@ -29,6 +32,7 @@ func testServer(t *testing.T) *Server {
 	root := t.TempDir()
 	t.Setenv("GOHERMIT_AUTH_STORE", filepath.Join(root, "credentials.json"))
 	t.Setenv("GOHERMIT_OWNER_STORE", filepath.Join(root, "owner.json"))
+	t.Setenv("GOHERMIT_TEAM_TEMPLATE_STORE", filepath.Join(root, "team-template.json"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
 	if err := os.WriteFile(filepath.Join(root, "hermit.toml"), []byte("[model]\nprovider = \"codex\"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -757,5 +761,271 @@ func TestTeamTemplateImportRejectsCrossOriginAndWrongMethod(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST export status=%d", response.Code)
+	}
+}
+
+// templateRoleProvider answers every role with a bounded JSON handoff; the
+// verifier first runs the registered test.run tool so its handoff carries a
+// passing deterministic check, like the real verification stage.
+type templateRoleProvider struct{}
+
+func (templateRoleProvider) Generate(_ context.Context, request model.GenerateRequest) (model.GenerateResponse, error) {
+	verifier, answeredTool := false, false
+	for _, message := range request.Messages {
+		if strings.Contains(message.Content, "Your assigned role: verifier") {
+			verifier = true
+		}
+		if message.Role == model.RoleTool {
+			answeredTool = true
+		}
+	}
+	if verifier && !answeredTool {
+		return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{{ID: "c1", Name: "test.run", Arguments: json.RawMessage(`{}`)}}}, FinishReason: "tool_calls", Usage: model.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}, Attempts: 1}, nil
+	}
+	return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: `{"summary":"done","evidence":["workspace"]}`}, FinishReason: "stop", Usage: model.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}, Attempts: 1}, nil
+}
+
+func (templateRoleProvider) Capabilities() model.Capabilities {
+	return model.Capabilities{ToolCalls: true}
+}
+
+type fakeTestRunTool struct{}
+
+func (fakeTestRunTool) Definition() tool.Definition {
+	return tool.Definition{Name: "test.run", Description: "fake deterministic tests", Permission: tool.PermissionExecute}
+}
+
+func (fakeTestRunTool) Execute(_ context.Context, call tool.Call) (tool.Result, error) {
+	return tool.Result{CallID: call.ID, Name: call.Name, Output: "ok"}, nil
+}
+
+func waitForRun(t *testing.T, server *Server) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for server.active.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if server.active.Load() {
+		t.Fatal("run did not finish in time")
+	}
+}
+
+// TestTeamTemplateOverrideReachesBuilderExecutionSession proves acceptance 1:
+// with a template pinning the builder to a different provider/model, the real
+// TeamWorker builds the builder's runtime from the template override and the
+// builder's hidden execution session records the override, while a role
+// without an override keeps the session-level selection.
+func TestTeamTemplateOverrideReachesBuilderExecutionSession(t *testing.T) {
+	server := testServer(t)
+	t.Setenv("DASHSCOPE_API_KEY", "")
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.credentials.SetAPIKey("alibaba", "test-secret-2"); err != nil {
+		t.Fatal(err)
+	}
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "override",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+		Roles: map[string]teamtemplate.RoleSelection{
+			"builder": {Company: "alibaba", Access: "alibaba", Model: "qwen3.7-plus"},
+		},
+	})
+	var mu sync.Mutex
+	built := map[string]config.RuntimeSelection{}
+	server.build = func(_ context.Context, workspace, _ string, selection config.RuntimeSelection, _ string, _ []config.ModelOption) (*app.Runtime, error) {
+		mu.Lock()
+		built[selection.Agent] = selection
+		mu.Unlock()
+		manager, err := contextmgr.New(contextmgr.Config{MaxTokens: 4096, CompressionThreshold: .8, HardLimitThreshold: .92, ReserveOutputTokens: 512})
+		if err != nil {
+			return nil, err
+		}
+		registry := tool.NewRegistry()
+		if err := registry.Register(fakeTestRunTool{}); err != nil {
+			return nil, err
+		}
+		return &app.Runtime{Workspace: workspace, Store: server.store, Runner: &agent.Runner{Provider: templateRoleProvider{}, Executor: tool.Executor{Registry: registry, DefaultTimeout: time.Second}, Context: manager, Store: server.store, Config: agent.Config{MaxTurns: 4, Timeout: time.Minute, Model: selection.Model}}}, nil
+	}
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Team override", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := server.launchSessionRun(sess, "build the requested change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, server)
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := loaded.Runs[len(loaded.Runs)-1]
+	if run.Status != session.RunCompleted {
+		t.Fatalf("run=%s error=%q", run.Status, run.Error)
+	}
+	builderChild, err := server.store.Load(context.Background(), "worker-mission-"+runID+"-build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !builderChild.Hidden || builderChild.Selection.Company != "alibaba" || builderChild.Selection.Access != "alibaba" || builderChild.Selection.Model != "qwen3.7-plus" || builderChild.Selection.Agent != "coding" {
+		t.Fatalf("builder child selection = %+v hidden=%v, want the template override", builderChild.Selection, builderChild.Hidden)
+	}
+	explorerChild, err := server.store.Load(context.Background(), "worker-mission-"+runID+"-explore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explorerChild.Selection.Company != "deepseek" || explorerChild.Selection.Access != "deepseek" || explorerChild.Selection.Model != "deepseek-chat" || explorerChild.Selection.Agent != "explorer" {
+		t.Fatalf("explorer child selection = %+v, want the session-level selection", explorerChild.Selection)
+	}
+	if got := built["coding"]; got.Company != "alibaba" || got.Model != "qwen3.7-plus" {
+		t.Fatalf("builder runtime built with %+v, want the template override", got)
+	}
+}
+
+// TestTeamTemplateLimitsReachMissionBudget proves acceptance 2: per-role
+// limits from the template land on the launched mission's Budget.RoleLimits.
+func TestTeamTemplateLimitsReachMissionBudget(t *testing.T) {
+	server := testServer(t)
+	server.teamWorker = webTeamWorker{}
+	t.Setenv("DASHSCOPE_API_KEY", "")
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.credentials.SetAPIKey("alibaba", "test-secret-2"); err != nil {
+		t.Fatal(err)
+	}
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "limits",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+		Roles: map[string]teamtemplate.RoleSelection{
+			"builder": {Company: "alibaba", Access: "alibaba", Model: "qwen3.7-plus", MaxModelCalls: 5, MaxTokens: 50_000},
+		},
+	})
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Team limits", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := server.launchSessionRun(sess, "build it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, server)
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Mission == nil || loaded.Mission.RunID != runID {
+		t.Fatalf("mission=%+v", loaded.Mission)
+	}
+	limits := loaded.Mission.Budget.RoleLimits
+	if len(limits) != 1 || limits[team.RoleBuilder] != (team.Usage{ModelCalls: 5, Tokens: 50_000}) {
+		t.Fatalf("role_limits=%+v, want only the builder limit from the template", limits)
+	}
+	if run := loaded.Runs[len(loaded.Runs)-1]; run.Status != session.RunCompleted {
+		t.Fatalf("run=%s error=%q", run.Status, run.Error)
+	}
+}
+
+// TestTeamTemplateWithoutLimitsKeepsDefaultBudget: a non-empty template
+// without limits leaves Budget.RoleLimits nil, exactly like DefaultBudget.
+func TestTeamTemplateWithoutLimitsKeepsDefaultBudget(t *testing.T) {
+	server := testServer(t)
+	server.teamWorker = webTeamWorker{}
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	injectTeamTemplate(t, server, &teamtemplate.Template{
+		Name:    "no-limits",
+		Default: teamtemplate.RoleSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat"},
+	})
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Team no limits", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = server.launchSessionRun(sess, "build it"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, server)
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Mission == nil || loaded.Mission.Budget.RoleLimits != nil {
+		t.Fatalf("template without limits must keep RoleLimits nil: %+v", loaded.Mission.Budget)
+	}
+	if run := loaded.Runs[len(loaded.Runs)-1]; run.Status != session.RunCompleted {
+		t.Fatalf("run=%s error=%q", run.Status, run.Error)
+	}
+}
+
+// TestTeamRunFailsClosedWhenTemplateUnloadable: a template that cannot be
+// loaded fails the launch and, at run time, fails the launched run through
+// the bounded failLaunchedRun path instead of running without the template.
+func TestTeamRunFailsClosedWhenTemplateUnloadable(t *testing.T) {
+	server := testServer(t)
+	server.teamWorker = webTeamWorker{}
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := teamtemplate.NewStore(filepath.Join(t.TempDir(), "team-template.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.Path(), []byte(`{"schema_version": 99}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server.teamTemplates = store
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Team broken template", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = server.launchSessionRun(sess, "build it"); err == nil || !strings.Contains(err.Error(), "team template") {
+		t.Fatalf("launch err = %v, want a team template failure", err)
+	}
+
+	// A launched run (e.g. approved review plan resumed later) fails closed too.
+	run := sess.ActiveRun()
+	if run == nil {
+		t.Fatal("launch left no active run behind")
+	}
+	sess.Mission, err = team.DefaultMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Plan, err = taskplan.DefaultTeam(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	server.runTeam(context.Background(), sess, run.ID, config.RuntimeSelection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent}, "test-key", nil)
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := loaded.Runs[len(loaded.Runs)-1]
+	if failed.Status != session.RunFailed || !strings.Contains(failed.Error, "team template") {
+		t.Fatalf("run=%s error=%q, want a bounded team template failure", failed.Status, failed.Error)
+	}
+	if loaded.Mission.Status == team.Running || loaded.Mission.Status == team.Completed {
+		t.Fatalf("mission must not have run: %s", loaded.Mission.Status)
 	}
 }
