@@ -34,6 +34,14 @@ const (
 	WorkItemFailed     Type = "work_item_failed"
 	PlanCreated        Type = "plan_created"
 	PlanUpdated        Type = "plan_updated"
+	// ProviderFallback is the mandatory audit event for any future
+	// provider-to-provider fallback: it MUST be committed BEFORE switching
+	// providers, and a fallback without this event is a bug. Its bounded
+	// payload carries the role, the work item, the from/to provider NAMES,
+	// and the reason — names and counts only, never credentials or prompts.
+	// Nothing emits this event yet; actual fallback switching is intentionally
+	// not implemented.
+	ProviderFallback Type = "provider_fallback"
 )
 
 type Event struct {

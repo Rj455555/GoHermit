@@ -72,6 +72,10 @@ type Budget struct {
 	MaxModelCalls int           `json:"max_model_calls"`
 	MaxTokens     int           `json:"max_tokens"`
 	Timeout       time.Duration `json:"timeout"`
+	// RoleLimits optionally caps usage per role on top of the global ceilings.
+	// Nil or empty means no per-role enforcement; the field is additive so
+	// persisted missions without it load unchanged.
+	RoleLimits map[Role]Usage `json:"role_limits,omitempty"`
 }
 
 type Usage struct {
@@ -160,6 +164,35 @@ type Mission struct {
 
 func DefaultBudget() Budget {
 	return Budget{MaxWorkItems: 12, MaxModelCalls: 30, MaxTokens: 250_000, Timeout: 45 * time.Minute}
+}
+
+// RoleLimit returns the effective per-role ceiling for a role. A nil map, a
+// missing entry, or a zero Usage means no limit for that role.
+func (b Budget) RoleLimit(role Role) (Usage, bool) {
+	limit, ok := b.RoleLimits[role]
+	if !ok || (limit.ModelCalls <= 0 && limit.Tokens <= 0) {
+		return Usage{}, false
+	}
+	return limit, true
+}
+
+// RoleBudgetExceeded returns a bounded human-readable reason when the role's
+// accumulated usage meets or exceeds its per-role ceiling (calls or tokens),
+// else "". The reason names the role, the hit limit, and counts only — never
+// prompt text. A role without a limit is never exceeded.
+func (m *Mission) RoleBudgetExceeded(role Role) string {
+	limit, ok := m.Budget.RoleLimit(role)
+	if !ok {
+		return ""
+	}
+	used := m.UsageByRole[role]
+	if limit.ModelCalls > 0 && used.ModelCalls >= limit.ModelCalls {
+		return fmt.Sprintf("role %s model-call budget exceeded (%d/%d calls)", role, used.ModelCalls, limit.ModelCalls)
+	}
+	if limit.Tokens > 0 && used.Tokens >= limit.Tokens {
+		return fmt.Sprintf("role %s token budget exceeded (%d/%d tokens)", role, used.Tokens, limit.Tokens)
+	}
+	return ""
 }
 
 func NewMission(id, runID, goal string, budget Budget) (*Mission, error) {
@@ -457,6 +490,12 @@ func (m *Mission) Complete(id string, handoff Handoff) error {
 
 // RequeueAfterVerification schedules the verifier and its mutating dependency
 // for another bounded attempt while preserving prior handoffs as audit history.
+//
+// Retry ownership: a requeued WorkItem retries under its own identity — same
+// ID, same role, its own Attempt counter (incremented by Start), and its usage
+// accrues only to its own role in UsageByRole. No code path may re-run failed
+// work under a different WorkItem or role; a coordinator re-dispatch to another
+// identity is a contract violation.
 func (m *Mission) RequeueAfterVerification(verifierID string, maxAttempts int) (bool, error) {
 	verifier := m.work(verifierID)
 	if verifier == nil || verifier.Role != RoleVerifier || verifier.Status != WorkCompleted {

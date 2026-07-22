@@ -236,6 +236,12 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 			_ = c.checkpoint(mission)
 			return errors.New(message)
 		}
+		if reason := mission.RoleBudgetExceeded(item.Role); reason != "" {
+			mission.FailMission(reason)
+			c.emit(TeamEvent{Type: MissionFailed, MissionID: mission.ID, WorkItemID: id, Role: item.Role, Message: reason})
+			_ = c.checkpoint(mission)
+			return errors.New(reason)
+		}
 		if item.ExecutionSessionID == "" {
 			item.ExecutionSessionID = "worker-" + mission.ID + "-" + item.ID
 		}
@@ -283,6 +289,14 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 			c.emit(TeamEvent{Type: MissionFailed, MissionID: mission.ID, WorkItemID: outcome.id, Role: outcome.role, Message: message})
 			_ = c.checkpoint(mission)
 			batchErr = errors.New(message)
+			cancelBatch()
+			continue
+		}
+		if reason := mission.RoleBudgetExceeded(outcome.role); reason != "" {
+			mission.FailMission(reason)
+			c.emit(TeamEvent{Type: MissionFailed, MissionID: mission.ID, WorkItemID: outcome.id, Role: outcome.role, Message: reason})
+			_ = c.checkpoint(mission)
+			batchErr = errors.New(reason)
 			cancelBatch()
 			continue
 		}
