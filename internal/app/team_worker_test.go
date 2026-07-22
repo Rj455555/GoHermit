@@ -68,6 +68,65 @@ func TestTeamWorkerReusesCompletedExecutionSession(t *testing.T) {
 	}
 }
 
+// verifierNoCheckProvider scripts a Verifier turn that runs no tool and
+// reports no checks — exactly what a real model produces for a read-only
+// Team Run's Verifier per the "Verifier checks on read-only Team Runs"
+// prompt guidance (prompts/coding.md), since there is nothing a deterministic
+// command could check against a plain informational question.
+type verifierNoCheckProvider struct{}
+
+func (verifierNoCheckProvider) Generate(context.Context, model.GenerateRequest) (model.GenerateResponse, error) {
+	return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: `{"summary":"cross-checked the claims","issues":[]}`}, FinishReason: "stop", Usage: model.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}}, nil
+}
+
+func (verifierNoCheckProvider) Capabilities() model.Capabilities { return model.Capabilities{} }
+
+// TestWorkerResultLeavesVerifierChecksEmptyWhenNoneRan is the end-to-end
+// regression guard for the read-only-verification fix: workerResult used to
+// force a synthetic failing Check onto any Verifier handoff with no real
+// TestResults, which defeated internal/team.handoffChecksPassed's read-only
+// path entirely (an owner-reported bug: "team" agent + a plain question
+// against an empty workspace always failed "independent verification did not
+// pass", even after that coordinator-level fix, because this layer injected
+// a fake failing Check before the Handoff ever reached it). A Verifier that
+// genuinely ran nothing must produce genuinely empty Checks — the mission
+// layer, not this one, decides what that means.
+func TestWorkerResultLeavesVerifierChecksEmptyWhenNoneRan(t *testing.T) {
+	root := t.TempDir()
+	store, err := session.NewStore(root, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := session.New("parent goal", root, "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent.ID = "parent"
+	if err = store.Save(context.Background(), parent); err != nil {
+		t.Fatal(err)
+	}
+	provider := verifierNoCheckProvider{}
+	build := func(context.Context, string, string, RuntimeOptions) (*Runtime, error) {
+		manager, managerErr := contextmgr.New(contextmgr.Config{MaxTokens: 4096, CompressionThreshold: .8, HardLimitThreshold: .92, ReserveOutputTokens: 512})
+		if managerErr != nil {
+			return nil, managerErr
+		}
+		return &Runtime{Workspace: root, Store: store, Runner: &agent.Runner{Provider: provider, Executor: tool.Executor{Registry: tool.NewRegistry(), DefaultTimeout: time.Second}, Context: manager, Store: store, Config: agent.Config{MaxTurns: 2, Timeout: time.Minute, Model: "test"}}}, nil
+	}
+	worker := TeamWorker{Workspace: root, ParentSessionID: "parent", ParentRunID: "run", ParentStore: store, Build: build}
+	assignment := team.Assignment{MissionID: "mission", Goal: "hello, 你是什么模型", WorkItem: team.WorkItem{ID: "verify", Role: team.RoleVerifier, Title: "Verify", Goal: "cross-check", ExecutionSessionID: "worker-mission-verify"}, MaxTokens: 1000, MaxDuration: time.Minute}
+	result, err := worker.Execute(context.Background(), assignment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Handoff.Checks) != 0 {
+		t.Fatalf("checks=%+v, want genuinely empty — no synthetic entry should be fabricated", result.Handoff.Checks)
+	}
+	if len(result.Handoff.Issues) != 0 {
+		t.Fatalf("issues=%+v, want empty (the provider reported none)", result.Handoff.Issues)
+	}
+}
+
 func TestParseWorkerHandoffReadsOptionalSubsteps(t *testing.T) {
 	with := parseWorkerHandoff(`{"summary":"inspected","substeps":[{"id":"inspect_auth","title":"梳理认证流程","goal":"inspect the auth flow","role":"explorer","depends_on":["verify"]}]}`)
 	if with.Summary != "inspected" || len(with.Substeps) != 1 {
