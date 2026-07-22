@@ -126,21 +126,24 @@ func Cancel(plan *taskplan.Plan, detail string) (Transition, error) {
 	return Transition{Changed: changed, StepID: stepID, Detail: detail}, nil
 }
 
+// verifierHandoffPassed finds this specific WorkItem's Verifier handoff and
+// defers to team.HandoffChecksPassed for the pass/fail rule itself — that is
+// the single definition of "passed" (mutation missions always need a real
+// passing Check; read-only missions accept empty Checks when Issues is also
+// empty). This used to keep its own copy of that rule, which drifted out of
+// sync with a coordinator-level fix for exactly the read-only case and
+// caused the Live Plan to never reach Completed even after the Mission
+// itself succeeded — do not reintroduce a second copy here.
 func verifierHandoffPassed(mission *team.Mission, workItemID string) bool {
 	if mission == nil {
 		return false
 	}
 	for i := len(mission.Handoffs) - 1; i >= 0; i-- {
 		handoff := mission.Handoffs[i]
-		if handoff.WorkItemID != workItemID || handoff.Role != team.RoleVerifier || len(handoff.Checks) == 0 {
+		if handoff.WorkItemID != workItemID || handoff.Role != team.RoleVerifier {
 			continue
 		}
-		for _, check := range handoff.Checks {
-			if !check.Passed {
-				return false
-			}
-		}
-		return true
+		return team.HandoffChecksPassed(mission, handoff)
 	}
 	return false
 }

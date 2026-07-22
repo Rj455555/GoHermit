@@ -326,7 +326,7 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 				continue
 			}
 		}
-		if outcome.role == RoleVerifier && !handoffChecksPassed(mission, outcome.result.Handoff) {
+		if outcome.role == RoleVerifier && !HandoffChecksPassed(mission, outcome.result.Handoff) {
 			attempts := c.MaxRepairAttempts
 			if attempts <= 0 {
 				attempts = 3
@@ -412,12 +412,16 @@ func dependencyHandoffs(mission *Mission, item WorkItem) []Handoff {
 	return result
 }
 
-// missionHasMutation reports whether any WorkItem in the mission mutates the
+// MissionHasMutation reports whether any WorkItem in the mission mutates the
 // workspace. A mission with none is purely read-only/informational: there is
 // no code change a Verifier could run a deterministic Check against, so
 // "verification" for that mission means something different (see
-// handoffChecksPassed) than for a mission where a Builder actually ran.
-func missionHasMutation(mission *Mission) bool {
+// HandoffChecksPassed) than for a mission where a Builder actually ran.
+// Exported so every package that decides whether a Verifier handoff counts
+// as passed (internal/runcontrol's Live Plan transition included) shares this
+// one definition instead of maintaining a second copy that can drift out of
+// sync — that drift is exactly how this rule went half-fixed once already.
+func MissionHasMutation(mission *Mission) bool {
 	for _, item := range mission.WorkItems {
 		if item.MutatesWorkspace {
 			return true
@@ -427,7 +431,7 @@ func missionHasMutation(mission *Mission) bool {
 }
 
 func verificationPassed(mission *Mission) bool {
-	mutating := missionHasMutation(mission)
+	mutating := MissionHasMutation(mission)
 	for i := len(mission.Handoffs) - 1; i >= 0; i-- {
 		handoff := mission.Handoffs[i]
 		if handoff.Role != RoleVerifier {
@@ -439,7 +443,7 @@ func verificationPassed(mission *Mission) bool {
 			}
 			// Read-only mission, nothing to run a Check against: the
 			// Verifier's own cross-check reporting no issues is the pass
-			// signal instead (handoffChecksPassed applies the same rule).
+			// signal instead (HandoffChecksPassed applies the same rule).
 			return len(handoff.Issues) == 0
 		}
 		for _, check := range handoff.Checks {
@@ -452,7 +456,7 @@ func verificationPassed(mission *Mission) bool {
 	return false
 }
 
-// handoffChecksPassed reports whether one Verifier handoff counts as passed.
+// HandoffChecksPassed reports whether one Verifier handoff counts as passed.
 // A mutation mission (a Builder actually ran) always requires at least one
 // real, explicitly passing Check — never treat "nothing was run" as
 // verified, that would let an unverified mutation through. A purely
@@ -461,10 +465,12 @@ func verificationPassed(mission *Mission) bool {
 // cross-check is the pass signal instead. A Verifier that actually found a
 // problem must report it via Issues, which still fails the mission — this
 // only changes the "genuinely nothing to check" case from an unconditional
-// failure to a real signal.
-func handoffChecksPassed(mission *Mission, handoff Handoff) bool {
+// failure to a real signal. Exported: this is the single definition of
+// "passed" for a Verifier handoff — internal/runcontrol calls this directly
+// for the Live Plan transition rather than keeping its own copy.
+func HandoffChecksPassed(mission *Mission, handoff Handoff) bool {
 	if len(handoff.Checks) == 0 {
-		if missionHasMutation(mission) {
+		if MissionHasMutation(mission) {
 			return false
 		}
 		return len(handoff.Issues) == 0

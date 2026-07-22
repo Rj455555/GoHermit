@@ -33,6 +33,27 @@ sufficient; this closes the gap the live redeploy verification caught.
     through fabricated data).
   - Read-only mission + genuinely empty Checks + empty Issues → passes (the actual bug).
 
+## A third copy of the same bug, found by live verification of this very fix
+
+Rebuilding the container from just the `workerResult` fix above and replaying the owner's exact
+scenario got further — the Mission itself completed — but the Run still failed, now with a
+*different* error: `"team live plan completion gate failed"`
+(`internal/web/server.go:1134`, gated on `run.Plan.Status != taskplan.Completed`).
+
+Root cause: `internal/runcontrol/controller.go`'s `verifierHandoffPassed` — which decides
+whether a `WorkItemDone` event for a Verifier moves the **Live Plan** step to `Complete` or
+`Fail` — kept its own independent copy of the exact same "empty Checks always means not passed"
+rule the coordinator-level fix (PR #26) had already corrected in `internal/team`. The two
+packages had two separate, un-synced implementations of "did the verifier pass"; fixing one and
+not the other meant the Mission/WorkItem layer agreed the run succeeded while the Live Plan layer
+still marked the verify step failed, so the Plan never reached `Completed` and the Run was
+reported as failed regardless.
+
+Fixed by eliminating the duplication instead of patching it a third time: `team.HandoffChecksPassed`
+and `team.MissionHasMutation` are now exported, and `internal/runcontrol.verifierHandoffPassed`
+calls `team.HandoffChecksPassed` directly instead of keeping a second copy of the rule. There is
+now exactly one place in the codebase that decides whether a Verifier handoff counts as passed.
+
 ## Verification completed
 
 - New test `TestWorkerResultLeavesVerifierChecksEmptyWhenNoneRan`
@@ -40,22 +61,37 @@ sufficient; this closes the gap the live redeploy verification caught.
   path (not a stub `team.Worker`, which is what let this slip through PR #26's own tests) with a
   scripted provider that returns a Verifier turn with no tool calls and an empty `issues` list;
   asserts `Result.Handoff.Checks` is genuinely empty (length 0).
-- `go build/vet/test ./...` — 3 consecutive uncached runs, all green.
+- `internal/runcontrol`'s existing tests still pass unchanged against the new
+  `team.HandoffChecksPassed`-backed `verifierHandoffPassed` — no behavior change intended or
+  observed for the mutation path there.
+- `go build/vet/test ./...` — 3 consecutive uncached runs, all green, after both rounds of fixes.
 - `go test -race ./...` — clean.
-- **Live-verified this time**: rebuilt the container from this fix, replayed the exact owner
-  scenario via the real HTTP API (`team` agent, `gpt-5.4-mini`, "hello, 你是什么模型") against
-  the running container — Mission completed, Lead produced a real answer. See the chat
-  transcript for the raw request/response; not duplicated here.
+- **Live-verified end to end**: rebuilt the container from the full branch (worker fix +
+  runcontrol consolidation), replayed the exact owner scenario via the real HTTP API (`team`
+  agent, `gpt-5.4-mini`, "hello, 你是什么模型") against the running container — Mission
+  completed, Run completed, Lead produced a real answer. See the chat transcript for the raw
+  request/response; not duplicated here.
 
 ## Lesson for next time (recorded so it isn't repeated)
 
-PR #26's own tests used a raw stub `team.Worker` that called `Result{Handoff: handoff}`
-directly, bypassing `internal/app.TeamWorker`/`workerResult` entirely — the exact layer this bug
-lived in. Passing unit tests at the `internal/team` level were not sufficient evidence the fix
-worked end-to-end; only replaying the scenario against the real deployed container surfaced this
-second layer. For any future fix touching Team Run behavior, prefer (or add alongside) a test
-that goes through the real `TeamWorker.Execute`/`workerResult` path, and where feasible, verify
-live against a rebuilt container before declaring a user-reported bug closed.
+Two lessons from this one bug, not one:
+
+1. PR #26's own tests used a raw stub `team.Worker` that called `Result{Handoff: handoff}`
+   directly, bypassing `internal/app.TeamWorker`/`workerResult` entirely — the exact layer the
+   synthetic-check bug lived in. Passing unit tests at the `internal/team` level were not
+   sufficient evidence the fix worked end-to-end.
+2. Even after fixing `workerResult`, a *third* independent copy of the same pass/fail rule lived
+   in `internal/runcontrol` and was never touched by either previous fix — found only by
+   replaying the scenario against a real rebuilt container a second time. Whenever a rule like
+   "does verification count as passed" seems to exist in exactly one place, grep for every
+   place a Verifier's `Checks`/`Handoff` gets inspected across the whole repo, not just the
+   package the bug report pointed at — and prefer exporting the one true implementation over
+   re-deriving the same logic in a second package, which is exactly how this drifted apart in
+   the first place.
+
+For any future fix touching Team Run verification behavior: verify live against a rebuilt
+container before declaring a user-reported bug closed, and re-verify live again after every
+subsequent patch to the same bug — the first "it's fixed" was wrong twice in a row here.
 
 ## Repository state
 
