@@ -205,7 +205,7 @@ func Validate(profile Profile) error {
 		if len(value) > MaxTextBytes {
 			return errors.New("owner profile text exceeds size limit")
 		}
-		if looksSecret(value) {
+		if LooksSecret(value) {
 			return errors.New("owner profile must not contain credentials or tokens")
 		}
 	}
@@ -247,7 +247,8 @@ func clean(value string) string {
 	return strings.TrimSpace(strings.ReplaceAll(value, "\x00", ""))
 }
 
-func looksSecret(value string) bool {
+// LooksSecret reports whether value matches a credential or token marker.
+func LooksSecret(value string) bool {
 	lower := strings.ToLower(value)
 	markers := []string{"authorization: bearer ", "password=", "passwd=", "api_key=", "apikey=", "access_token=", "refresh_token=", "ghp_", "github_pat_", "sk-proj-"}
 	for _, marker := range markers {
