@@ -617,6 +617,15 @@ func (s *Server) resumeSessionRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not interrupted or resumable"})
 		return
 	}
+	// Recover interrupted this run (e.g. the process stopped mid-run); its
+	// pending approvals died with it (ADR 0011) and the resumed run must
+	// request fresh ones.
+	if expired := runcontrol.ExpireRunApprovals(sess.ApprovalRequests, run.ID, time.Now().UTC()); len(expired) > 0 {
+		if _, err = s.commitAndPublishMany(sess, s.appendApprovalExpiredEvents(sess, expired, nil)); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+	}
 	runID, err := s.launchSessionRun(sess, "")
 	if err != nil {
 		status := http.StatusBadRequest
@@ -786,6 +795,23 @@ func (s *Server) approvalRuntimeEvent(sess *session.Session, req *approval.Reque
 	return runtimeEvent
 }
 
+// appendApprovalExpiredEvents appends one approval_expired audit event per
+// newly expired request ID, reusing the bounded approvalRuntimeEvent payload.
+// The runcontrol Expire* triggers return the IDs they transitioned (terminal
+// requests are never touched), so a trigger that expired nothing appends
+// nothing and the caller's commit carries zero extra events.
+func (s *Server) appendApprovalExpiredEvents(sess *session.Session, ids []string, runtimeEvents []event.Event) []event.Event {
+	for _, id := range ids {
+		for i := range sess.ApprovalRequests {
+			if sess.ApprovalRequests[i].RequestID == id {
+				runtimeEvents = append(runtimeEvents, s.approvalRuntimeEvent(sess, &sess.ApprovalRequests[i], event.ApprovalExpired))
+				break
+			}
+		}
+	}
+	return runtimeEvents
+}
+
 func (s *Server) launchSessionRun(sess *session.Session, message string) (string, error) {
 	selection := config.RuntimeSelection{Company: sess.Selection.Company, Access: sess.Selection.Access, Model: sess.Selection.Model, Agent: sess.Selection.Agent}
 	liveModels, err := s.validateSelection(context.Background(), selection)
@@ -795,6 +821,23 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 	apiKey, err := s.resolveCredential(context.Background(), selection)
 	if err != nil {
 		return "", err
+	}
+	// Policy-fingerprint trigger (ADR 0011): recompute the config digest
+	// exactly as createSession does; when it differs from the digest stored
+	// on the session, approvals recorded under the old fingerprint are void.
+	// This runs before the run starts executing.
+	policyRuntime, err := s.build(context.Background(), s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
+	if err != nil {
+		return "", err
+	}
+	digest := session.ConfigDigest(policyRuntime.Config)
+	policyRuntime.Close()
+	if digest != sess.ConfigDigest {
+		if expired := runcontrol.ExpireApprovalsForPolicy(sess.ApprovalRequests, digest, time.Now().UTC()); len(expired) > 0 {
+			if _, err = s.commitAndPublishMany(sess, s.appendApprovalExpiredEvents(sess, expired, nil)); err != nil {
+				return "", err
+			}
+		}
 	}
 	s.runMu.Lock()
 	if !s.active.CompareAndSwap(false, true) {
@@ -905,9 +948,14 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 		s.applyOwner(runtime)
 		defer runtime.Close()
 		runtime.Runner.Sink = s.publish
-		if runErr := runtime.Runner.Run(runCtx, sess); runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, context.DeadlineExceeded) {
-			// Runner persists and emits its own terminal error.
-			return
+		// The runner persists and emits its own terminal state; every return
+		// from Run — completion, failure, cancellation, or deadline
+		// interruption — ends the run's pending approvals (ADR 0011).
+		_ = runtime.Runner.Run(runCtx, sess)
+		if expired := runcontrol.ExpireRunApprovals(sess.ApprovalRequests, runID, time.Now().UTC()); len(expired) > 0 {
+			if _, err := s.commitAndPublishMany(sess, s.appendApprovalExpiredEvents(sess, expired, nil)); err != nil {
+				sess.LastError = err.Error()
+			}
 		}
 	}()
 	return runID, nil
@@ -971,6 +1019,10 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 			runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.WorkItemID = runID, sess.Mission.ID, teamEvent.WorkItemID
 			runtimeEvent.AgentID, runtimeEvent.Message = string(teamEvent.Role), teamEvent.Message
 			runtimeEvents := []event.Event{runtimeEvent}
+			planRevision := 0
+			if run.Plan != nil {
+				planRevision = run.Plan.Revision
+			}
 			transition, transitionErr := runcontrol.ApplyTeamEvent(run.Plan, teamEvent, sess.Mission)
 			if transitionErr != nil {
 				sinkErr = transitionErr
@@ -980,6 +1032,13 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, transition.Detail)
 				planEvent.MissionID = sess.Mission.ID
 				runtimeEvents = append(runtimeEvents, planEvent)
+			}
+			if run.Plan != nil && run.Plan.Revision != planRevision {
+				// The plan moved to a new revision: pending approvals recorded
+				// against an older revision are stale (ADR 0011); requests
+				// recorded against the new revision survive.
+				expired := runcontrol.ExpireApprovalsForPlanRevision(sess.ApprovalRequests, runID, run.Plan.Revision, time.Now().UTC())
+				runtimeEvents = s.appendApprovalExpiredEvents(sess, expired, runtimeEvents)
 			}
 			_, sinkErr = s.commitAndPublishMany(sess, runtimeEvents)
 		},
@@ -1029,7 +1088,9 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 	_ = s.store.AppendMessage(sess.ID, session.MessageRecord{RunID: runID, Role: "assistant", Content: final.Summary})
 	completed := event.New(event.TaskCompleted, sess.ID)
 	completed.RunID, completed.MissionID, completed.AgentID, completed.Message = runID, sess.Mission.ID, string(team.RoleLead), final.Summary
-	if _, err := s.commitAndPublish(sess, completed); err != nil {
+	// Normal completion terminates the run's pending approvals too (ADR 0011).
+	runtimeEvents := s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, runID, now), []event.Event{completed})
+	if _, err := s.commitAndPublishMany(sess, runtimeEvents); err != nil {
 		sess.LastError = err.Error()
 	}
 }
@@ -1073,6 +1134,9 @@ func (s *Server) finishTeamCancelled(sess *session.Session, run *session.Run, ca
 	runtimeEvent := event.New(eventType, sess.ID)
 	runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.Error = run.ID, sess.Mission.ID, cause.Error()
 	runtimeEvents = append(runtimeEvents, runtimeEvent)
+	// ADR 0011: interruption ends pending approvals just like cancellation;
+	// a resumed run must request fresh ones.
+	runtimeEvents = s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, run.ID, now), runtimeEvents)
 	if _, err := s.commitAndPublishMany(sess, runtimeEvents); err != nil {
 		sess.LastError = err.Error()
 	}
@@ -1335,6 +1399,7 @@ func (s *Server) failLaunchedRun(sess *session.Session, runID string, cause erro
 		e.RunID = runID
 		e.Error = cause.Error()
 		runtimeEvents = append(runtimeEvents, e)
+		runtimeEvents = s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, runID, now), runtimeEvents)
 		if _, err := s.commitAndPublishMany(sess, runtimeEvents); err != nil {
 			sess.LastError = err.Error()
 		}
@@ -1364,6 +1429,7 @@ func (s *Server) cancelSessionRun(w http.ResponseWriter, r *http.Request) {
 					cancelled := event.New(event.TaskCancelled, sess.ID)
 					cancelled.RunID, cancelled.Message = run.ID, "计划已停止"
 					runtimeEvents = append(runtimeEvents, cancelled)
+					runtimeEvents = s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, run.ID, now), runtimeEvents)
 					_, cancelErr = s.commitAndPublishMany(sess, runtimeEvents)
 				}
 				s.runMu.Unlock()

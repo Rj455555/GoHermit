@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1260,4 +1261,497 @@ func TestDecideApprovalRejectsCrossOriginBadDecisionAndUnknownFields(t *testing.
 	if status := loadApprovalStatus(t, server, sess.ID, "apr-1"); status != approval.Pending {
 		t.Fatalf("rejected requests changed state: %s", status)
 	}
+}
+
+// newRunApproval builds a live pending request bound to a specific run and
+// plan revision.
+func newRunApproval(t *testing.T, runID, requestID string, revision int) approval.Request {
+	t.Helper()
+	req := newApprovalRequest(t, "", requestID, approvalTestStart)
+	req.RunID, req.PlanRevision = runID, revision
+	return req
+}
+
+func terminalApproval(req approval.Request, status approval.Status) approval.Request {
+	req.Status = status
+	return req
+}
+
+func approvalExpiredEvents(t *testing.T, server *Server, sessionID string) []event.Event {
+	t.Helper()
+	var expired []event.Event
+	for _, runtimeEvent := range approvalEvents(t, server, sessionID) {
+		if runtimeEvent.Type == event.ApprovalExpired {
+			expired = append(expired, runtimeEvent)
+		}
+	}
+	return expired
+}
+
+// assertApprovalEventPayload proves the durable event carries exactly the
+// bounded C2 payload: request id, tool, status — never arguments.
+func assertApprovalEventPayload(t *testing.T, runtimeEvent event.Event, requestID string) {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(runtimeEvent.Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) != 3 || payload["request_id"] != requestID || payload["tool"] != "shell" || payload["status"] != string(approval.Expired) {
+		t.Fatalf("payload=%v", payload)
+	}
+}
+
+func assertApprovalStatuses(t *testing.T, server *Server, sessionID string, want map[string]approval.Status) {
+	t.Helper()
+	for id, status := range want {
+		if got := loadApprovalStatus(t, server, sessionID, id); got != status {
+			t.Fatalf("%s status=%s want %s", id, got, status)
+		}
+	}
+}
+
+// TestCancelQueuedReviewRunExpiresItsPendingApprovals drives the real cancel
+// API against a queued review-plan run: every pending request of that run
+// expires at the transition (well before its TTL), the approval_expired
+// events are durable from a fresh store, and terminal or other-run requests
+// are untouched.
+func TestCancelQueuedReviewRunExpiresItsPendingApprovals(t *testing.T) {
+	server := testServer(t)
+	server.teamWorker = webTeamWorker{}
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Review plan approvals", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.PlanMode = session.PlanReview
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := server.launchSessionRun(sess, "build it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.active.Load() {
+		t.Fatal("review-first run occupied the workspace before approval")
+	}
+	sess.ApprovalRequests = []approval.Request{
+		newRunApproval(t, runID, "apr-cancel-1", 1),
+		newRunApproval(t, runID, "apr-cancel-2", 1),
+		terminalApproval(newRunApproval(t, runID, "apr-cancel-approved", 1), approval.Approved),
+		terminalApproval(newRunApproval(t, runID, "apr-cancel-denied", 1), approval.Denied),
+		terminalApproval(newRunApproval(t, runID, "apr-cancel-consumed", 1), approval.Consumed),
+		newRunApproval(t, "run-other", "apr-cancel-other", 1),
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID+"/runs/"+runID+"/cancel", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("cancel status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	assertApprovalStatuses(t, server, sess.ID, map[string]approval.Status{
+		"apr-cancel-1": approval.Expired, "apr-cancel-2": approval.Expired,
+		"apr-cancel-approved": approval.Approved, "apr-cancel-denied": approval.Denied,
+		"apr-cancel-consumed": approval.Consumed, "apr-cancel-other": approval.Pending,
+	})
+	expired := approvalExpiredEvents(t, server, sess.ID)
+	if len(expired) != 2 {
+		t.Fatalf("expired events=%+v", expired)
+	}
+	assertApprovalEventPayload(t, expired[0], "apr-cancel-1")
+	assertApprovalEventPayload(t, expired[1], "apr-cancel-2")
+}
+
+// gateTeamWorker blocks the explorer work item so the test can inspect the
+// durable state right after the team sink applied the first plan transition.
+type gateTeamWorker struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (w *gateTeamWorker) Execute(_ context.Context, assignment team.Assignment) (team.Result, error) {
+	if assignment.WorkItem.Role == team.RoleExplorer {
+		w.once.Do(func() { close(w.started) })
+		<-w.release
+	}
+	handoff := team.Handoff{ID: "handoff-" + assignment.WorkItem.ID, WorkItemID: assignment.WorkItem.ID, Role: assignment.WorkItem.Role, Summary: "completed " + assignment.WorkItem.ID}
+	if assignment.WorkItem.Role == team.RoleVerifier {
+		handoff.Checks = []team.Check{{Command: "go test ./...", Passed: true, Summary: "ok"}}
+	}
+	return team.Result{Handoff: handoff, ModelCalls: 1, Tokens: 100}, nil
+}
+
+// TestPlanRevisionBumpExpiresStalePendingApprovals drives a real plan-revision
+// bump through the team sink: starting the explorer moves the plan from
+// revision 1 to 2, expiring the pending request recorded against revision 1
+// while the revision-2 request survives.
+func TestPlanRevisionBumpExpiresStalePendingApprovals(t *testing.T) {
+	server := testServer(t)
+	worker := &gateTeamWorker{started: make(chan struct{}), release: make(chan struct{})}
+	server.teamWorker = worker
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Revision approvals", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := sess.NewRun("build it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Mission, err = team.DefaultMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget()); err != nil {
+		t.Fatal(err)
+	}
+	if run.Plan, err = taskplan.DefaultTeam(run.ID); err != nil {
+		t.Fatal(err)
+	}
+	sess.ApprovalRequests = []approval.Request{
+		newRunApproval(t, run.ID, "apr-rev-stale", 1),
+		newRunApproval(t, run.ID, "apr-rev-live", 2),
+		terminalApproval(newRunApproval(t, run.ID, "apr-rev-approved", 1), approval.Approved),
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.runTeam(context.Background(), sess, run.ID, config.RuntimeSelection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent}, "test-key", nil)
+	}()
+	select {
+	case <-worker.started:
+	case <-time.After(30 * time.Second):
+		t.Fatal("explorer never started")
+	}
+
+	assertApprovalStatuses(t, server, sess.ID, map[string]approval.Status{
+		"apr-rev-stale": approval.Expired, "apr-rev-live": approval.Pending, "apr-rev-approved": approval.Approved,
+	})
+	expired := approvalExpiredEvents(t, server, sess.ID)
+	if len(expired) != 1 {
+		t.Fatalf("expired events=%+v", expired)
+	}
+	assertApprovalEventPayload(t, expired[0], "apr-rev-stale")
+
+	close(worker.release)
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("team run never finished")
+	}
+	// Run completion terminates the surviving pending request as well.
+	assertApprovalStatuses(t, server, sess.ID, map[string]approval.Status{
+		"apr-rev-live": approval.Expired, "apr-rev-approved": approval.Approved,
+	})
+}
+
+// TestLaunchExpiresApprovalsWhenPolicyFingerprintChanges changes the effective
+// config between session creation and launch: the recomputed config digest no
+// longer matches the session's stored digest, so pending approvals recorded
+// under the old fingerprint expire before the run executes.
+func TestLaunchExpiresApprovalsWhenPolicyFingerprintChanges(t *testing.T) {
+	server := testServer(t)
+	server.teamWorker = webTeamWorker{}
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	digestFor := func() string {
+		runtimeSelection := config.RuntimeSelection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent}
+		runtime, err := server.build(context.Background(), server.Workspace, server.ConfigPath, runtimeSelection, "test-secret", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer runtime.Close()
+		return session.ConfigDigest(runtime.Config)
+	}
+	digestBefore := digestFor()
+	sess, err := session.NewConversation("Policy approvals", server.Workspace, digestBefore, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(server.Workspace, "hermit.toml"), []byte("[model]\nprovider = \"codex\"\n\n[agent]\nmax_turns = 51\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	digestAfter := digestFor()
+	if digestAfter == digestBefore {
+		t.Fatal("config change did not move the config digest")
+	}
+	stale := newApprovalRequest(t, "", "apr-policy-stale", approvalTestStart)
+	stale.PolicyFingerprint = digestBefore
+	live := newApprovalRequest(t, "", "apr-policy-live", approvalTestStart)
+	live.PolicyFingerprint = digestAfter
+	approved := newApprovalRequest(t, "", "apr-policy-approved", approvalTestStart)
+	approved.PolicyFingerprint = digestBefore
+	approved.Status = approval.Approved
+	sess.ApprovalRequests = []approval.Request{stale, live, approved}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = server.launchSessionRun(sess, "build it"); err != nil {
+		t.Fatal(err)
+	}
+	// The policy trigger commits synchronously before the run starts executing.
+	assertApprovalStatuses(t, server, sess.ID, map[string]approval.Status{
+		"apr-policy-stale": approval.Expired, "apr-policy-live": approval.Pending, "apr-policy-approved": approval.Approved,
+	})
+	expired := approvalExpiredEvents(t, server, sess.ID)
+	if len(expired) != 1 {
+		t.Fatalf("expired events=%+v", expired)
+	}
+	assertApprovalEventPayload(t, expired[0], "apr-policy-stale")
+
+	deadline := time.Now().Add(30 * time.Second)
+	for server.active.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if server.active.Load() {
+		t.Fatal("team run never finished")
+	}
+}
+
+// TestTeamTerminationExpiresPendingApprovals covers the deadline/interruption
+// and user-cancellation transitions: ADR 0011 treats both as termination for
+// approval purposes.
+func TestTeamTerminationExpiresPendingApprovals(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cause   error
+		wantRun session.RunStatus
+	}{
+		{name: "user cancellation", cause: context.Canceled, wantRun: session.RunCancelled},
+		{name: "deadline interruption", cause: context.DeadlineExceeded, wantRun: session.RunInterrupted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := testServer(t)
+			sess, err := session.NewConversation("Termination approvals", server.Workspace, "digest", session.Selection{Agent: "team"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := sess.NewRun("build it")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sess.Mission, err = team.DefaultMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget()); err != nil {
+				t.Fatal(err)
+			}
+			if run.Plan, err = taskplan.DefaultTeam(run.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = run.Plan.Start("explore", "started"); err != nil {
+				t.Fatal(err)
+			}
+			sess.Mission.Status = team.Running
+			sess.ApprovalRequests = []approval.Request{
+				newRunApproval(t, run.ID, "apr-term-pending", 2),
+				terminalApproval(newRunApproval(t, run.ID, "apr-term-approved", 2), approval.Approved),
+				terminalApproval(newRunApproval(t, run.ID, "apr-term-denied", 2), approval.Denied),
+				terminalApproval(newRunApproval(t, run.ID, "apr-term-consumed", 2), approval.Consumed),
+				newRunApproval(t, "run-other", "apr-term-other", 2),
+			}
+			if err = server.store.Save(context.Background(), sess); err != nil {
+				t.Fatal(err)
+			}
+
+			server.finishTeamCancelled(sess, run, tc.cause)
+
+			loaded, err := server.store.Load(context.Background(), sess.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := loaded.Runs[len(loaded.Runs)-1].Status; got != tc.wantRun {
+				t.Fatalf("run status=%s want %s", got, tc.wantRun)
+			}
+			assertApprovalStatuses(t, server, sess.ID, map[string]approval.Status{
+				"apr-term-pending": approval.Expired, "apr-term-approved": approval.Approved,
+				"apr-term-denied": approval.Denied, "apr-term-consumed": approval.Consumed,
+				"apr-term-other": approval.Pending,
+			})
+			expired := approvalExpiredEvents(t, server, sess.ID)
+			if len(expired) != 1 {
+				t.Fatalf("expired events=%+v", expired)
+			}
+			assertApprovalEventPayload(t, expired[0], "apr-term-pending")
+		})
+	}
+}
+
+// TestTeamRunCompletionExpiresPendingApprovals covers normal completion: a
+// run that finishes successfully still terminates its pending approvals.
+func TestTeamRunCompletionExpiresPendingApprovals(t *testing.T) {
+	server := testServer(t)
+	server.teamWorker = webTeamWorker{}
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
+	sess, err := session.NewConversation("Completion approvals", server.Workspace, "digest", selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := sess.NewRun("build it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Mission, err = team.DefaultMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget()); err != nil {
+		t.Fatal(err)
+	}
+	if run.Plan, err = taskplan.DefaultTeam(run.ID); err != nil {
+		t.Fatal(err)
+	}
+	sess.ApprovalRequests = []approval.Request{
+		newRunApproval(t, run.ID, "apr-done-pending", 1),
+		terminalApproval(newRunApproval(t, run.ID, "apr-done-approved", 1), approval.Approved),
+		newRunApproval(t, "run-other", "apr-done-other", 1),
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	server.runTeam(context.Background(), sess, run.ID, config.RuntimeSelection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent}, "test-key", nil)
+
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Runs[len(loaded.Runs)-1].Status != session.RunCompleted {
+		t.Fatalf("run status=%s", loaded.Runs[len(loaded.Runs)-1].Status)
+	}
+	assertApprovalStatuses(t, server, sess.ID, map[string]approval.Status{
+		"apr-done-pending": approval.Expired, "apr-done-approved": approval.Approved, "apr-done-other": approval.Pending,
+	})
+	expired := approvalExpiredEvents(t, server, sess.ID)
+	if len(expired) != 1 {
+		t.Fatalf("expired events=%+v", expired)
+	}
+	assertApprovalEventPayload(t, expired[0], "apr-done-pending")
+}
+
+// TestFailLaunchedRunExpiresPendingApprovals covers the failure path: a run
+// that fails terminates its pending approvals through the same commit path.
+func TestFailLaunchedRunExpiresPendingApprovals(t *testing.T) {
+	server := testServer(t)
+	sess, err := session.NewConversation("Failure approvals", server.Workspace, "digest", session.Selection{Agent: "team"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := sess.NewRun("build it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Plan, err = taskplan.DefaultTeam(run.ID); err != nil {
+		t.Fatal(err)
+	}
+	sess.ApprovalRequests = []approval.Request{
+		newRunApproval(t, run.ID, "apr-fail-pending", 1),
+		terminalApproval(newRunApproval(t, run.ID, "apr-fail-approved", 1), approval.Approved),
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+
+	server.failLaunchedRun(sess, run.ID, errors.New("boom"))
+
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Runs[len(loaded.Runs)-1].Status; got != session.RunFailed {
+		t.Fatalf("run status=%s", got)
+	}
+	assertApprovalStatuses(t, server, sess.ID, map[string]approval.Status{
+		"apr-fail-pending": approval.Expired, "apr-fail-approved": approval.Approved,
+	})
+	expired := approvalExpiredEvents(t, server, sess.ID)
+	if len(expired) != 1 {
+		t.Fatalf("expired events=%+v", expired)
+	}
+	assertApprovalEventPayload(t, expired[0], "apr-fail-pending")
+}
+
+// finalAnswerProvider answers every Generate call with an immediate final
+// answer, so the single-agent runner completes without any tool call.
+type finalAnswerProvider struct{}
+
+func (finalAnswerProvider) Generate(context.Context, model.GenerateRequest) (model.GenerateResponse, error) {
+	return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: "done"}, FinishReason: "stop"}, nil
+}
+
+func (finalAnswerProvider) Capabilities() model.Capabilities {
+	return model.Capabilities{Streaming: true, ToolCalls: true}
+}
+
+// TestSingleAgentRunCompletionExpiresPendingApprovals drives a real
+// single-agent launch with a stubbed runtime: when the runner completes the
+// run, the launch goroutine terminates the run's pending approvals.
+func TestSingleAgentRunCompletionExpiresPendingApprovals(t *testing.T) {
+	server := testServer(t)
+	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	conf, err := app.LoadConfig(server.Workspace, server.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := contextmgr.New(contextmgr.Config{MaxTokens: 4096, CompressionThreshold: .8, HardLimitThreshold: .9, ReserveOutputTokens: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &agent.Runner{Provider: finalAnswerProvider{}, Executor: tool.Executor{Registry: tool.NewRegistry(), DefaultTimeout: time.Second}, Context: manager, Store: server.store, Config: agent.Config{MaxTurns: 3, Timeout: 30 * time.Second, Model: "test", CheckpointEveryTurns: 5}}
+	server.build = func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error) {
+		return &app.Runtime{Workspace: server.Workspace, Config: conf, Store: server.store, Runner: runner}, nil
+	}
+	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "coding"}
+	sess, err := session.NewConversation("Single agent approvals", server.Workspace, session.ConfigDigest(conf), selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := sess.NewRun("build it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.ApprovalRequests = []approval.Request{
+		newRunApproval(t, run.ID, "apr-single-pending", 1),
+		terminalApproval(newRunApproval(t, run.ID, "apr-single-approved", 1), approval.Approved),
+		terminalApproval(newRunApproval(t, run.ID, "apr-single-consumed", 1), approval.Consumed),
+		newRunApproval(t, "run-other", "apr-single-other", 1),
+	}
+	if err = server.store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = server.launchSessionRun(sess, ""); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for server.active.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if server.active.Load() {
+		t.Fatal("single-agent run never finished")
+	}
+
+	loaded, err := server.store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Runs[len(loaded.Runs)-1].Status; got != session.RunCompleted {
+		t.Fatalf("run status=%s error=%q", got, loaded.Runs[len(loaded.Runs)-1].Error)
+	}
+	assertApprovalStatuses(t, server, sess.ID, map[string]approval.Status{
+		"apr-single-pending": approval.Expired, "apr-single-approved": approval.Approved,
+		"apr-single-consumed": approval.Consumed, "apr-single-other": approval.Pending,
+	})
+	expired := approvalExpiredEvents(t, server, sess.ID)
+	if len(expired) != 1 {
+		t.Fatalf("expired events=%+v", expired)
+	}
+	assertApprovalEventPayload(t, expired[0], "apr-single-pending")
 }
