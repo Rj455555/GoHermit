@@ -214,3 +214,27 @@ func TestBatchTriggersExpireOnlyTheMatchingPendingRequests(t *testing.T) {
 		t.Fatalf("trigger is not idempotent: %v", again)
 	}
 }
+
+// TestCreateHonorsBoundedTTLOverride: CreateSpec.TTL shortens the lifetime
+// (tests use ~50ms) but can never extend the fixed 15-minute contract TTL.
+func TestCreateHonorsBoundedTTLOverride(t *testing.T) {
+	spec := validSpec()
+	for _, tc := range []struct {
+		name string
+		ttl  time.Duration
+		want time.Duration
+	}{
+		{"zero keeps the contract TTL", 0, TTL},
+		{"negative keeps the contract TTL", -time.Second, TTL},
+		{"short override is honored", 50 * time.Millisecond, 50 * time.Millisecond},
+		{"longer override clamps to the contract TTL", time.Hour, TTL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec.TTL = tc.ttl
+			req := mustCreate(t, spec)
+			if !req.ExpiresAt.Equal(testStart.Add(tc.want)) {
+				t.Fatalf("expires_at=%s want %s", req.ExpiresAt, testStart.Add(tc.want))
+			}
+		})
+	}
+}

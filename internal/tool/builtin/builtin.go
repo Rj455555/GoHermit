@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rj455555/GoHermit/internal/approval"
 	"github.com/Rj455555/GoHermit/internal/policy"
 	core "github.com/Rj455555/GoHermit/internal/tool"
 )
@@ -296,9 +297,23 @@ func (w *Workspace) shell(allowNetwork bool) func(context.Context, core.Call) (c
 		if err := decode(c.Arguments, &a); err != nil {
 			return core.Result{}, err
 		}
-		decision := policy.ClassifyShell(a.Command)
-		if decision.Risk != policy.Safe {
-			return core.Result{Error: &core.Error{Code: string(decision.Risk), Message: decision.Reason}}, nil
+		// An executor-approved re-execution (ADR 0011) skips classification for
+		// this single invocation: the owner already authorized this exact call.
+		if !core.IsApproved(ctx) {
+			decision := policy.ClassifyShell(a.Command)
+			switch decision.Risk {
+			case policy.Blocked:
+				// Hard deny, unchanged forever: blocked commands never produce
+				// an approval request and can never be approved.
+				return core.Result{Error: &core.Error{Code: string(decision.Risk), Message: decision.Reason}}, nil
+			case policy.ConfirmationRequired:
+				// Park the call: return the approval-required marker plus the
+				// bounded scope hint for the request the runner will create.
+				return core.Result{
+					Error:    &core.Error{Code: core.CodeApprovalRequired, Message: decision.Reason},
+					Approval: &core.ApprovalHint{Paths: approvalResourcePaths(a.Command), Summary: a.Command},
+				}, nil
+			}
 		}
 		shell, flag := "/bin/sh", "-c"
 		if runtime.GOOS == "windows" {
@@ -306,6 +321,52 @@ func (w *Workspace) shell(allowNetwork bool) func(context.Context, core.Call) (c
 		}
 		return run(ctx, w.Root, allowNetwork, w.maxStdout, w.maxStderr, shell, flag, a.Command)
 	}
+}
+
+// approvalResourcePaths extracts a bounded set of workspace-relative,
+// path-looking tokens from a confirmation-required command as the approval
+// request scope. Heuristic only: relative tokens with a separator or file
+// extension, no flags, no "..", deduped, capped at the contract maximum; a
+// command without any path token falls back to a "<command>" placeholder.
+func approvalResourcePaths(command string) []string {
+	seen := map[string]bool{}
+	paths := make([]string, 0, 4)
+	for _, token := range strings.Fields(command) {
+		token = strings.Trim(token, `"'`)
+		if token == "" || strings.HasPrefix(token, "-") {
+			continue
+		}
+		if !strings.ContainsAny(token, `/\`) && filepath.Ext(token) == "" {
+			continue
+		}
+		clean := filepath.Clean(token)
+		if strings.HasPrefix(token, "/") || strings.HasPrefix(token, `\`) || filepath.IsAbs(clean) || len(clean) >= 2 && clean[1] == ':' {
+			continue
+		}
+		escaped := false
+		for _, segment := range strings.FieldsFunc(clean, func(r rune) bool { return r == '/' || r == '\\' }) {
+			if segment == ".." {
+				escaped = true
+				break
+			}
+		}
+		if escaped {
+			continue
+		}
+		slashed := filepath.ToSlash(clean)
+		if seen[slashed] {
+			continue
+		}
+		seen[slashed] = true
+		paths = append(paths, slashed)
+		if len(paths) >= approval.MaxResourcePaths {
+			break
+		}
+	}
+	if len(paths) == 0 {
+		return []string{"<command>"}
+	}
+	return paths
 }
 func (w *Workspace) gitDiff(ctx context.Context, c core.Call) (core.Result, error) {
 	var a struct{ Staged bool }

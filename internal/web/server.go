@@ -55,6 +55,9 @@ type Server struct {
 	codexModelsAt time.Time
 	teamWorker    team.Worker
 	teamTemplates *teamtemplate.Store
+	// approvals is the single in-process rendezvous between parked runners
+	// and decideApproval for the whole server lifetime (ADR 0011, C3).
+	approvals *approvalBroker
 	// teamTemplatesErr defers store-resolution failure to request time so a
 	// team session fails closed instead of the server failing to start.
 	teamTemplatesErr error
@@ -87,6 +90,7 @@ func New(workspace, configPath string) (*Server, error) {
 			_, _ = store.Recover(context.Background(), id)
 		}
 	}
+	broker := newApprovalBroker()
 	return &Server{
 		Workspace: workspace, ConfigPath: configPath,
 		static:        http.FileServer(http.FS(root)),
@@ -96,8 +100,9 @@ func New(workspace, configPath string) (*Server, error) {
 		logins:        modelauth.NewLoginManager(credentials),
 		subscribers:   map[string]map[chan event.Event]struct{}{},
 		teamTemplates: teamTemplates, teamTemplatesErr: teamTemplatesErr,
+		approvals: broker,
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
-			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models}, nil)
+			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: broker}, nil)
 		},
 	}, nil
 }
@@ -471,7 +476,9 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 	runtime.Runner.Sink = send
-	if err := runtime.Runner.Run(r.Context(), sess); err != nil && !errors.Is(err, context.Canceled) {
+	err = runtime.Runner.Run(r.Context(), sess)
+	s.approvals.Release(sess.ID)
+	if err != nil && !errors.Is(err, context.Canceled) {
 		send(event.Event{Type: event.TaskFailed, Time: time.Now().UTC(), SessionID: sess.ID, Error: err.Error()})
 	}
 }
@@ -712,9 +719,16 @@ func (s *Server) listApprovals(w http.ResponseWriter, r *http.Request) {
 
 // decideApproval records the owner decision for one approval request of this
 // session. A request_id from any other session is a 404: approvals never
-// cross session boundaries. The decision persists through the same
-// durable-before-visible commit path as plan approval: mutated checkpoint
-// plus a sequenced approval event, committed before anyone is notified.
+// cross session boundaries. Two mutually exclusive paths, chosen by whether
+// the broker has a waiter: for an active run the decision rendezvous delivers
+// through the broker and commits only the event (the runner is the single
+// session writer); for any session without a waiter the C2 path below
+// persists through the same durable-before-visible commit path as plan
+// approval: mutated checkpoint plus a sequenced approval event, committed
+// before anyone is notified. The only race — a decide landing between the
+// runner's request checkpoint and its waiter registration — takes the C2
+// path and fails closed: the runner keeps waiting until its deadline and the
+// request expires (deny by default).
 func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
@@ -760,6 +774,49 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
+	if waiter := s.approvals.waiterFor(requestID); waiter != nil {
+		// Active-run rendezvous (ADR 0011, C3): the runner goroutine parked on
+		// this request is the single writer of its session for the whole run,
+		// so this path NEVER loads-and-saves session state — the loaded copy
+		// above is read-only validation plus event payload. The decision
+		// travels through the broker (the channel send is the happens-before
+		// edge), and only the audit event is committed, through the store's
+		// mutex-guarded journal against the latest persisted checkpoint. The
+		// runner applies Decide/Consume to its own session object and persists
+		// at its own checkpoint; nothing can be overwritten in either
+		// direction. A crash between the event commit and the runner's
+		// checkpoint leaves the request pending, and resume-time expiry (C2b)
+		// forces a fresh request — ADR-consistent.
+		if waiter.sessionID != sess.ID {
+			// Approvals never cross session boundaries, exactly like the C2
+			// path below.
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "approval request not found"})
+			return
+		}
+		if approval.IsExpired(target, now) {
+			// The parked runner's own wait deadline marks and commits the
+			// expiry; an expired request can never be decided.
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "approval request expired", "request": target})
+			return
+		}
+		if !s.approvals.deliver(requestID, approve) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "approval request already decided", "request": target})
+			return
+		}
+		// Response-only status: this copy is never saved by the active path.
+		target.Status = approval.Denied
+		if approve {
+			target.Status = approval.Approved
+		}
+		decided, commitErr := s.store.CommitDetachedEvent(context.Background(), sess.ID, s.approvalRuntimeEvent(sess, target, event.ApprovalDecided))
+		if commitErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": commitErr.Error()})
+			return
+		}
+		s.publish(decided)
+		writeJSON(w, http.StatusOK, map[string]any{"request": target, "event": decided})
+		return
+	}
 	if approval.IsExpired(target, now) {
 		// An expired pending request becomes expired and can never be decided;
 		// persist that lazily-detected expiry through the commit path.
@@ -935,6 +992,9 @@ func (s *Server) launchSessionRun(sess *session.Session, message string) (string
 			s.activeSession, s.activeRun, s.cancelRun = "", "", nil
 			s.active.Store(false)
 			s.runMu.Unlock()
+			// The run ended: release its decided approval waiters so late
+			// decides take the C2 path against the checkpointed state.
+			s.approvals.Release(sess.ID)
 		}()
 		if selection.Agent == "team" {
 			s.runTeam(runCtx, sess, runID, selection, apiKey, liveModels)
@@ -997,8 +1057,13 @@ func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID strin
 	teamWorker := &app.TeamWorker{
 		Workspace: s.Workspace, ConfigPath: s.ConfigPath, Selection: selection, APIKey: apiKey, Models: liveModels,
 		OwnerContext: owner.Markdown(profile), ParentSessionID: sess.ID, ParentRunID: runID, ParentStore: s.store, Sink: s.publish,
+		Approvals: s.approvals,
 		Build: func(ctx context.Context, workspace, configPath string, options app.RuntimeOptions) (*app.Runtime, error) {
-			return s.build(ctx, workspace, configPath, *options.Selection, options.APIKey, options.Models)
+			runtime, buildErr := s.build(ctx, workspace, configPath, *options.Selection, options.APIKey, options.Models)
+			if buildErr == nil && runtime != nil && runtime.Runner != nil && options.Approvals != nil {
+				runtime.Runner.Approvals = options.Approvals
+			}
+			return runtime, buildErr
 		},
 	}
 	if rolePlan != nil {

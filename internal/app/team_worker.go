@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Rj455555/GoHermit/internal/agent"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
 	"github.com/Rj455555/GoHermit/internal/event"
@@ -38,6 +39,10 @@ type TeamWorker struct {
 	ParentStore     *session.Store
 	Sink            event.Sink
 	Build           func(context.Context, string, string, RuntimeOptions) (*Runtime, error)
+	// Approvals, when set, is threaded into every worker runtime so a parked
+	// confirmation-required call in a work item can wait for the owner (ADR
+	// 0011). Nil keeps every worker deny-by-default.
+	Approvals agent.ApprovalDecisions
 	// RoleSelections optionally pins individual roles to their own validated
 	// selection, credential, and catalog (the team template). A nil or empty
 	// map keeps the session-level inputs for every role.
@@ -57,7 +62,7 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 			return BuildRuntimeWithOptions(ctx, workspace, configPath, options, nil)
 		}
 	}
-	runtime, err := build(ctx, w.Workspace, w.ConfigPath, RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models})
+	runtime, err := build(ctx, w.Workspace, w.ConfigPath, RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: w.Approvals})
 	if err != nil {
 		return team.Result{}, err
 	}
@@ -71,6 +76,12 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 	childID := assignment.WorkItem.ExecutionSessionID
 	if childID == "" {
 		return team.Result{}, errors.New("worker execution session id is required")
+	}
+	// A decided approval waiter stays registered until its run ends so late
+	// duplicate decisions get a conflict; release the child's entries here.
+	// Undecided waiters already remove themselves when Wait returns.
+	if releaser, ok := w.Approvals.(interface{ Release(string) }); ok {
+		defer releaser.Release(childID)
 	}
 	if runtime.Store.Has(childID) {
 		child, err = runtime.Store.Recover(ctx, childID)
