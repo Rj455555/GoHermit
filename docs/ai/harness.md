@@ -25,7 +25,7 @@ Persistent events use a prepared `commit.json` journal. The checkpoint and order
 
 ## Storage and memory
 
-Schema v4 lives under `.gohermit/sessions/<session-id>/` and stores each Run's bounded public Live Plan:
+Schema v5 lives under `.gohermit/sessions/<session-id>/` and stores each Run's bounded public Live Plan:
 
 - `session.json`: bounded current state, Runs, summary, recent model messages, digests.
 - `messages.jsonl`: user-visible user/assistant transcript only.

@@ -1,6 +1,6 @@
 # Live Plan: AI quick reference
 
-Read this file for checkbox progress, Plan state, Plan events, schema-v4 migration, or checklist UI changes. Read `AGENTS.md`, `docs/ai/context.md`, and `docs/ai/harness.md` first.
+Read this file for checkbox progress, Plan state, Plan events, schema-v5 migration, or checklist UI changes. Read `AGENTS.md`, `docs/ai/context.md`, and `docs/ai/harness.md` first.
 
 ## Contract
 
@@ -21,7 +21,7 @@ The Plan is public execution state, not model reasoning. Titles and details are 
 
 ## Persistence and events
 
-Session schema v4 stores `run.plan`; v1, v2, and v3 migrate explicitly. `taskplan.Validate` runs before checkpoint save and after load. Unknown Plan versions or inconsistent states fail closed.
+Session schema v5 stores `run.plan` and the Session-scoped approval requests; v1–v4 migrate explicitly. `taskplan.Validate` runs before checkpoint save and after load. Unknown Plan versions or inconsistent states fail closed.
 
 `plan_created` and `plan_updated` are persisted sequenced events. `data.plan` is the bounded snapshot and `plan_step_id` identifies the changed step. The Web UI updates from SSE and reloads the authoritative Run Plan after terminal events or refresh.
 
@@ -30,7 +30,7 @@ Session schema v4 stores `run.plan`; v1, v2, and v3 migrate explicitly. `taskpla
 | Responsibility | Entry point |
 |---|---|
 | Plan model, transitions, validation, defaults | `internal/taskplan/plan.go` |
-| schema-v4 persistence/migration | `internal/session/session.go` |
+| schema-v5 persistence/migration | `internal/session/session.go` |
 | single-Agent phase updates | `internal/agent/agent.go` |
 | presentation-neutral transitions | `internal/runcontrol/controller.go` |
 | Team WorkItem-to-Plan event persistence | `internal/web/server.go` |
