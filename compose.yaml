@@ -16,6 +16,8 @@ services:
       CODEX_HOME: "/codex"
       GOHERMIT_AUTH_STORE: "/data/auth.json"
       GOHERMIT_OWNER_STORE: "/data/owner.json"
+      GOHERMIT_TEAM_TEMPLATE_STORE: "/data/team-templates"
+      GOHERMIT_LOOP_STORE: "/data/loops"
     volumes:
       - "${GOHERMIT_WORKSPACE:-./sandbox}:/workspace"
       - "${GOHERMIT_CONFIG:-./configs/codex.toml}:/config/hermit.toml:ro"
