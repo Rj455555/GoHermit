@@ -10,6 +10,8 @@ import (
 
 	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/session"
+	"github.com/Rj455555/GoHermit/internal/team"
+	"github.com/Rj455555/GoHermit/internal/verification"
 )
 
 // Pre-launch gate failure codes recorded on blocked invocations.
@@ -19,6 +21,9 @@ const (
 	failWorkspaceNotClean  = "workspace_not_clean"
 	failRunStart           = "run_start_failed"
 	failRunFailed          = "run_failed"
+	// failVerification records that the invocation's verification evidence
+	// failed acceptance; the invocation is refused (blocked), never completed.
+	failVerification = "verification_failed"
 )
 
 // StartLoopInvocation runs one manual invocation of a loop definition: it
@@ -82,6 +87,14 @@ func (s *Service) StartLoopInvocation(ctx context.Context, loopID string) (loop.
 		return invocation, err
 	}
 	invocation.SessionID = sess.ID
+	// The invocation snapshot is authoritative: the session carries a deep
+	// copy of its verification recipe so the team pipeline executes exactly
+	// what this invocation declared, immune to later definition edits.
+	recipe := deepCopyRecipe(invocation.DefinitionSnapshot.VerificationRecipe)
+	sess.VerificationRecipe = &recipe
+	if err = s.store.Save(ctx, sess); err != nil {
+		return invocation, classified(KindInternal, err)
+	}
 	if err = invocation.Dispatch(); err != nil {
 		return invocation, classified(KindInternal, err)
 	}
@@ -203,8 +216,20 @@ func (s *Service) reconcileInvocation(ctx context.Context, invocation loop.Invoc
 	var transitioned bool
 	switch run.Status {
 	case session.RunCompleted:
+		// Acceptance evaluation over the existing evidence (the mission's
+		// verifier handoff): a refused invocation is blocked, never completed.
+		if code, summary, accepted := invocationAcceptance(sess, invocation); !accepted {
+			transitioned = invocation.Reject(code, summary, now) == nil
+			break
+		}
 		transitioned = invocation.Complete(now) == nil
 	case session.RunFailed:
+		// A run that failed because independent verification did not pass is
+		// the same acceptance refusal, surfaced from inside the pipeline.
+		if !invocation.DefinitionSnapshot.VerificationRecipe.Empty() && sess.Mission != nil && strings.Contains(sess.Mission.Error, team.VerificationFailureMessage) {
+			transitioned = invocation.Reject(failVerification, clipSummary(sess.Mission.Error), now) == nil
+			break
+		}
 		transitioned = invocation.Fail(failRunFailed, clipSummary(run.Error), now) == nil
 	case session.RunCancelled:
 		transitioned = invocation.Cancel("run was cancelled", now) == nil
@@ -269,4 +294,83 @@ func clipSummary(summary string) string {
 		return summary[:loop.MaxTextBytes]
 	}
 	return summary
+}
+
+// invocationAcceptance evaluates a completed run against the invocation's
+// verification recipe using only the existing evidence — the mission's
+// verifier handoff. A mutation invocation is accepted only when every
+// required recipe check is present in the verifier handoff's Checks and
+// passed (with no required checks declared, at least one real check must
+// have passed). A read-only invocation may run zero checks but the verifier
+// must report no issues. Sessions without a recipe are always accepted here
+// and keep pre-recipe behavior unchanged.
+func invocationAcceptance(sess *session.Session, invocation loop.Invocation) (code, summary string, accepted bool) {
+	recipe := invocation.DefinitionSnapshot.VerificationRecipe
+	if recipe.Empty() {
+		return "", "", true
+	}
+	var verifier *team.Handoff
+	if sess.Mission != nil {
+		for i := len(sess.Mission.Handoffs) - 1; i >= 0; i-- {
+			if sess.Mission.Handoffs[i].Role == team.RoleVerifier {
+				verifier = &sess.Mission.Handoffs[i]
+				break
+			}
+		}
+	}
+	if invocation.DefinitionSnapshot.WorkspacePolicy.ReadOnly {
+		if verifier != nil && len(verifier.Issues) > 0 {
+			return failVerification, "read-only verifier reported unresolved issues", false
+		}
+		return "", "", true
+	}
+	// Mutation: fail closed when no independent verifier ran at all.
+	if verifier == nil {
+		return failVerification, "mutation run completed without an independent verifier handoff", false
+	}
+	required := 0
+	for _, check := range recipe.Checks {
+		if !check.Required {
+			continue
+		}
+		required++
+		command := verification.CommandString(check.Command)
+		passed := false
+		for _, evidence := range verifier.Checks {
+			if evidence.Command == command && evidence.Passed {
+				passed = true
+				break
+			}
+		}
+		if !passed {
+			return failVerification, fmt.Sprintf("required verification check %q did not run and pass", check.ID), false
+		}
+	}
+	if required == 0 {
+		// No required checks declared: a mutation still demands at least one
+		// real passing deterministic check (the PR #26/#27 rule).
+		for _, evidence := range verifier.Checks {
+			if evidence.Passed {
+				return "", "", true
+			}
+		}
+		return failVerification, "mutation run completed without any passing verification check", false
+	}
+	return "", "", true
+}
+
+// deepCopyRecipe returns an independent copy of recipe so the session's
+// recipe cannot drift from the invocation snapshot it came from.
+func deepCopyRecipe(recipe loop.VerificationRecipe) loop.VerificationRecipe {
+	if recipe.Checks != nil {
+		checks := make([]loop.RecipeCheck, len(recipe.Checks))
+		for i, check := range recipe.Checks {
+			checks[i] = check
+			if check.Command != nil {
+				checks[i].Command = append([]string(nil), check.Command...)
+			}
+		}
+		recipe.Checks = checks
+	}
+	return recipe
 }

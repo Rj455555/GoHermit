@@ -104,6 +104,10 @@ type Check struct {
 	Command string `json:"command"`
 	Passed  bool   `json:"passed"`
 	Summary string `json:"summary,omitempty"`
+	// ExitCode and DurationMS are additive evidence from deterministic check
+	// execution; handoffs persisted before them load as zero.
+	ExitCode   int   `json:"exit_code,omitempty"`
+	DurationMS int64 `json:"duration_ms,omitempty"`
 }
 
 // SubstepSpec is one bounded task-specific substep proposed by the Explorer.

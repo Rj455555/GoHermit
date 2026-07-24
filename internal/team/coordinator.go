@@ -211,6 +211,12 @@ type workResult struct {
 	err    error
 }
 
+// VerificationFailureMessage is the bounded mission failure reason recorded
+// when independent verification did not pass. Exported so the control plane
+// can recognize verification-caused run failures without a second copy of
+// the string.
+const VerificationFailureMessage = "independent verification did not pass"
+
 func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []string) error {
 	batchCtx, cancelBatch := context.WithCancel(ctx)
 	defer cancelBatch()
@@ -223,7 +229,7 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 			continue
 		}
 		if item.Role == RoleLead && !verificationPassed(mission) {
-			message := "independent verification did not pass"
+			message := VerificationFailureMessage
 			mission.FailMission(message)
 			c.emit(TeamEvent{Type: MissionFailed, MissionID: mission.ID, Message: message})
 			_ = c.checkpoint(mission)
@@ -339,7 +345,7 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 				continue
 			}
 			if !requeued {
-				message := "independent verification did not pass"
+				message := VerificationFailureMessage
 				mission.FailMission(message)
 				c.emit(TeamEvent{Type: WorkItemFailed, MissionID: mission.ID, WorkItemID: outcome.id, Role: outcome.role, Message: message})
 				_ = c.checkpoint(mission)
