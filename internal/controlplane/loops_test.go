@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -374,5 +375,70 @@ func TestListAndGetLoops(t *testing.T) {
 	var serviceErr *Error
 	if _, err = svc.GetLoop("missing"); !errors.As(err, &serviceErr) || serviceErr.Kind != KindNotFound {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestImportLoop(t *testing.T) {
+	svc := newTestService(t)
+	injectLoopStore(t, svc)
+	definition := loopTestDefinition(svc.Workspace)
+	definition.SchemaVersion = loop.SchemaVersion
+	raw, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	imported, err := svc.ImportLoop(raw)
+	if err != nil {
+		t.Fatalf("ImportLoop = %v", err)
+	}
+	if imported.ID != definition.ID || imported.Revision != 1 {
+		t.Fatalf("imported=%+v", imported)
+	}
+	stored, err := svc.GetLoop(definition.ID)
+	if err != nil || stored.Name != definition.Name {
+		t.Fatalf("stored=%+v err=%v", stored, err)
+	}
+
+	// Importing the same id again is an update: the store bumps the
+	// revision rather than erroring or duplicating the entry.
+	definition.Name = "renamed"
+	raw, err = json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := svc.ImportLoop(raw)
+	if err != nil {
+		t.Fatalf("ImportLoop (update) = %v", err)
+	}
+	if updated.Revision != 2 || updated.Name != "renamed" {
+		t.Fatalf("updated=%+v", updated)
+	}
+	all, err := svc.ListLoops()
+	if err != nil || len(all) != 1 {
+		t.Fatalf("all=%+v err=%v", all, err)
+	}
+}
+
+func TestImportLoopRejectsSecret(t *testing.T) {
+	svc := newTestService(t)
+	injectLoopStore(t, svc)
+	definition := loopTestDefinition(svc.Workspace)
+	definition.SchemaVersion = loop.SchemaVersion
+	definition.Description = "api_key=deadbeef00000000000000000000"
+	raw, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// classified() flattens the error to a message string (Error has no
+	// Unwrap), so assert on loopstore.ErrImportSecret's wrapped text rather
+	// than errors.Is.
+	var serviceErr *Error
+	if _, err := svc.ImportLoop(raw); !errors.As(err, &serviceErr) || serviceErr.Kind != KindInvalid ||
+		!strings.Contains(serviceErr.Message, loopstore.ErrImportSecret.Error()) {
+		t.Fatalf("err=%v, want KindInvalid wrapping ErrImportSecret", err)
+	}
+	if _, err := svc.GetLoop(definition.ID); err == nil {
+		t.Fatal("secret-carrying import was persisted")
 	}
 }

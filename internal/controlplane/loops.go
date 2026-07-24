@@ -8,6 +8,7 @@ import (
 
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/loop"
+	"github.com/Rj455555/GoHermit/internal/loopstore"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/teamtemplate"
 )
@@ -38,6 +39,32 @@ func (s *Service) GetLoop(id string) (loop.Definition, error) {
 		return loop.Definition{}, classified(KindNotFound, err)
 	}
 	return definition, nil
+}
+
+// ImportLoop parses and validates an exported loop definition file — the
+// same format ExportLoop produces — and persists it, assigning the next
+// store-managed revision. It never accepts a definition carrying a
+// planted secret (ErrImportSecret) or targeting an unsupported schema
+// version.
+func (s *Service) ImportLoop(data []byte) (loop.Definition, error) {
+	if err := s.loopStoreAvailable(); err != nil {
+		return loop.Definition{}, err
+	}
+	definition, err := loopstore.ImportDefinition(data)
+	if err != nil {
+		// Malformed JSON, an unsupported schema version, a failed domain
+		// validation, and a planted secret (ErrImportSecret) are all caller
+		// input problems — same classification for all of them.
+		return loop.Definition{}, classified(KindInvalid, err)
+	}
+	if err := s.loopStore.SaveDefinition(definition); err != nil {
+		return loop.Definition{}, classified(KindInternal, err)
+	}
+	saved, err := s.loopStore.GetDefinition(definition.ID)
+	if err != nil {
+		return loop.Definition{}, classified(KindInternal, err)
+	}
+	return saved, nil
 }
 
 func (s *Service) loopStoreAvailable() error {

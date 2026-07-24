@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -313,4 +314,94 @@ func TestLoopRunHistoryCancelUsageExitsTwo(t *testing.T) {
 			t.Fatalf("%v code=%d", args, code)
 		}
 	}
+}
+
+// TestLoopImport proves the only path to creating a loop definition without
+// hand-editing the store file — dry-run/list/run/history/cancel all assume
+// one already exists.
+func TestLoopImport(t *testing.T) {
+	workspace := setupLoopCLI(t, func(*loop.Definition) {})
+	definition := loop.Definition{
+		SchemaVersion:     loop.SchemaVersion,
+		ID:                "loop-2",
+		Name:              "weekly-audit",
+		WorkspaceIdentity: workspace,
+		Enabled:           true,
+		TaskSource:        loop.TaskSource{Type: loop.TaskSourceFixedPrompt, Prompt: "audit dependencies"},
+		AgentSelection:    loop.AgentSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "coding"},
+		PlanMode:          loop.PlanAuto,
+		Budget:            loop.Budget{MaxModelCalls: 10, MaxTokens: 100_000, TimeoutSeconds: 900},
+		WorkspacePolicy:   loop.WorkspacePolicy{ReadOnly: true},
+		OutputPolicy:      loop.OutputPolicy{IncludeDiff: true, MaxReportBytes: 64 << 10},
+	}
+	raw, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "loop-2.json")
+	if err := os.WriteFile(file, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runLoopCLI(t, "import", "--workspace", workspace, file)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, "Imported loop loop-2 (revision 1): weekly-audit") {
+		t.Fatalf("stdout=%s", stdout)
+	}
+
+	code, stdout, stderr = runLoopCLI(t, "list", "--workspace", workspace)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "loop-1") || !strings.Contains(stdout, "loop-2") {
+		t.Fatalf("list missing imported loop:\n%s", stdout)
+	}
+}
+
+func TestLoopImportRejectsSecretAndBadPath(t *testing.T) {
+	workspace := setupLoopCLI(t, func(*loop.Definition) {})
+
+	t.Run("planted secret", func(t *testing.T) {
+		definition := loop.Definition{
+			SchemaVersion:     loop.SchemaVersion,
+			ID:                "loop-3",
+			Name:              "x",
+			Description:       "api_key=deadbeef00000000000000000000",
+			WorkspaceIdentity: workspace,
+			Enabled:           true,
+			TaskSource:        loop.TaskSource{Type: loop.TaskSourceFixedPrompt, Prompt: "task"},
+			AgentSelection:    loop.AgentSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "coding"},
+			PlanMode:          loop.PlanAuto,
+			Budget:            loop.Budget{MaxModelCalls: 10, MaxTokens: 100_000, TimeoutSeconds: 900},
+			WorkspacePolicy:   loop.WorkspacePolicy{ReadOnly: true},
+			OutputPolicy:      loop.OutputPolicy{IncludeDiff: true, MaxReportBytes: 64 << 10},
+		}
+		raw, err := json.Marshal(definition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(t.TempDir(), "loop-3.json")
+		if err := os.WriteFile(file, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		code, _, stderr := runLoopCLI(t, "import", "--workspace", workspace, file)
+		if code != 1 || !strings.Contains(stderr, "credential or token marker") {
+			t.Fatalf("code=%d stderr=%s", code, stderr)
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		code, _, stderr := runLoopCLI(t, "import", "--workspace", workspace, filepath.Join(t.TempDir(), "missing.json"))
+		if code != 1 || stderr == "" {
+			t.Fatalf("code=%d stderr=%s", code, stderr)
+		}
+	})
+
+	t.Run("usage", func(t *testing.T) {
+		if code, _, _ := runLoopCLI(t, "import"); code != 2 {
+			t.Fatalf("code=%d", code)
+		}
+	})
 }

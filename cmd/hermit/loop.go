@@ -26,7 +26,7 @@ import (
 // usage errors.
 func runLoop(ctx context.Context, stdout, stderr io.Writer, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "hermit: loop requires a subcommand: dry-run, list, run, history, or cancel")
+		fmt.Fprintln(stderr, "hermit: loop requires a subcommand: dry-run, list, import, run, history, or cancel")
 		return 2
 	}
 	switch args[0] {
@@ -34,6 +34,8 @@ func runLoop(ctx context.Context, stdout, stderr io.Writer, args []string) int {
 		return loopDryRun(ctx, stdout, stderr, args[1:])
 	case "list":
 		return loopList(ctx, stdout, stderr, args[1:])
+	case "import":
+		return loopImport(ctx, stdout, stderr, args[1:])
 	case "run":
 		return loopRun(ctx, stdout, stderr, args[1:])
 	case "history":
@@ -119,6 +121,36 @@ func loopList(ctx context.Context, stdout, stderr io.Writer, args []string) int 
 		}
 		fmt.Fprintf(stdout, "%s\trevision %d\t%s\t%s\n", definition.ID, definition.Revision, definition.Name, enabled)
 	}
+	return 0
+}
+
+// loopImport reads an exported-format loop definition file from disk and
+// persists it, assigning the next store-managed revision.
+func loopImport(ctx context.Context, stdout, stderr io.Writer, args []string) int {
+	fs, workspace, configPath := loopFlagSet("loop import", stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "hermit: loop import requires exactly one file path")
+		return 2
+	}
+	data, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintln(stderr, "hermit:", err)
+		return 1
+	}
+	service, err := loopService(*workspace, *configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, "hermit:", err)
+		return 1
+	}
+	definition, err := service.ImportLoop(data)
+	if err != nil {
+		fmt.Fprintln(stderr, "hermit:", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Imported loop %s (revision %d): %s\n", definition.ID, definition.Revision, definition.Name)
 	return 0
 }
 
