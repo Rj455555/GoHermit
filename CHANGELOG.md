@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0-dev
+
+- Added Loop Mode foundation: an owner-scoped, versioned Loop Definition and Invocation domain (`internal/loop`, `internal/loopstore`) reusing the existing Session/Run kernel — no second Agent runtime, Run state machine, or Verifier framework.
+- Added `hermit loop dry-run` and `hermit loop list`: a zero-side-effect readiness report (workspace/git match, task, per-role provider/credential status, write scope, checks, budget, approval requirement) that never calls a model, creates a Session, or touches the workspace.
+- Added `hermit loop run`, `hermit loop history`, and `hermit loop cancel`: manual Loop Invocations that snapshot the Definition, bind to one independent Session/Run, and recover after a crash without duplicating Sessions, Runs, or replaying completed tool calls; a dirty workspace fails a mutating Invocation closed before any provider call.
+- Added declarative Verification Recipes: bounded argv-only check commands screened by the same policy allowlist/deny table shell execution uses, feeding the existing independent Verifier and bounded repair loop — mutating Invocations require at least one real passing required check, read-only Invocations require `Issues == []`.
+- Extracted `internal/controlplane` application services (Run lifecycle, Team execution, Approval coordination, durable event publish) out of `internal/web.Server`, which is now routing/presentation only; the CLI calls the same services directly with no HTTP hop.
+- Calibrated documentation to Session schema v5 and the read-only Verifier passing rule (`team.HandoffChecksPassed`).
+
 ## 0.5.0-dev
 
 - Added prepared commit journals so Session checkpoints and persistent event batches recover idempotently after crashes and are durable before SSE delivery.
