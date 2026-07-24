@@ -1,9 +1,9 @@
-package web
+package controlplane
 
 import (
 	"context"
 	"encoding/json"
-	"net/http"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,12 +46,12 @@ func (*approvalE2EProvider) Capabilities() model.Capabilities {
 	return model.Capabilities{Streaming: true, ToolCalls: true}
 }
 
-// installApprovalRuntime points the server at a runtime with the REAL
+// installApprovalRuntime points the service at a runtime with the REAL
 // workspace builtin tools (including the gated shell) and the scripted
-// provider, with the server's approval broker wired into the runner.
-func installApprovalRuntime(t *testing.T, server *Server, provider model.Provider, ttl time.Duration) config.Config {
+// provider, with the service's approval broker wired into the runner.
+func installApprovalRuntime(t *testing.T, svc *Service, provider model.Provider, ttl time.Duration) config.Config {
 	t.Helper()
-	conf, err := app.LoadConfig(server.Workspace, server.ConfigPath)
+	conf, err := app.LoadConfig(svc.Workspace, svc.ConfigPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func installApprovalRuntime(t *testing.T, server *Server, provider model.Provide
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := builtin.NewWorkspace(server.Workspace)
+	workspace, err := builtin.NewWorkspace(svc.Workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,43 +67,57 @@ func installApprovalRuntime(t *testing.T, server *Server, provider model.Provide
 	if err = builtin.RegisterAll(registry, workspace, 5*time.Second, 4096, 4096, false); err != nil {
 		t.Fatal(err)
 	}
-	runner := &agent.Runner{Provider: provider, Executor: tool.Executor{Registry: registry, DefaultTimeout: 5 * time.Second}, Context: manager, Store: server.store, Config: agent.Config{MaxTurns: 4, Timeout: 30 * time.Second, Model: "test", CheckpointEveryTurns: 1, ApprovalTTL: ttl}, Approvals: server.approvals}
-	server.build = func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error) {
-		return &app.Runtime{Workspace: server.Workspace, Config: conf, Store: server.store, Runner: runner}, nil
+	runner := &agent.Runner{Provider: provider, Executor: tool.Executor{Registry: registry, DefaultTimeout: 5 * time.Second}, Context: manager, Store: svc.store, Config: agent.Config{MaxTurns: 4, Timeout: 30 * time.Second, Model: "test", CheckpointEveryTurns: 1, ApprovalTTL: ttl}, Approvals: svc.approvals}
+	svc.build = func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error) {
+		return &app.Runtime{Workspace: svc.Workspace, Config: conf, Store: svc.store, Runner: runner}, nil
 	}
 	return conf
 }
 
-func launchApprovalSession(t *testing.T, server *Server, conf config.Config) *session.Session {
+func launchApprovalSession(t *testing.T, svc *Service, conf config.Config) *session.Session {
 	t.Helper()
-	if err := server.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
+	if err := svc.credentials.SetAPIKey("deepseek", "test-secret"); err != nil {
 		t.Fatal(err)
 	}
 	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "coding"}
-	sess, err := session.NewConversation("Approval E2E", server.Workspace, session.ConfigDigest(conf), selection)
+	sess, err := session.NewConversation("Approval E2E", svc.Workspace, session.ConfigDigest(conf), selection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = server.store.Save(context.Background(), sess); err != nil {
+	if err = svc.store.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = server.launchSessionRun(sess, "run the gated command"); err != nil {
+	if _, err = svc.launchSessionRun(sess, "run the gated command"); err != nil {
 		t.Fatal(err)
 	}
 	return sess
 }
 
+// decideApproval drives the service decide operation the pre-refactor tests
+// reached through the HTTP API; a conflict-kind error is the 409 equivalent.
+func decideApproval(t *testing.T, svc *Service, sessionID, requestID string, approve bool) error {
+	t.Helper()
+	_, _, err := svc.DecideApproval(context.Background(), sessionID, requestID, approve)
+	return err
+}
+
+func isConflict(t *testing.T, err error) bool {
+	t.Helper()
+	var serviceErr *Error
+	return errors.As(err, &serviceErr) && serviceErr.Kind == KindConflict
+}
+
 // waitForParkedApproval polls until the pending request is durable AND the
 // runner's waiter is registered with the broker, so the decide below is
 // guaranteed to take the active-run rendezvous path.
-func waitForParkedApproval(t *testing.T, server *Server, sessionID string) approval.Request {
+func waitForParkedApproval(t *testing.T, svc *Service, sessionID string) approval.Request {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		loaded, err := server.store.Load(context.Background(), sessionID)
+		loaded, err := svc.store.Load(context.Background(), sessionID)
 		if err == nil {
 			for _, req := range loaded.ApprovalRequests {
-				if req.Status == approval.Pending && server.approvals.waiterFor(req.RequestID) != nil {
+				if req.Status == approval.Pending && svc.approvals.waiterFor(req.RequestID) != nil {
 					return req
 				}
 			}
@@ -114,9 +128,9 @@ func waitForParkedApproval(t *testing.T, server *Server, sessionID string) appro
 	return approval.Request{}
 }
 
-func loadFreshSession(t *testing.T, server *Server, sessionID string) *session.Session {
+func loadFreshSession(t *testing.T, svc *Service, sessionID string) *session.Session {
 	t.Helper()
-	fresh, err := session.NewStore(server.Workspace, ".gohermit")
+	fresh, err := session.NewStore(svc.Workspace, ".gohermit")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,10 +141,10 @@ func loadFreshSession(t *testing.T, server *Server, sessionID string) *session.S
 	return loaded
 }
 
-func approvalLifecycleEvents(t *testing.T, server *Server, sessionID string) []event.Event {
+func approvalLifecycleEvents(t *testing.T, svc *Service, sessionID string) []event.Event {
 	t.Helper()
 	var lifecycle []event.Event
-	for _, e := range approvalEvents(t, server, sessionID) {
+	for _, e := range approvalEvents(t, svc, sessionID) {
 		switch e.Type {
 		case event.ApprovalRequested, event.ApprovalDecided, event.ApprovalExpired, event.ApprovalConsumed:
 			lifecycle = append(lifecycle, e)
@@ -176,18 +190,18 @@ func modelToolMessage(t *testing.T, p *approvalE2EProvider) string {
 
 // TestApprovalApprovedExecutesGatedShellCommandEndToEnd proves the full C3
 // rendezvous: a real ConfirmationRequired shell command parks the run, the
-// owner approves through the real decide API, the decision travels the
+// owner approves through the decide operation, the decision travels the
 // broker to the parked runner, and the command executes exactly once. The
 // final checkpoint from a FRESH store shows both sides merged: the consumed
 // request AND the run's own progress (model calls, completion) — no writer
 // overwrote the other.
 func TestApprovalApprovedExecutesGatedShellCommandEndToEnd(t *testing.T) {
-	server := testServer(t)
+	svc := newTestService(t)
 	provider := &approvalE2EProvider{command: "touch c3-approved-proof.txt"}
-	conf := installApprovalRuntime(t, server, provider, 0)
-	sess := launchApprovalSession(t, server, conf)
+	conf := installApprovalRuntime(t, svc, provider, 0)
+	sess := launchApprovalSession(t, svc, conf)
 
-	req := waitForParkedApproval(t, server, sess.ID)
+	req := waitForParkedApproval(t, svc, sess.ID)
 	if req.Tool != "shell.execute" || req.SessionID != sess.ID || req.RunID == "" || req.PolicyFingerprint != sess.ConfigDigest || req.PlanRevision < 1 {
 		t.Fatalf("request scope=%+v", req)
 	}
@@ -198,16 +212,15 @@ func TestApprovalApprovedExecutesGatedShellCommandEndToEnd(t *testing.T) {
 		t.Fatalf("request summary=%q digest=%q", req.ArgsSummary, req.ArgsDigest)
 	}
 
-	response := decideApprovalRequest(server, sess.ID, req.RequestID, "", `{"decision":"approve"}`)
-	if response.Code != http.StatusOK {
-		t.Fatalf("decide status=%d body=%s", response.Code, response.Body.String())
+	if err := decideApproval(t, svc, sess.ID, req.RequestID, true); err != nil {
+		t.Fatalf("decide err = %v", err)
 	}
-	waitForRun(t, server)
+	waitForRun(t, svc)
 
-	if _, err := os.Stat(filepath.Join(server.Workspace, "c3-approved-proof.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(svc.Workspace, "c3-approved-proof.txt")); err != nil {
 		t.Fatalf("approved command did not execute: %v", err)
 	}
-	loaded := loadFreshSession(t, server, sess.ID)
+	loaded := loadFreshSession(t, svc, sess.ID)
 	run := loaded.Runs[len(loaded.Runs)-1]
 	if run.Status != session.RunCompleted || run.ModelCalls < 2 {
 		t.Fatalf("run status=%s model_calls=%d error=%q", run.Status, run.ModelCalls, run.Error)
@@ -215,39 +228,37 @@ func TestApprovalApprovedExecutesGatedShellCommandEndToEnd(t *testing.T) {
 	if got := onlyRequest(t, loaded); got.Status != approval.Consumed || got.RequestID != req.RequestID {
 		t.Fatalf("request=%+v", got)
 	}
-	assertEventOrder(t, approvalLifecycleEvents(t, server, sess.ID), event.ApprovalRequested, event.ApprovalDecided, event.ApprovalConsumed)
+	assertEventOrder(t, approvalLifecycleEvents(t, svc, sess.ID), event.ApprovalRequested, event.ApprovalDecided, event.ApprovalConsumed)
 
 	// One-shot at the API too: a second decide on the same id conflicts.
-	response = decideApprovalRequest(server, sess.ID, req.RequestID, "", `{"decision":"approve"}`)
-	if response.Code != http.StatusConflict {
-		t.Fatalf("re-decide status=%d body=%s", response.Code, response.Body.String())
+	if err := decideApproval(t, svc, sess.ID, req.RequestID, true); !isConflict(t, err) {
+		t.Fatalf("re-decide err = %v, want a conflict", err)
 	}
-	if got := onlyRequest(t, loadFreshSession(t, server, sess.ID)); got.Status != approval.Consumed {
+	if got := onlyRequest(t, loadFreshSession(t, svc, sess.ID)); got.Status != approval.Consumed {
 		t.Fatalf("failed re-decide changed state: %+v", got)
 	}
 }
 
 // TestApprovalDeniedContinuesRunWithStructuredDenial closes the C2 gap: a
-// real deny through the decide API reaches the parked runner, the gated
+// real deny through the decide operation reaches the parked runner, the gated
 // command never executes, and the run still completes — the model received
 // structured denial data instead of the run failing blindly (ADR 0011).
 func TestApprovalDeniedContinuesRunWithStructuredDenial(t *testing.T) {
-	server := testServer(t)
+	svc := newTestService(t)
 	provider := &approvalE2EProvider{command: "touch c3-denied-proof.txt"}
-	conf := installApprovalRuntime(t, server, provider, 0)
-	sess := launchApprovalSession(t, server, conf)
+	conf := installApprovalRuntime(t, svc, provider, 0)
+	sess := launchApprovalSession(t, svc, conf)
 
-	req := waitForParkedApproval(t, server, sess.ID)
-	response := decideApprovalRequest(server, sess.ID, req.RequestID, "", `{"decision":"deny"}`)
-	if response.Code != http.StatusOK {
-		t.Fatalf("decide status=%d body=%s", response.Code, response.Body.String())
+	req := waitForParkedApproval(t, svc, sess.ID)
+	if err := decideApproval(t, svc, sess.ID, req.RequestID, false); err != nil {
+		t.Fatalf("decide err = %v", err)
 	}
-	waitForRun(t, server)
+	waitForRun(t, svc)
 
-	if _, err := os.Stat(filepath.Join(server.Workspace, "c3-denied-proof.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(svc.Workspace, "c3-denied-proof.txt")); !os.IsNotExist(err) {
 		t.Fatalf("denied command executed: %v", err)
 	}
-	loaded := loadFreshSession(t, server, sess.ID)
+	loaded := loadFreshSession(t, svc, sess.ID)
 	if run := loaded.Runs[len(loaded.Runs)-1]; run.Status != session.RunCompleted {
 		t.Fatalf("run status=%s error=%q", run.Status, run.Error)
 	}
@@ -257,7 +268,7 @@ func TestApprovalDeniedContinuesRunWithStructuredDenial(t *testing.T) {
 	if got := modelToolMessage(t, provider); !strings.Contains(got, tool.CodeApprovalDenied) {
 		t.Fatalf("structured denial did not reach the model: %s", got)
 	}
-	assertEventOrder(t, approvalLifecycleEvents(t, server, sess.ID), event.ApprovalRequested, event.ApprovalDecided)
+	assertEventOrder(t, approvalLifecycleEvents(t, svc, sess.ID), event.ApprovalRequested, event.ApprovalDecided)
 }
 
 // TestApprovalExpiryDeniesUnattendedDecision: with a test-shortened TTL and
@@ -265,17 +276,17 @@ func TestApprovalDeniedContinuesRunWithStructuredDenial(t *testing.T) {
 // expired (the unattended default is deny), and the run completes without
 // the side effect.
 func TestApprovalExpiryDeniesUnattendedDecision(t *testing.T) {
-	server := testServer(t)
+	svc := newTestService(t)
 	provider := &approvalE2EProvider{command: "touch c3-expired-proof.txt"}
-	conf := installApprovalRuntime(t, server, provider, 100*time.Millisecond)
-	sess := launchApprovalSession(t, server, conf)
+	conf := installApprovalRuntime(t, svc, provider, 100*time.Millisecond)
+	sess := launchApprovalSession(t, svc, conf)
 
-	waitForRun(t, server)
+	waitForRun(t, svc)
 
-	if _, err := os.Stat(filepath.Join(server.Workspace, "c3-expired-proof.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(svc.Workspace, "c3-expired-proof.txt")); !os.IsNotExist(err) {
 		t.Fatalf("expired command executed: %v", err)
 	}
-	loaded := loadFreshSession(t, server, sess.ID)
+	loaded := loadFreshSession(t, svc, sess.ID)
 	if run := loaded.Runs[len(loaded.Runs)-1]; run.Status != session.RunCompleted {
 		t.Fatalf("run status=%s error=%q", run.Status, run.Error)
 	}
@@ -285,21 +296,21 @@ func TestApprovalExpiryDeniesUnattendedDecision(t *testing.T) {
 	if got := modelToolMessage(t, provider); !strings.Contains(got, tool.CodeApprovalDenied) {
 		t.Fatalf("structured denial did not reach the model: %s", got)
 	}
-	assertEventOrder(t, approvalLifecycleEvents(t, server, sess.ID), event.ApprovalRequested, event.ApprovalExpired)
+	assertEventOrder(t, approvalLifecycleEvents(t, svc, sess.ID), event.ApprovalRequested, event.ApprovalExpired)
 }
 
 // TestApprovalBlockedCommandNeverProducesARequest: a Blocked-classified
 // command stays hard-denied exactly as before C3 — identical denial data,
 // no approval request, no approval events, and the run continues.
 func TestApprovalBlockedCommandNeverProducesARequest(t *testing.T) {
-	server := testServer(t)
+	svc := newTestService(t)
 	provider := &approvalE2EProvider{command: "rm -rf c3-blocked-proof"}
-	conf := installApprovalRuntime(t, server, provider, 0)
-	sess := launchApprovalSession(t, server, conf)
+	conf := installApprovalRuntime(t, svc, provider, 0)
+	sess := launchApprovalSession(t, svc, conf)
 
-	waitForRun(t, server)
+	waitForRun(t, svc)
 
-	loaded := loadFreshSession(t, server, sess.ID)
+	loaded := loadFreshSession(t, svc, sess.ID)
 	if run := loaded.Runs[len(loaded.Runs)-1]; run.Status != session.RunCompleted {
 		t.Fatalf("run status=%s error=%q", run.Status, run.Error)
 	}
@@ -309,7 +320,7 @@ func TestApprovalBlockedCommandNeverProducesARequest(t *testing.T) {
 	if got := modelToolMessage(t, provider); !strings.Contains(got, `"code":"blocked"`) || !strings.Contains(got, "destructive operation") {
 		t.Fatalf("blocked denial data changed: %s", got)
 	}
-	if lifecycle := approvalLifecycleEvents(t, server, sess.ID); len(lifecycle) != 0 {
+	if lifecycle := approvalLifecycleEvents(t, svc, sess.ID); len(lifecycle) != 0 {
 		t.Fatalf("blocked command emitted approval events: %+v", lifecycle)
 	}
 }

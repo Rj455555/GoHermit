@@ -10,57 +10,34 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/app"
-	"github.com/Rj455555/GoHermit/internal/approval"
-	modelauth "github.com/Rj455555/GoHermit/internal/auth"
 	"github.com/Rj455555/GoHermit/internal/config"
+	"github.com/Rj455555/GoHermit/internal/controlplane"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/owner"
-	"github.com/Rj455555/GoHermit/internal/runcontrol"
-	"github.com/Rj455555/GoHermit/internal/session"
-	"github.com/Rj455555/GoHermit/internal/taskplan"
-	"github.com/Rj455555/GoHermit/internal/team"
 	"github.com/Rj455555/GoHermit/internal/teamtemplate"
 )
 
 //go:embed assets/*
 var assets embed.FS
 
+// Server is the thin HTTP transport over the control-plane service. It owns
+// routing, request parsing, response writing, static assets, the
+// same-origin guard, and the SSE subscriber fan-out that implements the
+// service's Publisher port; every state transition lives in the service.
 type Server struct {
 	Workspace     string
 	ConfigPath    string
-	active        atomic.Bool
-	store         *session.Store
-	runMu         sync.Mutex
-	activeSession string
-	activeRun     string
-	cancelRun     context.CancelFunc
+	svc           *controlplane.Service
 	subscribersMu sync.Mutex
 	subscribers   map[string]map[chan event.Event]struct{}
 	static        http.Handler
-	credentials   *modelauth.Store
-	owner         *owner.Store
-	logins        *modelauth.LoginManager
-	build         func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error)
-	codexModelsMu sync.Mutex
-	codexModels   []config.ModelOption
-	codexModelsAt time.Time
-	teamWorker    team.Worker
-	teamTemplates *teamtemplate.Store
-	// approvals is the single in-process rendezvous between parked runners
-	// and decideApproval for the whole server lifetime (ADR 0011, C3).
-	approvals *approvalBroker
-	// teamTemplatesErr defers store-resolution failure to request time so a
-	// team session fails closed instead of the server failing to start.
-	teamTemplatesErr error
 }
 
 func New(workspace, configPath string) (*Server, error) {
@@ -68,43 +45,17 @@ func New(workspace, configPath string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	credentials, err := modelauth.NewStore("")
-	if err != nil {
-		return nil, err
-	}
-	ownerStore, err := owner.NewStore("")
-	if err != nil {
-		return nil, err
-	}
-	conf, err := app.LoadConfig(workspace, configPath)
-	if err != nil {
-		return nil, err
-	}
-	teamTemplates, teamTemplatesErr := teamtemplate.NewStore("")
-	store, err := session.NewStore(workspace, conf.Storage.Directory)
-	if err != nil {
-		return nil, err
-	}
-	if ids, listErr := store.List(); listErr == nil {
-		for _, id := range ids {
-			_, _ = store.Recover(context.Background(), id)
-		}
-	}
-	broker := newApprovalBroker()
-	return &Server{
+	server := &Server{
 		Workspace: workspace, ConfigPath: configPath,
-		static:        http.FileServer(http.FS(root)),
-		store:         store,
-		credentials:   credentials,
-		owner:         ownerStore,
-		logins:        modelauth.NewLoginManager(credentials),
-		subscribers:   map[string]map[chan event.Event]struct{}{},
-		teamTemplates: teamTemplates, teamTemplatesErr: teamTemplatesErr,
-		approvals: broker,
-		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
-			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: broker}, nil)
-		},
-	}, nil
+		static:      http.FileServer(http.FS(root)),
+		subscribers: map[string]map[chan event.Event]struct{}{},
+	}
+	svc, err := controlplane.New(workspace, configPath, server.publish)
+	if err != nil {
+		return nil, err
+	}
+	server.svc = svc
+	return server, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -136,14 +87,46 @@ func (s *Server) Handler() http.Handler {
 	return securityHeaders(mux)
 }
 
+// statusForKind maps the service error classification to HTTP statuses.
+func statusForKind(kind controlplane.Kind) int {
+	switch kind {
+	case controlplane.KindInvalid:
+		return http.StatusBadRequest
+	case controlplane.KindNotFound:
+		return http.StatusNotFound
+	case controlplane.KindConflict:
+		return http.StatusConflict
+	case controlplane.KindBadGateway:
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// writeServiceError serializes a service failure exactly like the
+// pre-refactor handlers did, echoing the affected approval request when the
+// error carries one.
+func writeServiceError(w http.ResponseWriter, err error) {
+	var serviceErr *controlplane.Error
+	if errors.As(err, &serviceErr) {
+		body := map[string]any{"error": serviceErr.Error()}
+		if serviceErr.Request != nil {
+			body["request"] = serviceErr.Request
+		}
+		writeJSON(w, statusForKind(serviceErr.Kind), body)
+		return
+	}
+	writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+}
+
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": app.Version, "active": s.active.Load()})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": app.Version, "active": s.svc.Active()})
 }
 
 func (s *Server) getOwner(w http.ResponseWriter, _ *http.Request) {
-	profile, err := s.owner.Load()
+	profile, err := s.svc.OwnerProfile()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, profile)
@@ -161,11 +144,11 @@ func (s *Server) saveOwner(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid owner profile: " + err.Error()})
 		return
 	}
-	if err := s.owner.Save(profile); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+	profile, err := s.svc.SaveOwnerProfile(profile)
+	if err != nil {
+		writeServiceError(w, err)
 		return
 	}
-	profile, _ = s.owner.Load()
 	writeJSON(w, http.StatusOK, profile)
 }
 
@@ -186,9 +169,9 @@ func (s *Server) saveOwnerFact(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid owner fact: " + err.Error()})
 		return
 	}
-	profile, err := s.owner.UpsertFact(owner.Fact{ID: r.PathValue("id"), Category: request.Category, Value: request.Value, Source: request.Source, Confirmed: request.Confirmed})
+	profile, err := s.svc.UpsertOwnerFact(owner.Fact{ID: r.PathValue("id"), Category: request.Category, Value: request.Value, Source: request.Source, Confirmed: request.Confirmed})
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, profile)
@@ -199,9 +182,9 @@ func (s *Server) deleteOwnerFact(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
 		return
 	}
-	profile, err := s.owner.ForgetFact(r.PathValue("id"))
+	profile, err := s.svc.ForgetOwnerFact(r.PathValue("id"))
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, profile)
@@ -211,13 +194,9 @@ func (s *Server) deleteOwnerFact(w http.ResponseWriter, r *http.Request) {
 // redaction applied, so the exported file carries zero secret content even
 // if the in-memory template was tampered with.
 func (s *Server) exportTeamTemplate(w http.ResponseWriter, _ *http.Request) {
-	if s.teamTemplatesErr != nil || s.teamTemplates == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "team template store unavailable"})
-		return
-	}
-	template, err := s.teamTemplates.Load()
+	template, err := s.svc.TeamTemplate()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
 	raw, err := teamtemplate.Export(template)
@@ -239,10 +218,6 @@ func (s *Server) importTeamTemplate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
 		return
 	}
-	if s.teamTemplatesErr != nil || s.teamTemplates == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "team template store unavailable"})
-		return
-	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<10))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid team template: " + err.Error()})
@@ -253,8 +228,8 @@ func (s *Server) importTeamTemplate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	if err := s.teamTemplates.Save(template); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	if err := s.svc.SaveTeamTemplate(template); err != nil {
+		writeServiceError(w, err)
 		return
 	}
 	roles := make([]string, 0, len(template.Roles))
@@ -278,9 +253,9 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		available := company
 		available.Access = nil
 		for accessIndex, access := range company.Access {
-			configured, source, detail := s.accessStatus(r.Context(), access)
+			configured, source, detail := s.svc.AccessStatus(r.Context(), access)
 			if configured && access.ID == "openai-codex" {
-				models, modelErr := s.codexCatalog(r.Context())
+				models, modelErr := s.svc.CodexCatalog(r.Context())
 				if modelErr != nil {
 					configured, source, detail = false, "", "登录有效，但无法读取该账户的可用模型。"
 				} else {
@@ -300,10 +275,10 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	_, keyErr := conf.APIKey()
 	currentConfigured := keyErr == nil
 	if conf.Model.Provider == "openai-codex" {
-		currentConfigured, _, _ = s.accessStatus(r.Context(), config.AccessPreset{ID: "openai-codex", AuthType: "oauth_external"})
+		currentConfigured, _, _ = s.svc.AccessStatus(r.Context(), config.AccessPreset{ID: "openai-codex", AuthType: "oauth_external"})
 	}
 	selection := normalizeSelection(conf.CurrentSelection(), availableCompanies)
-	ownerProfile, ownerErr := s.owner.Load()
+	ownerProfile, ownerErr := s.svc.OwnerProfile()
 	ownerStatus := map[string]any{"configured": false}
 	if ownerErr == nil {
 		ownerStatus = map[string]any{"configured": owner.Markdown(ownerProfile) != "", "display_name": ownerProfile.Identity.DisplayName}
@@ -316,7 +291,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			"model": conf.Model.Name, "api_key_env": conf.Model.APIKeyEnv, "api_key_configured": currentConfigured,
 		},
 		"selection": selection, "companies": companies, "available_companies": availableCompanies, "agents": config.AgentPresets(),
-		"auth_status": authStatus, "active": s.active.Load(), "owner": ownerStatus,
+		"auth_status": authStatus, "active": s.svc.Active(), "owner": ownerStatus,
 	})
 }
 
@@ -353,60 +328,19 @@ func normalizeSelection(selection config.RuntimeSelection, companies []config.Co
 	return selection
 }
 
-func (s *Server) codexCatalog(ctx context.Context) ([]config.ModelOption, error) {
-	s.codexModelsMu.Lock()
-	defer s.codexModelsMu.Unlock()
-	if len(s.codexModels) > 0 && time.Since(s.codexModelsAt) < 5*time.Minute {
-		return append([]config.ModelOption(nil), s.codexModels...), nil
-	}
-	credentials, err := modelauth.ResolveCodexWithStore(ctx, s.credentials)
-	if err != nil {
-		return nil, err
-	}
-	discovered, err := modelauth.DiscoverCodexModels(ctx, credentials.Token)
-	if err != nil {
-		return nil, err
-	}
-	models := make([]config.ModelOption, 0, len(discovered))
-	for _, model := range discovered {
-		models = append(models, config.ModelOption{ID: model.ID, Label: model.ID, Provider: "openai-codex"})
-	}
-	s.codexModels = models
-	s.codexModelsAt = time.Now()
-	return append([]config.ModelOption(nil), models...), nil
-}
-
-func (s *Server) accessStatus(ctx context.Context, access config.AccessPreset) (bool, string, string) {
-	if access.AuthType == "oauth_external" || access.ID == "openai-codex" {
-		configured, detail := modelauth.CodexStatus(ctx, s.credentials)
-		if configured {
-			if strings.Contains(detail, "auth.json") {
-				detail = "Codex CLI"
-			}
-			return true, detail, "登录有效，可以运行。"
-		}
-		return false, "", "登录不存在或已失效，请重新登录。"
-	}
-	if key, ok := s.credentials.APIKey(access.ID); ok && key != "" {
-		return true, "GoHermit 设置", "API Key 已安全保存。"
-	}
-	if access.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(access.APIKeyEnv)) != "" {
-		return true, "环境变量 " + access.APIKeyEnv, "由服务端环境提供。"
-	}
-	return false, "", "尚未设置 API Key。"
-}
-
+// run streams the legacy single-shot task over SSE. The service owns the
+// whole lifecycle; this handler only parses the request, upgrades to SSE on
+// the first event, and maps pre-stream failures to HTTP statuses.
 func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
 		return
 	}
-	if !s.active.CompareAndSwap(false, true) {
+	if !s.svc.TryAcquireRun() {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "another task is already running"})
 		return
 	}
-	defer s.active.Store(false)
-
+	defer s.svc.ReleaseRun()
 	var request struct {
 		Task    string `json:"task"`
 		Company string `json:"company"`
@@ -420,66 +354,34 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request: " + err.Error()})
 		return
 	}
-	request.Task = strings.TrimSpace(request.Task)
-	if request.Task == "" || len(request.Task) > 16<<10 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "task must contain 1 to 16384 bytes"})
-		return
-	}
-	selection := config.RuntimeSelection{Company: request.Company, Access: request.Access, Model: request.Model, Agent: request.Agent}
-	var liveModels []config.ModelOption
-	if selection.Access == "openai-codex" {
-		models, modelErr := s.codexCatalog(r.Context())
-		if modelErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "无法读取 Codex 账户的可用模型，请重新登录后再试"})
-			return
-		}
-		liveModels = models
-	}
-	if _, _, err := config.ResolveSelectionWithModels(selection, liveModels); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-	if selection.Agent == "team" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "the team profile requires the Session/Run API"})
-		return
-	}
-	apiKey, err := s.resolveCredential(r.Context(), selection)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-	runtime, err := s.build(r.Context(), s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-	s.applyOwner(runtime)
-	defer runtime.Close()
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "streaming is unavailable"})
 		return
 	}
-	sess, err := session.New(request.Task, runtime.Workspace, session.ConfigDigest(runtime.Config))
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	sess.GitState = session.GitState(r.Context(), runtime.Workspace)
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache, no-store")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
+	streamed := false
 	send := func(e event.Event) {
+		if !streamed {
+			streamed = true
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache, no-store")
+			w.Header().Set("X-Accel-Buffering", "no")
+			w.WriteHeader(http.StatusOK)
+		}
 		payload, _ := json.Marshal(e)
 		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Type, payload)
 		flusher.Flush()
 	}
-	runtime.Runner.Sink = send
-	err = runtime.Runner.Run(r.Context(), sess)
-	s.approvals.Release(sess.ID)
-	if err != nil && !errors.Is(err, context.Canceled) {
-		send(event.Event{Type: event.TaskFailed, Time: time.Now().UTC(), SessionID: sess.ID, Error: err.Error()})
+	err := s.svc.RunOnce(r.Context(), controlplane.RunOnceInput{Task: request.Task, Company: request.Company, Access: request.Access, Model: request.Model, Agent: request.Agent}, send)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if !streamed {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache, no-store")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
 	}
 }
 
@@ -502,48 +404,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request: " + err.Error()})
 		return
 	}
-	selection := config.RuntimeSelection{Company: request.Company, Access: request.Access, Model: request.Model, Agent: request.Agent}
-	planMode, err := session.NormalizePlanMode(request.PlanMode)
+	sess, err := s.svc.CreateSession(r.Context(), controlplane.CreateSessionInput{Title: request.Title, Company: request.Company, Access: request.Access, Model: request.Model, Agent: request.Agent, PlanMode: request.PlanMode})
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-	liveModels, err := s.validateSelection(r.Context(), selection)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-	apiKey, err := s.resolveCredential(r.Context(), selection)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-	if selection.Agent == "team" {
-		if err := s.validateTeamSelections(r.Context(), selection); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-			return
-		}
-	}
-	runtime, err := s.build(r.Context(), s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-	digest := session.ConfigDigest(runtime.Config)
-	runtime.Close()
-	title := strings.TrimSpace(request.Title)
-	if title == "" {
-		title = "New conversation"
-	}
-	sess, err := session.NewConversation(title, runtime.Workspace, digest, session.Selection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent})
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	sess.PlanMode = planMode
-	sess.GitState = session.GitState(r.Context(), runtime.Workspace)
-	if err := s.store.Save(r.Context(), sess); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, sess)
@@ -551,23 +414,18 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := s.store.ListSummaries(r.Context(), limit)
+	items, err := s.svc.ListSessions(r.Context(), limit)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": items})
 }
 
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
+	sess, messages, err := s.svc.GetSession(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-		return
-	}
-	messages, err := s.store.Messages(sess.ID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": sess, "messages": messages})
@@ -587,26 +445,12 @@ func (s *Server) startSessionRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request: " + err.Error()})
 		return
 	}
-	request.Message = strings.TrimSpace(request.Message)
-	if request.Message == "" || len(request.Message) > 16<<10 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "message must contain 1 to 16384 bytes"})
-		return
-	}
-	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
+	runID, err := s.svc.StartRun(r.Context(), r.PathValue("id"), request.Message)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
-	runID, err := s.launchSessionRun(sess, request.Message)
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, errRunActive) {
-			status = http.StatusConflict
-		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": sess.ID, "run_id": runID})
+	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": r.PathValue("id"), "run_id": runID})
 }
 
 func (s *Server) resumeSessionRun(w http.ResponseWriter, r *http.Request) {
@@ -614,35 +458,12 @@ func (s *Server) resumeSessionRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
 		return
 	}
-	sess, err := s.store.Recover(r.Context(), r.PathValue("id"))
+	runID, err := s.svc.ResumeRun(r.Context(), r.PathValue("id"), r.PathValue("run"))
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
-	run := sess.ActiveRun()
-	if run == nil || run.ID != r.PathValue("run") || run.Status != session.RunInterrupted {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not interrupted or resumable"})
-		return
-	}
-	// Recover interrupted this run (e.g. the process stopped mid-run); its
-	// pending approvals died with it (ADR 0011) and the resumed run must
-	// request fresh ones.
-	if expired := runcontrol.ExpireRunApprovals(sess.ApprovalRequests, run.ID, time.Now().UTC()); len(expired) > 0 {
-		if _, err = s.commitAndPublishMany(sess, s.appendApprovalExpiredEvents(sess, expired, nil)); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-	}
-	runID, err := s.launchSessionRun(sess, "")
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, errRunActive) {
-			status = http.StatusConflict
-		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": sess.ID, "run_id": runID})
+	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": r.PathValue("id"), "run_id": runID})
 }
 
 func (s *Server) approveSessionRun(w http.ResponseWriter, r *http.Request) {
@@ -650,85 +471,30 @@ func (s *Server) approveSessionRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
 		return
 	}
-	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
+	runID, err := s.svc.ApprovePlan(r.Context(), r.PathValue("id"), r.PathValue("run"))
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
-	run := sess.ActiveRun()
-	if run == nil || run.ID != r.PathValue("run") || run.Status != session.RunQueued || run.PlanMode != session.PlanReview || run.Plan == nil {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "run has no review plan awaiting approval"})
-		return
-	}
-	if !run.PlanApproved {
-		now := time.Now().UTC()
-		run.PlanApproved, run.PlanApprovedAt, run.UpdatedAt = true, &now, now
-		approved := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, "", "计划已批准，准备执行")
-		if _, err = s.commitAndPublish(sess, approved); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-	}
-	runID, err := s.launchSessionRun(sess, "")
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, errRunActive) {
-			status = http.StatusConflict
-		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": sess.ID, "run_id": runID})
+	writeJSON(w, http.StatusAccepted, map[string]any{"session_id": r.PathValue("id"), "run_id": runID})
 }
 
-var errRunActive = errors.New("another run is already active in this workspace")
-
-// listApprovals answers the session's approval requests filtered by status
-// (default pending). Expiry is evaluated lazily in memory only: the response
-// reports the effective status WITHOUT persisting it, so a read can never
-// mutate the durable checkpoint — a lazy expiry becomes durable at the next
-// decide or batch trigger that travels the commit path.
 func (s *Server) listApprovals(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-		return
-	}
 	filter := strings.TrimSpace(r.URL.Query().Get("status"))
 	if filter == "" {
-		filter = string(approval.Pending)
+		filter = "pending"
 	}
-	switch approval.Status(filter) {
-	case approval.Pending, approval.Approved, approval.Denied, approval.Expired, approval.Consumed:
-	default:
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "status must be pending, approved, denied, expired, or consumed"})
+	items, err := s.svc.ListApprovals(r.Context(), r.PathValue("id"), filter)
+	if err != nil {
+		writeServiceError(w, err)
 		return
-	}
-	now := time.Now().UTC()
-	items := make([]approval.Request, 0, len(sess.ApprovalRequests))
-	for _, req := range sess.ApprovalRequests {
-		if approval.IsExpired(&req, now) {
-			req.Status = approval.Expired
-		}
-		if string(req.Status) == filter {
-			items = append(items, req)
-		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"approvals": items})
 }
 
-// decideApproval records the owner decision for one approval request of this
-// session. A request_id from any other session is a 404: approvals never
-// cross session boundaries. Two mutually exclusive paths, chosen by whether
-// the broker has a waiter: for an active run the decision rendezvous delivers
-// through the broker and commits only the event (the runner is the single
-// session writer); for any session without a waiter the C2 path below
-// persists through the same durable-before-visible commit path as plan
-// approval: mutated checkpoint plus a sequenced approval event, committed
-// before anyone is notified. The only race — a decide landing between the
-// runner's request checkpoint and its waiter registration — takes the C2
-// path and fails closed: the runner keeps waiting until its deadline and the
-// request expires (deny by default).
+// decideApproval parses the owner decision and relays it to the service,
+// which owns both the active-run broker rendezvous and the C2
+// load-decide-save path (ADR 0011).
 func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
@@ -752,723 +518,12 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "decision must be approve or deny"})
 		return
 	}
-	requestID := r.PathValue("requestID")
-	if requestID == "" || len(requestID) > approval.MaxIDBytes {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid approval request id"})
-		return
-	}
-	sess, err := s.store.Load(r.Context(), r.PathValue("id"))
+	target, decided, err := s.svc.DecideApproval(r.Context(), r.PathValue("id"), r.PathValue("requestID"), approve)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
-		return
-	}
-	var target *approval.Request
-	for i := range sess.ApprovalRequests {
-		if sess.ApprovalRequests[i].RequestID == requestID {
-			target = &sess.ApprovalRequests[i]
-			break
-		}
-	}
-	if target == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "approval request not found"})
-		return
-	}
-	now := time.Now().UTC()
-	if waiter := s.approvals.waiterFor(requestID); waiter != nil {
-		// Active-run rendezvous (ADR 0011, C3): the runner goroutine parked on
-		// this request is the single writer of its session for the whole run,
-		// so this path NEVER loads-and-saves session state — the loaded copy
-		// above is read-only validation plus event payload. The decision
-		// travels through the broker (the channel send is the happens-before
-		// edge), and only the audit event is committed, through the store's
-		// mutex-guarded journal against the latest persisted checkpoint. The
-		// runner applies Decide/Consume to its own session object and persists
-		// at its own checkpoint; nothing can be overwritten in either
-		// direction. A crash between the event commit and the runner's
-		// checkpoint leaves the request pending, and resume-time expiry (C2b)
-		// forces a fresh request — ADR-consistent.
-		if waiter.sessionID != sess.ID {
-			// Approvals never cross session boundaries, exactly like the C2
-			// path below.
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": "approval request not found"})
-			return
-		}
-		if approval.IsExpired(target, now) {
-			// The parked runner's own wait deadline marks and commits the
-			// expiry; an expired request can never be decided.
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "approval request expired", "request": target})
-			return
-		}
-		if !s.approvals.deliver(requestID, approve) {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "approval request already decided", "request": target})
-			return
-		}
-		// Response-only status: this copy is never saved by the active path.
-		target.Status = approval.Denied
-		if approve {
-			target.Status = approval.Approved
-		}
-		decided, commitErr := s.store.CommitDetachedEvent(context.Background(), sess.ID, s.approvalRuntimeEvent(sess, target, event.ApprovalDecided))
-		if commitErr != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": commitErr.Error()})
-			return
-		}
-		s.publish(decided)
-		writeJSON(w, http.StatusOK, map[string]any{"request": target, "event": decided})
-		return
-	}
-	if approval.IsExpired(target, now) {
-		// An expired pending request becomes expired and can never be decided;
-		// persist that lazily-detected expiry through the commit path.
-		target.Status = approval.Expired
-		expired := s.approvalRuntimeEvent(sess, target, event.ApprovalExpired)
-		if _, err = s.commitAndPublish(sess, expired); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "approval request expired", "request": target})
-		return
-	}
-	if err = approval.Decide(target, approve, now); err != nil {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "request": target})
-		return
-	}
-	decided, err := s.commitAndPublish(sess, s.approvalRuntimeEvent(sess, target, event.ApprovalDecided))
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"request": target, "event": decided})
-}
-
-// approvalRuntimeEvent builds the bounded audit event for an approval
-// lifecycle transition: request ID, tool name, and status only — never raw
-// tool arguments.
-func (s *Server) approvalRuntimeEvent(sess *session.Session, req *approval.Request, eventType event.Type) event.Event {
-	runtimeEvent := event.New(eventType, sess.ID)
-	runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.WorkItemID = req.RunID, req.MissionID, req.WorkItemID
-	runtimeEvent.Message = fmt.Sprintf("approval %s %s", req.RequestID, req.Status)
-	runtimeEvent.Data, _ = json.Marshal(map[string]any{"request_id": req.RequestID, "tool": req.Tool, "status": req.Status})
-	return runtimeEvent
-}
-
-// appendApprovalExpiredEvents appends one approval_expired audit event per
-// newly expired request ID, reusing the bounded approvalRuntimeEvent payload.
-// The runcontrol Expire* triggers return the IDs they transitioned (terminal
-// requests are never touched), so a trigger that expired nothing appends
-// nothing and the caller's commit carries zero extra events.
-func (s *Server) appendApprovalExpiredEvents(sess *session.Session, ids []string, runtimeEvents []event.Event) []event.Event {
-	for _, id := range ids {
-		for i := range sess.ApprovalRequests {
-			if sess.ApprovalRequests[i].RequestID == id {
-				runtimeEvents = append(runtimeEvents, s.approvalRuntimeEvent(sess, &sess.ApprovalRequests[i], event.ApprovalExpired))
-				break
-			}
-		}
-	}
-	return runtimeEvents
-}
-
-func (s *Server) launchSessionRun(sess *session.Session, message string) (string, error) {
-	selection := config.RuntimeSelection{Company: sess.Selection.Company, Access: sess.Selection.Access, Model: sess.Selection.Model, Agent: sess.Selection.Agent}
-	liveModels, err := s.validateSelection(context.Background(), selection)
-	if err != nil {
-		return "", err
-	}
-	apiKey, err := s.resolveCredential(context.Background(), selection)
-	if err != nil {
-		return "", err
-	}
-	// Policy-fingerprint trigger (ADR 0011): recompute the config digest
-	// exactly as createSession does; when it differs from the digest stored
-	// on the session, approvals recorded under the old fingerprint are void.
-	// This runs before the run starts executing.
-	policyRuntime, err := s.build(context.Background(), s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
-	if err != nil {
-		return "", err
-	}
-	digest := session.ConfigDigest(policyRuntime.Config)
-	policyRuntime.Close()
-	if digest != sess.ConfigDigest {
-		if expired := runcontrol.ExpireApprovalsForPolicy(sess.ApprovalRequests, digest, time.Now().UTC()); len(expired) > 0 {
-			if _, err = s.commitAndPublishMany(sess, s.appendApprovalExpiredEvents(sess, expired, nil)); err != nil {
-				return "", err
-			}
-		}
-	}
-	s.runMu.Lock()
-	if !s.active.CompareAndSwap(false, true) {
-		s.runMu.Unlock()
-		return "", errRunActive
-	}
-	if message != "" {
-		run, runErr := sess.NewRun(message)
-		if runErr != nil {
-			s.active.Store(false)
-			s.runMu.Unlock()
-			return "", runErr
-		}
-		if sess.Title == "New conversation" {
-			sess.Title = compactTitle(message)
-		}
-		if runErr = s.store.AppendMessage(sess.ID, session.MessageRecord{RunID: run.ID, Role: "user", Content: message}); runErr != nil {
-			s.active.Store(false)
-			s.runMu.Unlock()
-			return "", runErr
-		}
-	}
-	run := sess.ActiveRun()
-	if run == nil {
-		s.active.Store(false)
-		s.runMu.Unlock()
-		return "", errors.New("session has no active run")
-	}
-	if selection.Agent == "team" && (sess.Mission == nil || sess.Mission.RunID != run.ID) {
-		budget := team.DefaultBudget()
-		rolePlan, planErr := s.resolveTeamRolePlan(context.Background(), selection)
-		if planErr != nil {
-			s.active.Store(false)
-			s.runMu.Unlock()
-			return "", planErr
-		}
-		if rolePlan != nil && len(rolePlan.roleLimits) > 0 {
-			budget.RoleLimits = rolePlan.roleLimits
-		}
-		mission, missionErr := team.AdaptiveMission("mission-"+run.ID, run.ID, run.Message, budget)
-		if missionErr != nil {
-			s.active.Store(false)
-			s.runMu.Unlock()
-			return "", missionErr
-		}
-		sess.Mission = mission
-	}
-	var createdPlanEvent event.Event
-	if run.Plan == nil {
-		if selection.Agent == "team" {
-			run.Plan, err = planForMission(run.ID, sess.Mission)
-		} else {
-			run.Plan, err = taskplan.ForGoal(run.ID, run.Message, selection.Agent)
-		}
-		if err != nil {
-			s.active.Store(false)
-			s.runMu.Unlock()
-			return "", err
-		}
-		message := "执行计划已创建"
-		if run.PlanMode == session.PlanReview && !run.PlanApproved {
-			message = "执行计划已创建，等待确认"
-		}
-		createdPlanEvent = s.planRuntimeEvent(sess.ID, run, event.PlanCreated, "", message)
-	}
-	if createdPlanEvent.Type != "" {
-		createdPlanEvent, err = s.store.CommitEvent(context.Background(), sess, createdPlanEvent)
-	} else {
-		err = s.store.Save(context.Background(), sess)
-	}
-	if err != nil {
-		s.active.Store(false)
-		s.runMu.Unlock()
-		return "", err
-	}
-	if run.PlanMode == session.PlanReview && !run.PlanApproved {
-		runID := run.ID
-		s.active.Store(false)
-		s.runMu.Unlock()
-		if createdPlanEvent.Type != "" {
-			s.publish(createdPlanEvent)
-		}
-		return runID, nil
-	}
-	runCtx, cancel := context.WithCancel(context.Background())
-	s.activeSession, s.activeRun, s.cancelRun = sess.ID, run.ID, cancel
-	runID := run.ID
-	s.runMu.Unlock()
-	if createdPlanEvent.Type != "" {
-		s.publish(createdPlanEvent)
-	}
-	go func() {
-		defer func() {
-			s.runMu.Lock()
-			s.activeSession, s.activeRun, s.cancelRun = "", "", nil
-			s.active.Store(false)
-			s.runMu.Unlock()
-			// The run ended: release its decided approval waiters so late
-			// decides take the C2 path against the checkpointed state.
-			s.approvals.Release(sess.ID)
-		}()
-		if selection.Agent == "team" {
-			s.runTeam(runCtx, sess, runID, selection, apiKey, liveModels)
-			return
-		}
-		runtime, buildErr := s.build(runCtx, s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
-		if buildErr != nil {
-			s.failLaunchedRun(sess, runID, buildErr)
-			return
-		}
-		s.applyOwner(runtime)
-		defer runtime.Close()
-		runtime.Runner.Sink = s.publish
-		// The runner persists and emits its own terminal state; every return
-		// from Run — completion, failure, cancellation, or deadline
-		// interruption — ends the run's pending approvals (ADR 0011).
-		_ = runtime.Runner.Run(runCtx, sess)
-		if expired := runcontrol.ExpireRunApprovals(sess.ApprovalRequests, runID, time.Now().UTC()); len(expired) > 0 {
-			if _, err := s.commitAndPublishMany(sess, s.appendApprovalExpiredEvents(sess, expired, nil)); err != nil {
-				sess.LastError = err.Error()
-			}
-		}
-	}()
-	return runID, nil
-}
-
-func planForMission(runID string, mission *team.Mission) (*taskplan.Plan, error) {
-	if mission == nil || len(mission.WorkItems) == 0 {
-		return nil, errors.New("team mission is required before creating its plan")
-	}
-	specs := make([]taskplan.StepSpec, 0, len(mission.WorkItems))
-	for _, item := range mission.WorkItems {
-		specs = append(specs, taskplan.StepSpec{ID: item.ID, Title: item.Title})
-	}
-	return taskplan.NewParallel("plan-"+runID, specs)
-}
-
-func (s *Server) runTeam(ctx context.Context, sess *session.Session, runID string, selection config.RuntimeSelection, apiKey string, liveModels []config.ModelOption) {
-	run := sess.ActiveRun()
-	if run == nil || run.ID != runID || sess.Mission == nil {
-		s.failLaunchedRun(sess, runID, errors.New("team mission is missing"))
-		return
-	}
-	// A non-empty team template pins roles to their own validated runtimes; a
-	// load or resolution failure fails the launch closed, like creation.
-	rolePlan, planErr := s.resolveTeamRolePlan(ctx, selection)
-	if planErr != nil {
-		s.failLaunchedRun(sess, runID, planErr)
-		return
-	}
-	now := time.Now().UTC()
-	run.Status, run.UpdatedAt = session.RunRunning, now
-	started := event.New(event.TaskStarted, sess.ID)
-	started.RunID, started.MissionID, started.AgentID = runID, sess.Mission.ID, string(team.RoleLead)
-	if _, err := s.commitAndPublish(sess, started); err != nil {
-		s.failLaunchedRun(sess, runID, err)
-		return
-	}
-	profile, _ := s.owner.Load()
-	teamWorker := &app.TeamWorker{
-		Workspace: s.Workspace, ConfigPath: s.ConfigPath, Selection: selection, APIKey: apiKey, Models: liveModels,
-		OwnerContext: owner.Markdown(profile), ParentSessionID: sess.ID, ParentRunID: runID, ParentStore: s.store, Sink: s.publish,
-		Approvals: s.approvals,
-		Build: func(ctx context.Context, workspace, configPath string, options app.RuntimeOptions) (*app.Runtime, error) {
-			runtime, buildErr := s.build(ctx, workspace, configPath, *options.Selection, options.APIKey, options.Models)
-			if buildErr == nil && runtime != nil && runtime.Runner != nil && options.Approvals != nil {
-				runtime.Runner.Approvals = options.Approvals
-			}
-			return runtime, buildErr
-		},
-	}
-	if rolePlan != nil {
-		teamWorker.RoleSelections = rolePlan.overrides
-	}
-	var worker team.Worker = teamWorker
-	if s.teamWorker != nil {
-		worker = s.teamWorker
-	}
-	var sinkErr error
-	coordinator := &team.Coordinator{
-		Worker: worker,
-		Sink: func(teamEvent team.TeamEvent) {
-			if sinkErr != nil {
-				return
-			}
-			runtimeEvent := event.New(teamEventType(teamEvent.Type), sess.ID)
-			runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.WorkItemID = runID, sess.Mission.ID, teamEvent.WorkItemID
-			runtimeEvent.AgentID, runtimeEvent.Message = string(teamEvent.Role), teamEvent.Message
-			runtimeEvents := []event.Event{runtimeEvent}
-			planRevision := 0
-			if run.Plan != nil {
-				planRevision = run.Plan.Revision
-			}
-			transition, transitionErr := runcontrol.ApplyTeamEvent(run.Plan, teamEvent, sess.Mission)
-			if transitionErr != nil {
-				sinkErr = transitionErr
-				return
-			}
-			if transition.Changed {
-				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, transition.Detail)
-				planEvent.MissionID = sess.Mission.ID
-				runtimeEvents = append(runtimeEvents, planEvent)
-			}
-			if run.Plan != nil && run.Plan.Revision != planRevision {
-				// The plan moved to a new revision: pending approvals recorded
-				// against an older revision are stale (ADR 0011); requests
-				// recorded against the new revision survive.
-				expired := runcontrol.ExpireApprovalsForPlanRevision(sess.ApprovalRequests, runID, run.Plan.Revision, time.Now().UTC())
-				runtimeEvents = s.appendApprovalExpiredEvents(sess, expired, runtimeEvents)
-			}
-			_, sinkErr = s.commitAndPublishMany(sess, runtimeEvents)
-		},
-		Checkpoint: func(mission *team.Mission) error {
-			if sinkErr != nil {
-				return sinkErr
-			}
-			sess.Mission = mission
-			if active := sess.ActiveRun(); active != nil && active.ID == runID {
-				active.ModelCalls = mission.Usage.ModelCalls
-				active.TotalTokens = mission.Usage.Tokens
-				active.UpdatedAt = mission.UpdatedAt
-			}
-			sess.GitState = session.GitState(ctx, s.Workspace)
-			return s.store.Save(context.WithoutCancel(ctx), sess)
-		},
-	}
-	err := coordinator.Run(ctx, sess.Mission)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			s.finishTeamCancelled(sess, run, err)
-			return
-		}
-		s.failLaunchedRun(sess, runID, err)
-		return
-	}
-	if run.Plan == nil || run.Plan.Status != taskplan.Completed {
-		s.failLaunchedRun(sess, runID, errors.New("team live plan completion gate failed"))
-		return
-	}
-	final := finalTeamHandoff(sess.Mission)
-	now = time.Now().UTC()
-	run.Status, run.FinalMessage, run.CompletedAt, run.UpdatedAt = session.RunCompleted, final.Summary, &now, now
-	run.ModelCalls, run.TotalTokens = sess.Mission.Usage.ModelCalls, sess.Mission.Usage.Tokens
-	run.ModifiedFiles = missionModifiedFiles(sess.Mission)
-	for _, handoff := range sess.Mission.Handoffs {
-		for _, check := range handoff.Checks {
-			sess.TestResults = append(sess.TestResults, session.TestResult{Command: check.Command, Passed: check.Passed, Summary: check.Summary, Time: handoff.CreatedAt, RunID: runID})
-		}
-	}
-	sess.ActiveRunID, sess.LastError = "", ""
-	sess.CompletedSteps = append(sess.CompletedSteps, "Personal Agent Team completed mission "+sess.Mission.ID)
-	if final.Summary == "" {
-		final.Summary = "团队任务已完成并通过独立验证。"
-		run.FinalMessage = final.Summary
-	}
-	_ = s.store.AppendMessage(sess.ID, session.MessageRecord{RunID: runID, Role: "assistant", Content: final.Summary})
-	completed := event.New(event.TaskCompleted, sess.ID)
-	completed.RunID, completed.MissionID, completed.AgentID, completed.Message = runID, sess.Mission.ID, string(team.RoleLead), final.Summary
-	// Normal completion terminates the run's pending approvals too (ADR 0011).
-	runtimeEvents := s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, runID, now), []event.Event{completed})
-	if _, err := s.commitAndPublishMany(sess, runtimeEvents); err != nil {
-		sess.LastError = err.Error()
-	}
-}
-
-func (s *Server) finishTeamCancelled(sess *session.Session, run *session.Run, cause error) {
-	now := time.Now().UTC()
-	status, eventType := session.RunCancelled, event.TaskCancelled
-	var runtimeEvents []event.Event
-	if errors.Is(cause, context.DeadlineExceeded) {
-		status, eventType = session.RunInterrupted, event.RunInterrupted
-		if sess.Mission != nil && sess.Mission.Status != team.Interrupted {
-			sess.Mission.Interrupt(cause.Error())
-		}
-		if run.Plan != nil && run.Plan.Current() != nil {
-			if transition, noteErr := runcontrol.Interrupt(run.Plan, "运行已中断，可从当前步骤恢复"); noteErr == nil && transition.Changed {
-				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, "运行已中断，可恢复")
-				planEvent.MissionID = sess.Mission.ID
-				runtimeEvents = append(runtimeEvents, planEvent)
-			}
-		}
-	} else if sess.Mission != nil {
-		sess.Mission.Cancel(cause.Error())
-		if run.Plan != nil {
-			if transition, cancelErr := runcontrol.Cancel(run.Plan, "任务已由用户停止"); cancelErr == nil && transition.Changed {
-				planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, "任务已停止")
-				planEvent.MissionID = sess.Mission.ID
-				runtimeEvents = append(runtimeEvents, planEvent)
-			}
-		}
-	}
-	run.Status, run.Error, run.UpdatedAt = status, cause.Error(), now
-	if sess.Mission != nil {
-		run.ModelCalls, run.TotalTokens = sess.Mission.Usage.ModelCalls, sess.Mission.Usage.Tokens
-	}
-	if status == session.RunInterrupted {
-		run.CompletedAt = nil
-	} else {
-		run.CompletedAt = &now
-		sess.ActiveRunID = ""
-	}
-	runtimeEvent := event.New(eventType, sess.ID)
-	runtimeEvent.RunID, runtimeEvent.MissionID, runtimeEvent.Error = run.ID, sess.Mission.ID, cause.Error()
-	runtimeEvents = append(runtimeEvents, runtimeEvent)
-	// ADR 0011: interruption ends pending approvals just like cancellation;
-	// a resumed run must request fresh ones.
-	runtimeEvents = s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, run.ID, now), runtimeEvents)
-	if _, err := s.commitAndPublishMany(sess, runtimeEvents); err != nil {
-		sess.LastError = err.Error()
-	}
-}
-
-func teamEventType(value team.TeamEventType) event.Type {
-	switch value {
-	case team.MissionStarted:
-		return event.MissionStarted
-	case team.MissionFinished:
-		return event.MissionCompleted
-	case team.MissionFailed:
-		return event.MissionFailed
-	case team.WorkItemStarted:
-		return event.WorkItemStarted
-	case team.WorkItemDone:
-		return event.WorkItemCompleted
-	case team.WorkItemFailed:
-		return event.WorkItemFailed
-	default:
-		return event.SessionUpdated
-	}
-}
-
-func (s *Server) planRuntimeEvent(sessionID string, run *session.Run, eventType event.Type, stepID, message string) event.Event {
-	runtimeEvent := event.New(eventType, sessionID)
-	runtimeEvent.RunID, runtimeEvent.PlanStepID, runtimeEvent.Message = run.ID, stepID, message
-	runtimeEvent.Data, _ = json.Marshal(map[string]any{"plan": run.Plan})
-	return runtimeEvent
-}
-
-func finalTeamHandoff(mission *team.Mission) team.Handoff {
-	if mission == nil {
-		return team.Handoff{}
-	}
-	for i := len(mission.Handoffs) - 1; i >= 0; i-- {
-		if mission.Handoffs[i].Role == team.RoleLead {
-			return mission.Handoffs[i]
-		}
-	}
-	return team.Handoff{}
-}
-
-func missionModifiedFiles(mission *team.Mission) []string {
-	seen := map[string]bool{}
-	var files []string
-	if mission == nil {
-		return files
-	}
-	for _, handoff := range mission.Handoffs {
-		for _, file := range handoff.ModifiedFiles {
-			if file != "" && !seen[file] {
-				seen[file] = true
-				files = append(files, file)
-			}
-		}
-	}
-	sort.Strings(files)
-	return files
-}
-
-func (s *Server) applyOwner(runtime *app.Runtime) {
-	if runtime == nil || runtime.Runner == nil || runtime.Runner.Context == nil {
-		return
-	}
-	profile, err := s.owner.Load()
-	if err == nil {
-		runtime.Runner.Context.SetOwnerProfile(owner.Markdown(profile))
-	}
-}
-
-func compactTitle(message string) string {
-	message = strings.TrimSpace(strings.ReplaceAll(message, "\n", " "))
-	if len(message) > 80 {
-		return message[:80] + "…"
-	}
-	return message
-}
-
-func (s *Server) validateSelection(ctx context.Context, selection config.RuntimeSelection) ([]config.ModelOption, error) {
-	var liveModels []config.ModelOption
-	if selection.Access == "openai-codex" {
-		models, err := s.codexCatalog(ctx)
-		if err != nil {
-			return nil, errors.New("无法读取 Codex 账户的可用模型，请重新登录后再试")
-		}
-		liveModels = models
-	}
-	if _, _, err := config.ResolveSelectionWithModels(selection, liveModels); err != nil {
-		return nil, err
-	}
-	return liveModels, nil
-}
-
-// teamValidationRoles fixes a stable order so the first reported validation
-// failure is deterministic.
-var teamValidationRoles = []string{
-	string(team.RoleLead), string(team.RoleExplorer), string(team.RoleBuilder),
-	string(team.RoleReviewer), string(team.RoleVerifier),
-}
-
-// validateTeamSelections checks every team role's effective provider/model
-// selection from the team template before any session state exists. An empty
-// template keeps the legacy behavior: every role runs on the session-level
-// selection, which createSession already validated.
-func (s *Server) validateTeamSelections(ctx context.Context, sessionSelection config.RuntimeSelection) error {
-	if s.teamTemplatesErr != nil {
-		return fmt.Errorf("team template store unavailable: %w", s.teamTemplatesErr)
-	}
-	if s.teamTemplates == nil {
-		return errors.New("team template store unavailable")
-	}
-	template, err := s.teamTemplates.Load()
-	if err != nil {
-		return fmt.Errorf("load team template: %w", err)
-	}
-	if template.Empty() {
-		return nil
-	}
-	selections := teamtemplate.EffectiveSelections(template)
-	checked := map[string]bool{}
-	for _, role := range teamValidationRoles {
-		roleSelection := selections[role]
-		selection := config.RuntimeSelection{Company: roleSelection.Company, Access: roleSelection.Access, Model: roleSelection.Model, Agent: sessionSelection.Agent}
-		key := selection.Company + "\x00" + selection.Access + "\x00" + selection.Model
-		if checked[key] {
-			continue
-		}
-		checked[key] = true
-		if err := s.validateTeamRoleSelection(ctx, selection); err != nil {
-			return fmt.Errorf("team role %q: %w", role, err)
-		}
-	}
-	return nil
-}
-
-// teamRolePlan holds the per-role execution overrides and budget limits a
-// non-empty team template implies for one launch.
-type teamRolePlan struct {
-	overrides  map[string]app.RoleRuntime
-	roleLimits map[team.Role]team.Usage
-}
-
-// resolveTeamRolePlan loads the team template and resolves every role's
-// effective selection into validated runtime inputs plus per-role budget
-// limits. A nil plan means the template is empty and the launch keeps legacy
-// session-level behavior. Like creation-time validation, load and resolution
-// failures are fail-closed.
-func (s *Server) resolveTeamRolePlan(ctx context.Context, sessionSelection config.RuntimeSelection) (*teamRolePlan, error) {
-	if s.teamTemplatesErr != nil {
-		return nil, fmt.Errorf("team template store unavailable: %w", s.teamTemplatesErr)
-	}
-	if s.teamTemplates == nil {
-		return nil, errors.New("team template store unavailable")
-	}
-	template, err := s.teamTemplates.Load()
-	if err != nil {
-		return nil, fmt.Errorf("load team template: %w", err)
-	}
-	if template.Empty() {
-		return nil, nil
-	}
-	selections := teamtemplate.EffectiveSelections(template)
-	resolved := map[string]app.RoleRuntime{}
-	plan := &teamRolePlan{overrides: map[string]app.RoleRuntime{}}
-	for _, role := range teamValidationRoles {
-		roleSelection := selections[role]
-		selection := config.RuntimeSelection{Company: roleSelection.Company, Access: roleSelection.Access, Model: roleSelection.Model, Agent: sessionSelection.Agent}
-		key := selection.Company + "\x00" + selection.Access + "\x00" + selection.Model
-		runtime, ok := resolved[key]
-		if !ok {
-			_, apiKey, liveModels, resolveErr := s.resolveTeamRoleSelection(ctx, selection)
-			if resolveErr != nil {
-				return nil, fmt.Errorf("team role %q: %w", role, resolveErr)
-			}
-			runtime = app.RoleRuntime{Selection: selection, APIKey: apiKey, Models: liveModels}
-			resolved[key] = runtime
-		}
-		plan.overrides[role] = runtime
-		if roleSelection.MaxModelCalls > 0 || roleSelection.MaxTokens > 0 {
-			if plan.roleLimits == nil {
-				plan.roleLimits = map[team.Role]team.Usage{}
-			}
-			plan.roleLimits[team.Role(role)] = team.Usage{ModelCalls: roleSelection.MaxModelCalls, Tokens: roleSelection.MaxTokens}
-		}
-	}
-	return plan, nil
-}
-
-// resolveTeamRoleSelection validates one role's effective selection against
-// the live catalog and resolves its credential, returning the validated
-// selection with everything execution needs to build the role's runtime.
-func (s *Server) resolveTeamRoleSelection(ctx context.Context, selection config.RuntimeSelection) (config.RuntimeSelection, string, []config.ModelOption, error) {
-	liveModels, err := s.validateSelection(ctx, selection)
-	if err != nil {
-		return config.RuntimeSelection{}, "", nil, err
-	}
-	access, ok := config.AccessProfile(selection.Company, selection.Access)
-	if !ok {
-		return config.RuntimeSelection{}, "", nil, errors.New("未知的接入方式")
-	}
-	configured, _, detail := s.accessStatus(ctx, access)
-	if !configured {
-		return config.RuntimeSelection{}, "", nil, fmt.Errorf("%s: %s", access.Label, detail)
-	}
-	apiKey, err := s.resolveCredential(ctx, selection)
-	if err != nil {
-		return config.RuntimeSelection{}, "", nil, err
-	}
-	return selection, apiKey, liveModels, nil
-}
-
-// validateTeamRoleSelection reruns the session-level catalog, credential, and
-// provider capability checks for one role's effective selection.
-func (s *Server) validateTeamRoleSelection(ctx context.Context, selection config.RuntimeSelection) error {
-	selection, apiKey, liveModels, err := s.resolveTeamRoleSelection(ctx, selection)
-	if err != nil {
-		return err
-	}
-	preset, _, err := config.ResolveSelectionWithModels(selection, liveModels)
-	if err != nil {
-		return err
-	}
-	runtime, err := s.build(ctx, s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
-	if err != nil {
-		return err
-	}
-	defer runtime.Close()
-	// Team roles always send tools, so a provider without tool-call support
-	// can never serve them.
-	if runtime.Runner == nil || runtime.Runner.Provider == nil || !runtime.Runner.Provider.Capabilities().ToolCalls {
-		return fmt.Errorf("provider %q does not support the tool calls every team role requires", preset.Provider)
-	}
-	return nil
-}
-
-func (s *Server) failLaunchedRun(sess *session.Session, runID string, cause error) {
-	if run := sess.ActiveRun(); run != nil && run.ID == runID {
-		var runtimeEvents []event.Event
-		if run.Plan != nil && run.Plan.Status == taskplan.Active {
-			step := run.Plan.Current()
-			if step == nil {
-				step = run.Plan.NextPending()
-			}
-			if step != nil {
-				if changed, planErr := run.Plan.Fail(step.ID, cause.Error()); planErr == nil && changed {
-					planEvent := s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, step.ID, cause.Error())
-					runtimeEvents = append(runtimeEvents, planEvent)
-				}
-			}
-		}
-		now := time.Now().UTC()
-		run.Status = session.RunFailed
-		run.Error = cause.Error()
-		run.CompletedAt = &now
-		run.UpdatedAt = now
-		sess.ActiveRunID = ""
-		sess.LastError = cause.Error()
-		e := event.New(event.TaskFailed, sess.ID)
-		e.RunID = runID
-		e.Error = cause.Error()
-		runtimeEvents = append(runtimeEvents, e)
-		runtimeEvents = s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, runID, now), runtimeEvents)
-		if _, err := s.commitAndPublishMany(sess, runtimeEvents); err != nil {
-			sess.LastError = err.Error()
-		}
-	}
 }
 
 func (s *Server) cancelSessionRun(w http.ResponseWriter, r *http.Request) {
@@ -1476,49 +531,21 @@ func (s *Server) cancelSessionRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
 		return
 	}
-	s.runMu.Lock()
-	if s.activeSession != r.PathValue("id") || s.activeRun != r.PathValue("run") || s.cancelRun == nil {
-		sess, loadErr := s.store.Load(r.Context(), r.PathValue("id"))
-		if loadErr == nil {
-			run := sess.ActiveRun()
-			if run != nil && run.ID == r.PathValue("run") && run.Status == session.RunQueued && run.PlanMode == session.PlanReview && !run.PlanApproved {
-				transition, cancelErr := runcontrol.Cancel(run.Plan, "计划未执行，已由用户停止")
-				if cancelErr == nil {
-					now := time.Now().UTC()
-					run.Status, run.CompletedAt, run.UpdatedAt = session.RunCancelled, &now, now
-					sess.ActiveRunID = ""
-					runtimeEvents := make([]event.Event, 0, 2)
-					if transition.Changed {
-						runtimeEvents = append(runtimeEvents, s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, transition.Detail))
-					}
-					cancelled := event.New(event.TaskCancelled, sess.ID)
-					cancelled.RunID, cancelled.Message = run.ID, "计划已停止"
-					runtimeEvents = append(runtimeEvents, cancelled)
-					runtimeEvents = s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, run.ID, now), runtimeEvents)
-					_, cancelErr = s.commitAndPublishMany(sess, runtimeEvents)
-				}
-				s.runMu.Unlock()
-				if cancelErr != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": cancelErr.Error()})
-					return
-				}
-				writeJSON(w, http.StatusAccepted, map[string]any{"status": "cancelling"})
-				return
-			}
-		}
-		s.runMu.Unlock()
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not active"})
+	activeCancelled, err := s.svc.CancelRun(r.Context(), r.PathValue("id"), r.PathValue("run"))
+	if err != nil {
+		writeServiceError(w, err)
 		return
 	}
-	cancel := s.cancelRun
-	s.runMu.Unlock()
-	cancel()
-	writeJSON(w, http.StatusAccepted, map[string]any{"cancelled": true})
+	if activeCancelled {
+		writeJSON(w, http.StatusAccepted, map[string]any{"cancelled": true})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "cancelling"})
 }
 
 func (s *Server) sessionEvents(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.store.Load(r.Context(), r.PathValue("id")); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+	if _, err := s.svc.LoadSession(r.Context(), r.PathValue("id")); err != nil {
+		writeServiceError(w, err)
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -1532,9 +559,9 @@ func (s *Server) sessionEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	ch := s.subscribe(r.PathValue("id"))
 	defer s.unsubscribe(r.PathValue("id"), ch)
-	history, err := s.store.Events(r.PathValue("id"), after)
+	history, err := s.svc.SessionEvents(r.Context(), r.PathValue("id"), after)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -1598,6 +625,8 @@ func (s *Server) unsubscribe(sessionID string, ch chan event.Event) {
 	s.subscribersMu.Unlock()
 }
 
+// publish is the service's Publisher port: it fans a committed event out to
+// the session's SSE subscribers without ever blocking the service.
 func (s *Server) publish(e event.Event) {
 	s.subscribersMu.Lock()
 	defer s.subscribersMu.Unlock()
@@ -1607,48 +636,6 @@ func (s *Server) publish(e event.Event) {
 		default:
 		}
 	}
-}
-
-func (s *Server) commitAndPublish(sess *session.Session, runtimeEvent event.Event) (event.Event, error) {
-	committed, err := s.commitAndPublishMany(sess, []event.Event{runtimeEvent})
-	if err != nil {
-		return event.Event{}, err
-	}
-	return committed[0], nil
-}
-
-func (s *Server) commitAndPublishMany(sess *session.Session, runtimeEvents []event.Event) ([]event.Event, error) {
-	committed, err := s.store.CommitEvents(context.Background(), sess, runtimeEvents)
-	if err != nil {
-		return nil, err
-	}
-	for _, runtimeEvent := range committed {
-		s.publish(runtimeEvent)
-	}
-	return committed, nil
-}
-
-func (s *Server) resolveCredential(ctx context.Context, selection config.RuntimeSelection) (string, error) {
-	access, ok := config.AccessProfile(selection.Company, selection.Access)
-	if !ok {
-		return "", errors.New("未知的接入方式")
-	}
-	if access.AuthType == "oauth_external" {
-		credentials, err := modelauth.ResolveCodexWithStore(ctx, s.credentials)
-		if err != nil {
-			return "", errors.New("Codex 登录不存在或已失效，请先到设置中登录")
-		}
-		return credentials.Token, nil
-	}
-	if key, ok := s.credentials.APIKey(access.ID); ok {
-		return key, nil
-	}
-	if access.APIKeyEnv != "" {
-		if key := strings.TrimSpace(os.Getenv(access.APIKeyEnv)); key != "" {
-			return key, nil
-		}
-	}
-	return "", fmt.Errorf("%s 尚未设置 API Key，请先到设置中配置", access.Label)
 }
 
 func (s *Server) saveAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -1671,8 +658,8 @@ func (s *Server) saveAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "请输入有效的 API Key"})
 		return
 	}
-	if err := s.credentials.SetAPIKey(provider, request.APIKey); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	if err := s.svc.SaveAPIKey(provider, request.APIKey); err != nil {
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "provider": provider})
@@ -1688,8 +675,8 @@ func (s *Server) deleteCredentials(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "未知的接入方式"})
 		return
 	}
-	if err := s.credentials.Delete(provider); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	if err := s.svc.DeleteCredentials(provider); err != nil {
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"configured": false, "provider": provider})
@@ -1700,27 +687,21 @@ func (s *Server) startCodexLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "cross-origin requests are not allowed"})
 		return
 	}
-	session, err := s.logins.Start(r.Context())
+	login, err := s.svc.StartLogin(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, session)
+	writeJSON(w, http.StatusAccepted, login)
 }
 
 func (s *Server) loginStatus(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.logins.Status(r.PathValue("session"))
+	login, ok := s.svc.LoginStatus(r.PathValue("session"))
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "登录会话不存在"})
 		return
 	}
-	if session.Status == "approved" {
-		s.codexModelsMu.Lock()
-		s.codexModels = nil
-		s.codexModelsAt = time.Time{}
-		s.codexModelsMu.Unlock()
-	}
-	writeJSON(w, http.StatusOK, session)
+	writeJSON(w, http.StatusOK, login)
 }
 
 func accessByID(id string) (config.AccessPreset, bool) {

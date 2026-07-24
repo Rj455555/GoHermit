@@ -1,4 +1,4 @@
-package web
+package controlplane
 
 import (
 	"context"
@@ -60,14 +60,14 @@ func gradeOwnerSummary(t *testing.T, scenario evals.OwnerSummaryScenarioFixture)
 // that the durable completion event carries no prompt or unbounded content.
 func gradeOwnerSummaryRun(t *testing.T, scenario evals.OwnerSummaryScenarioFixture) {
 	t.Helper()
-	server := testServer(t)
+	svc := newTestService(t)
 	handoffs := make(map[string]team.Handoff, len(scenario.Handoffs))
 	for _, fixtureHandoff := range scenario.Handoffs {
 		handoffs[fixtureHandoff.WorkItemID] = fixtureHandoff.Build()
 	}
-	server.teamWorker = evalHandoffWorker{handoffs: handoffs}
+	svc.teamWorker = evalHandoffWorker{handoffs: handoffs}
 	selection := session.Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "team"}
-	sess, err := session.NewConversation("Owner summary eval", server.Workspace, "digest", selection)
+	sess, err := session.NewConversation("Owner summary eval", svc.Workspace, "digest", selection)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,11 +82,11 @@ func gradeOwnerSummaryRun(t *testing.T, scenario evals.OwnerSummaryScenarioFixtu
 	if run.Plan, err = taskplan.DefaultTeam(run.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = server.store.Save(context.Background(), sess); err != nil {
+	if err = svc.store.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
-	server.runTeam(context.Background(), sess, run.ID, config.RuntimeSelection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent}, "test-key", nil)
-	loaded, err := server.store.Load(context.Background(), sess.ID)
+	svc.runTeam(context.Background(), sess, run.ID, config.RuntimeSelection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent}, "test-key", nil)
+	loaded, err := svc.store.Load(context.Background(), sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func gradeOwnerSummaryRun(t *testing.T, scenario evals.OwnerSummaryScenarioFixtu
 			t.Fatalf("test result %d=%+v want %+v", i, got, want)
 		}
 	}
-	events, err := server.store.Events(sess.ID, 0)
+	events, err := svc.store.Events(sess.ID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
