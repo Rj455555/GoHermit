@@ -282,20 +282,31 @@ var teamValidationRoles = []string{
 	string(team.RoleReviewer), string(team.RoleVerifier),
 }
 
+// loadTeamTemplate reads the stored team template. Resolution failures are
+// fail-closed and deferred from service construction, so a missing store is
+// a request-time error, not a startup error.
+func (s *Service) loadTeamTemplate() (teamtemplate.Template, error) {
+	if s.teamTemplatesErr != nil {
+		return teamtemplate.Template{}, fmt.Errorf("team template store unavailable: %w", s.teamTemplatesErr)
+	}
+	if s.teamTemplates == nil {
+		return teamtemplate.Template{}, errors.New("team template store unavailable")
+	}
+	template, err := s.teamTemplates.Load()
+	if err != nil {
+		return teamtemplate.Template{}, fmt.Errorf("load team template: %w", err)
+	}
+	return template, nil
+}
+
 // validateTeamSelections checks every team role's effective provider/model
 // selection from the team template before any session state exists. An empty
 // template keeps the legacy behavior: every role runs on the session-level
 // selection, which CreateSession already validated.
 func (s *Service) validateTeamSelections(ctx context.Context, sessionSelection config.RuntimeSelection) error {
-	if s.teamTemplatesErr != nil {
-		return fmt.Errorf("team template store unavailable: %w", s.teamTemplatesErr)
-	}
-	if s.teamTemplates == nil {
-		return errors.New("team template store unavailable")
-	}
-	template, err := s.teamTemplates.Load()
+	template, err := s.loadTeamTemplate()
 	if err != nil {
-		return fmt.Errorf("load team template: %w", err)
+		return err
 	}
 	if template.Empty() {
 		return nil
@@ -330,15 +341,9 @@ type teamRolePlan struct {
 // session-level behavior. Like creation-time validation, load and resolution
 // failures are fail-closed.
 func (s *Service) resolveTeamRolePlan(ctx context.Context, sessionSelection config.RuntimeSelection) (*teamRolePlan, error) {
-	if s.teamTemplatesErr != nil {
-		return nil, fmt.Errorf("team template store unavailable: %w", s.teamTemplatesErr)
-	}
-	if s.teamTemplates == nil {
-		return nil, errors.New("team template store unavailable")
-	}
-	template, err := s.teamTemplates.Load()
+	template, err := s.loadTeamTemplate()
 	if err != nil {
-		return nil, fmt.Errorf("load team template: %w", err)
+		return nil, err
 	}
 	if template.Empty() {
 		return nil, nil

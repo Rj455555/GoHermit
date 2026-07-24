@@ -23,6 +23,7 @@ import (
 	modelauth "github.com/Rj455555/GoHermit/internal/auth"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
+	"github.com/Rj455555/GoHermit/internal/loopstore"
 	"github.com/Rj455555/GoHermit/internal/owner"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/team"
@@ -92,12 +93,15 @@ type Service struct {
 	codexModelsAt time.Time
 	teamWorker    team.Worker
 	teamTemplates *teamtemplate.Store
+	loopStore     *loopstore.Store
 	// approvals is the single in-process rendezvous between parked runners
 	// and DecideApproval for the whole service lifetime (ADR 0011, C3).
 	approvals *approvalBroker
 	// teamTemplatesErr defers store-resolution failure to request time so a
 	// team session fails closed instead of the service failing to start.
 	teamTemplatesErr error
+	// loopStoreErr defers loop store resolution failure the same way.
+	loopStoreErr error
 }
 
 // New builds the service over the workspace, recovering every persisted
@@ -118,6 +122,7 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		return nil, err
 	}
 	teamTemplates, teamTemplatesErr := teamtemplate.NewStore("")
+	loopStore, loopStoreErr := loopstore.NewStore("")
 	store, err := session.NewStore(workspace, conf.Storage.Directory)
 	if err != nil {
 		return nil, err
@@ -136,6 +141,7 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		owner:         ownerStore,
 		logins:        modelauth.NewLoginManager(credentials),
 		teamTemplates: teamTemplates, teamTemplatesErr: teamTemplatesErr,
+		loopStore: loopStore, loopStoreErr: loopStoreErr,
 		approvals: broker,
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
 			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: broker}, nil)
