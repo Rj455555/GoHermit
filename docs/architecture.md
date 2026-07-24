@@ -43,7 +43,7 @@ The registry rejects duplicate names. The executor resolves the tool, applies a 
 
 ## Session flow
 
-A Session is a durable conversation; each user message creates a Run with its own status, verification state, and public Live Plan. Visible user/assistant messages and sequenced events are append-only JSONL, while bounded recovery state is atomically replaced in `session.json`. Schema v1-v3 migrate explicitly to v4. Team Missions add WorkItems and Handoffs; each WorkItem binds a stable hidden execution Session so recovery reuses completed results and resumes interrupted Runner state. Workspace identity mismatch fails closed; external file/Git changes trigger reconciliation instead of discarding the Session. Started-but-unfinished tools become uncertain and are never blindly replayed.
+A Session is a durable conversation; each user message creates a Run with its own status, verification state, and public Live Plan. Visible user/assistant messages and sequenced events are append-only JSONL, while bounded recovery state is atomically replaced in `session.json`. Schema v1-v4 migrate explicitly to v5. Team Missions add WorkItems and Handoffs; each WorkItem binds a stable hidden execution Session so recovery reuses completed results and resumes interrupted Runner state. Workspace identity mismatch fails closed; external file/Git changes trigger reconciliation instead of discarding the Session. Started-but-unfinished tools become uncertain and are never blindly replayed.
 
 ## Cancellation and errors
 

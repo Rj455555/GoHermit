@@ -83,7 +83,7 @@ GoHermit `0.5.0-dev` is a foreground, local-first, single-owner coding harness. 
 
 - Shell/test execution and configured plugins are not OS sandboxes; repository code and plugins must be trusted.
 - Plugin streaming events are deferred beyond protocol v1.
-- Session storage is schema v4 with explicit v1, v2, and v3 migrations; unknown versions still fail closed.
+- Session storage is schema v5 with explicit v1, v2, v3, and v4 migrations; unknown versions still fail closed.
 - Permission-required events are non-interactive in v0.1.0.
 - Codex device login uses OpenAI's device flow and stores tokens only in the server-side credential store. Revocation is detected when a refresh is required; there is no proactive remote token introspection.
 - The Web surface is single-user and unauthenticated; public exposure is unsupported.

@@ -22,11 +22,11 @@ Mutation intent: parallel `Explorer + preflight Reviewer → Builder → Reviewe
 - Lead: synthesizes only the bounded Handoffs for the owner.
 - Operator: reserved and disabled by default for future approval-gated operations.
 
-The Lead WorkItem cannot start without at least one explicit successful Verifier check. WorkItems, model calls, estimated/provider tokens, Mission duration, Handoffs, evidence, files, and checks are bounded. A failed mutation Verifier requeues its repair dependency and itself, preserving prior Handoffs, for at most three verification attempts and within the existing Mission budget.
+The Lead WorkItem cannot start without Verifier evidence: a mutation Mission (a Builder ran) requires at least one real, explicitly passing Verifier check, while a purely read-only Mission has nothing a deterministic check could run against and passes when the Verifier's independent cross-check reports `Checks == []` and `Issues == []` (see PR #26/#27; `team.HandoffChecksPassed` is the single definition). WorkItems, model calls, estimated/provider tokens, Mission duration, Handoffs, evidence, files, and checks are bounded. A failed mutation Verifier requeues its repair dependency and itself, preserving prior Handoffs, for at most three verification attempts and within the existing Mission budget.
 
 ## Persistence and recovery
 
-Session schema v4 stores the parent `mission` plus each Run's optional Live Plan. Each WorkItem gets a deterministic hidden `execution_session_id`. Hidden Worker Sessions use the normal Runner checkpoint and completed-tool replay guard but do not appear in the owner's Session list.
+Session schema v5 stores the parent `mission` plus each Run's optional Live Plan and the Session-scoped approval requests (ADR 0011); v1–v4 migrate explicitly. Each WorkItem gets a deterministic hidden `execution_session_id`. Hidden Worker Sessions use the normal Runner checkpoint and completed-tool replay guard but do not appear in the owner's Session list.
 
 Coordinator checkpoints immediately after assigning an execution Session and starting a WorkItem. Parent events and relayed child activity are committed before SSE delivery. On restart, parent and child running state becomes `interrupted`. Resume reloads the same child Session. A completed child result is converted to the missing Handoff without another model call; an interrupted child resumes through the existing Runner.
 
