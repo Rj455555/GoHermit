@@ -415,3 +415,47 @@ func TestValidateInvocation(t *testing.T) {
 		})
 	}
 }
+
+// TestInvocationReject proves the attached → blocked acceptance refusal: it
+// records the failure code, lands on a terminal state no transition may
+// leave, and is rejected from every other status.
+func TestInvocationReject(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	inv := drive(t, Attached)
+	if err := inv.Reject("verification_failed", "required check did not pass", now); err != nil {
+		t.Fatalf("Reject = %v", err)
+	}
+	if inv.Status != Blocked || inv.FailureCode != "verification_failed" || inv.FailureSummary == "" || inv.FinishedAt == nil {
+		t.Fatalf("unexpected rejected state: %+v", inv)
+	}
+	if err := inv.Complete(now); err == nil {
+		t.Fatal("a rejected invocation completed, want error")
+	}
+	if err := inv.Reject("", "summary", now); err == nil {
+		t.Fatal("Reject without failure code succeeded, want error")
+	}
+	for _, from := range []Status{Prepared, Dispatched, Completed, Failed, Cancelled} {
+		t.Run("from "+string(from), func(t *testing.T) {
+			inv := drive(t, from)
+			if err := inv.Reject("c", "x", now); err == nil {
+				t.Fatalf("Reject from %s succeeded, want error", from)
+			}
+		})
+	}
+}
+
+func TestVerificationRecipeEmpty(t *testing.T) {
+	if !(VerificationRecipe{}).Empty() {
+		t.Fatal("zero recipe is not empty")
+	}
+	nonEmpty := []VerificationRecipe{
+		{Checks: []RecipeCheck{{ID: "c", Command: []string{"go", "version"}, Required: true, TimeoutSeconds: 60}}},
+		{IndependentVerifier: true},
+		{MaxRepairAttempts: 2},
+	}
+	for i, recipe := range nonEmpty {
+		if recipe.Empty() {
+			t.Fatalf("recipe %d reported empty: %+v", i, recipe)
+		}
+	}
+}

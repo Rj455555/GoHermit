@@ -145,6 +145,22 @@ func (inv *Invocation) Block(code, summary string, now time.Time) error {
 	return nil
 }
 
+// Reject moves attached → blocked: the bound run finished but the
+// invocation's verification evidence failed acceptance, so it is refused and
+// can never become completed. Unlike Block (a pre-launch gate from
+// prepared), Reject applies after execution.
+func (inv *Invocation) Reject(code, summary string, now time.Time) error {
+	if inv.Status != Attached {
+		return fmt.Errorf("invocation cannot reject from %s", inv.Status)
+	}
+	if clean(code) == "" {
+		return errors.New("invocation reject requires a failure code")
+	}
+	inv.FailureCode, inv.FailureSummary = clean(code), clean(summary)
+	inv.finish(Blocked, now)
+	return nil
+}
+
 // Fail moves dispatched or attached → failed.
 func (inv *Invocation) Fail(code, summary string, now time.Time) error {
 	if inv.Status != Dispatched && inv.Status != Attached {

@@ -10,6 +10,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/app"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
+	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/owner"
 	"github.com/Rj455555/GoHermit/internal/runcontrol"
 	"github.com/Rj455555/GoHermit/internal/session"
@@ -54,6 +55,13 @@ func (s *Service) runTeam(ctx context.Context, sess *session.Session, runID stri
 	}
 	if rolePlan != nil {
 		teamWorker.RoleSelections = rolePlan.overrides
+	}
+	// A loop invocation's verification recipe feeds the existing verifier:
+	// the worker runs the declared checks deterministically before the
+	// verifier result is mapped, so the evidence travels the existing
+	// handoff/Checks channel rather than a second framework.
+	if sess.VerificationRecipe != nil {
+		teamWorker.VerificationRecipe = sess.VerificationRecipe
 	}
 	var worker team.Worker = teamWorker
 	if s.teamWorker != nil {
@@ -107,6 +115,12 @@ func (s *Service) runTeam(ctx context.Context, sess *session.Session, runID stri
 			return s.store.Save(context.WithoutCancel(ctx), sess)
 		},
 	}
+	// The recipe's repair bound caps the verifier requeue loop; zero keeps
+	// the coordinator's existing default. Loop validation already bounds the
+	// value; the clamp is defense in depth.
+	if sess.VerificationRecipe != nil && sess.VerificationRecipe.MaxRepairAttempts > 0 {
+		coordinator.MaxRepairAttempts = min(sess.VerificationRecipe.MaxRepairAttempts, loop.MaxRepairAttempts)
+	}
 	err := coordinator.Run(ctx, sess.Mission)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -127,7 +141,7 @@ func (s *Service) runTeam(ctx context.Context, sess *session.Session, runID stri
 	run.ModifiedFiles = missionModifiedFiles(sess.Mission)
 	for _, handoff := range sess.Mission.Handoffs {
 		for _, check := range handoff.Checks {
-			sess.TestResults = append(sess.TestResults, session.TestResult{Command: check.Command, Passed: check.Passed, Summary: check.Summary, Time: handoff.CreatedAt, RunID: runID})
+			sess.TestResults = append(sess.TestResults, session.TestResult{Command: check.Command, Passed: check.Passed, Summary: check.Summary, ExitCode: check.ExitCode, DurationMS: check.DurationMS, Time: handoff.CreatedAt, RunID: runID})
 		}
 	}
 	sess.ActiveRunID, sess.LastError = "", ""

@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Rj455555/GoHermit/internal/agent"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
 	"github.com/Rj455555/GoHermit/internal/event"
+	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/team"
+	"github.com/Rj455555/GoHermit/internal/verification"
 )
 
 // RoleRuntime carries the validated runtime inputs for one team role when the
@@ -47,6 +50,12 @@ type TeamWorker struct {
 	// selection, credential, and catalog (the team template). A nil or empty
 	// map keeps the session-level inputs for every role.
 	RoleSelections map[string]RoleRuntime
+	// VerificationRecipe, when set, makes the Verifier run the recipe's
+	// deterministic checks through the policy-gated runner before its result
+	// is returned. The results join the child session's TestResults and flow
+	// into the handoff through the existing Checks mapping — no second
+	// verification channel.
+	VerificationRecipe *loop.VerificationRecipe
 }
 
 func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (team.Result, error) {
@@ -71,6 +80,9 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 	prompt, err := assignmentPrompt(assignment)
 	if err != nil {
 		return team.Result{}, err
+	}
+	if w.VerificationRecipe != nil && assignment.WorkItem.Role == team.RoleVerifier && len(w.VerificationRecipe.Checks) > 0 {
+		prompt += recipePrompt(w.VerificationRecipe.Checks)
 	}
 	var child *session.Session
 	childID := assignment.WorkItem.ExecutionSessionID
@@ -123,7 +135,50 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 	if err != nil {
 		return team.Result{}, fmt.Errorf("relay worker event: %w", err)
 	}
+	// The Verifier's deterministic recipe checks run after its model run and
+	// before the result is mapped, so the evidence joins the child session's
+	// TestResults and reaches the handoff through the existing Checks path.
+	if w.VerificationRecipe != nil && assignment.WorkItem.Role == team.RoleVerifier {
+		if err = runRecipeChecks(ctx, runtime.Store, w.Workspace, w.VerificationRecipe, child); err != nil {
+			return team.Result{}, err
+		}
+	}
 	return workerResult(child, assignment, prompt)
+}
+
+// runRecipeChecks executes the recipe deterministically and appends one
+// bounded TestResult per check to the verifier child session, tagged with
+// its run id so workerResult maps them into the handoff's Checks.
+func runRecipeChecks(ctx context.Context, store *session.Store, workspace string, recipe *loop.VerificationRecipe, child *session.Session) error {
+	if len(child.Runs) == 0 {
+		return errors.New("verifier completed without a run record")
+	}
+	runID := child.Runs[len(child.Runs)-1].ID
+	now := time.Now().UTC()
+	for _, result := range verification.RunChecks(ctx, workspace, recipe.Checks) {
+		child.TestResults = append(child.TestResults, session.TestResult{
+			Command:    verification.CommandString(result.Command),
+			Passed:     result.Passed,
+			Summary:    result.Output,
+			ExitCode:   result.ExitCode,
+			DurationMS: result.DurationMS,
+			Time:       now,
+			RunID:      runID,
+		})
+	}
+	return store.Save(context.WithoutCancel(ctx), child)
+}
+
+// recipePrompt renders the declared deterministic checks for the verifier's
+// assignment. The recipe is bounded by loop validation, so the text is
+// bounded by construction.
+func recipePrompt(checks []loop.RecipeCheck) string {
+	var b strings.Builder
+	b.WriteString("\n\nDeclared deterministic verification checks (id, command, required); they are executed independently and their results are part of your evidence:")
+	for _, check := range checks {
+		fmt.Fprintf(&b, "\n- %s: %s (required=%t)", check.ID, verification.CommandString(check.Command), check.Required)
+	}
+	return b.String()
 }
 
 // workerPartialResult reports the usage a failed child run actually recorded
@@ -156,7 +211,7 @@ func workerResult(child *session.Session, assignment team.Assignment, prompt str
 	handoff.ModifiedFiles = append([]string(nil), run.ModifiedFiles...)
 	for _, result := range child.TestResults {
 		if result.RunID == run.ID {
-			handoff.Checks = append(handoff.Checks, team.Check{Command: result.Command, Passed: result.Passed, Summary: result.Summary})
+			handoff.Checks = append(handoff.Checks, team.Check{Command: result.Command, Passed: result.Passed, Summary: result.Summary, ExitCode: result.ExitCode, DurationMS: result.DurationMS})
 		}
 	}
 	// A Verifier that ran no test leaves Checks genuinely empty — do not

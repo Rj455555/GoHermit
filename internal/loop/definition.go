@@ -84,6 +84,13 @@ type VerificationRecipe struct {
 	MaxRepairAttempts   int           `json:"max_repair_attempts"`
 }
 
+// Empty reports whether the recipe declares nothing: no checks, no
+// independent verifier, no repair bound. Sessions without a recipe keep the
+// pre-recipe pipeline behavior exactly.
+func (r VerificationRecipe) Empty() bool {
+	return len(r.Checks) == 0 && !r.IndependentVerifier && r.MaxRepairAttempts == 0
+}
+
 // Budget caps one invocation's cost. All fields are positive and bounded.
 type Budget struct {
 	MaxModelCalls  int `json:"max_model_calls"`

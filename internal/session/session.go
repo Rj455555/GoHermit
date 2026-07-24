@@ -20,6 +20,7 @@ import (
 
 	"github.com/Rj455555/GoHermit/internal/approval"
 	"github.com/Rj455555/GoHermit/internal/event"
+	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/storage"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
@@ -136,12 +137,16 @@ type ToolRecord struct {
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 type TestResult struct {
-	Command string    `json:"command"`
-	Passed  bool      `json:"passed"`
-	Summary string    `json:"summary"`
-	Time    time.Time `json:"time"`
-	RunID   string    `json:"run_id,omitempty"`
-	Turn    int       `json:"turn,omitempty"`
+	Command string `json:"command"`
+	Passed  bool   `json:"passed"`
+	Summary string `json:"summary"`
+	// ExitCode and DurationMS are additive evidence from deterministic check
+	// execution; results persisted before them load as zero.
+	ExitCode   int       `json:"exit_code,omitempty"`
+	DurationMS int64     `json:"duration_ms,omitempty"`
+	Time       time.Time `json:"time"`
+	RunID      string    `json:"run_id,omitempty"`
+	Turn       int       `json:"turn,omitempty"`
 }
 type Session struct {
 	SchemaVersion     int               `json:"schema_version"`
@@ -170,10 +175,15 @@ type Session struct {
 	ConfigDigest      string            `json:"config_digest"`
 	WorkspaceChanged  bool              `json:"workspace_changed,omitempty"`
 	Mission           *team.Mission     `json:"mission,omitempty"`
-	Hidden            bool              `json:"hidden,omitempty"`
-	ParentSessionID   string            `json:"parent_session_id,omitempty"`
-	ParentRunID       string            `json:"parent_run_id,omitempty"`
-	WorkItemID        string            `json:"work_item_id,omitempty"`
+	// VerificationRecipe, when set, is the loop invocation snapshot's
+	// deterministic check list the team Verifier executes. Additive: sessions
+	// persisted before it load with nil and keep pre-recipe behavior. loop
+	// imports nothing from session, so there is no cycle.
+	VerificationRecipe *loop.VerificationRecipe `json:"verification_recipe,omitempty"`
+	Hidden             bool                     `json:"hidden,omitempty"`
+	ParentSessionID    string                   `json:"parent_session_id,omitempty"`
+	ParentRunID        string                   `json:"parent_run_id,omitempty"`
+	WorkItemID         string                   `json:"work_item_id,omitempty"`
 	// ApprovalRequests stores the scoped, expiring call-approval records
 	// (ADR 0011) inside the session checkpoint — no second persistence
 	// mechanism. Decisions travel the commit.json durable-before-visible path.
