@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Rj455555/GoHermit/internal/controlplane"
 	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/loopstore"
 )
@@ -154,5 +156,161 @@ func TestLoopDryRunLeavesWorkspaceUntouched(t *testing.T) {
 	}
 	if len(out) != 0 {
 		t.Fatalf("dry run dirtied the git tree: %s", out)
+	}
+}
+
+// seedInvocation stores one invocation of loop-1 in the given status:
+// "prepared" as constructed, or "blocked" via the domain transition.
+func seedInvocation(t *testing.T, blocked bool) loop.Invocation {
+	t.Helper()
+	store, err := loopstore.NewStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, err := store.GetDefinition("loop-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := loop.NewInvocation(definition, loop.TriggerManual, definition.TaskSource.Prompt, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked {
+		if err = invocation.Block("definition_disabled", "loop definition is disabled", time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = store.SaveInvocation(invocation); err != nil {
+		t.Fatal(err)
+	}
+	return invocation
+}
+
+func TestLoopRunBlockedExitsOne(t *testing.T) {
+	workspace := setupLoopCLI(t, func(d *loop.Definition) { d.Enabled = false })
+	code, stdout, stderr := runLoopCLI(t, "run", "--workspace", workspace, "loop-1")
+	if code != 1 {
+		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	for _, want := range []string{"Invocation ", "loop loop-1, revision 1", "Status: blocked", "definition_disabled", "Outcome: blocked"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("output missing %q:\n%s", want, stdout)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".gohermit")); !os.IsNotExist(err) {
+		t.Fatalf("blocked invocation created workspace state: %v", err)
+	}
+}
+
+// TestLoopRunReviewPlanPrintsBinding starts an invocation whose run is a
+// queued review plan: no provider call ever happens, the invocation stays
+// attached, and the command reports the session/run binding until the
+// snapshot's budget timeout bounds the wait.
+func TestLoopRunReviewPlanPrintsBinding(t *testing.T) {
+	workspace := setupLoopCLI(t, func(d *loop.Definition) {
+		d.PlanMode = loop.PlanReview
+		d.Budget.TimeoutSeconds = 2
+	})
+	code, stdout, stderr := runLoopCLI(t, "run", "--workspace", workspace, "loop-1")
+	if code != 1 {
+		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	for _, want := range []string{"Invocation ", "Status: attached — session ", " run ", "Budget timeout 2s elapsed"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestLoopRunUnknownLoopExitsOne(t *testing.T) {
+	workspace := setupLoopCLI(t, func(*loop.Definition) {})
+	code, _, stderr := runLoopCLI(t, "run", "--workspace", workspace, "missing")
+	if code != 1 || !strings.Contains(stderr, "not found") {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+}
+
+func TestLoopHistory(t *testing.T) {
+	workspace := setupLoopCLI(t, func(*loop.Definition) {})
+	prepared := seedInvocation(t, false)
+	blocked := seedInvocation(t, true)
+	code, stdout, stderr := runLoopCLI(t, "history", "--workspace", workspace, "loop-1")
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+	for _, want := range []string{prepared.ID, blocked.ID, "prepared", "blocked", "revision 1", "session -", "created 20"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("output missing %q:\n%s", want, stdout)
+		}
+	}
+	code, stdout, _ = runLoopCLI(t, "history", "--workspace", workspace, "other")
+	if code != 0 || !strings.Contains(stdout, "No invocations for loop other.") {
+		t.Fatalf("code=%d stdout=%s", code, stdout)
+	}
+}
+
+func TestLoopCancelPreparedSkips(t *testing.T) {
+	workspace := setupLoopCLI(t, func(*loop.Definition) {})
+	invocation := seedInvocation(t, false)
+	code, stdout, stderr := runLoopCLI(t, "cancel", "--workspace", workspace, invocation.ID)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, invocation.ID+": skipped") {
+		t.Fatalf("stdout=%s", stdout)
+	}
+	// A terminal invocation cannot be cancelled again.
+	code, _, stderr = runLoopCLI(t, "cancel", "--workspace", workspace, invocation.ID)
+	if code != 1 || !strings.Contains(stderr, "terminal") {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+	code, _, stderr = runLoopCLI(t, "cancel", "--workspace", workspace, "missing")
+	if code != 1 || !strings.Contains(stderr, "not found") {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+}
+
+// TestLoopCancelAttachedAcrossProcesses covers the CLI cancel path: the CLI
+// builds a fresh service, so the queued review run of an invocation started
+// by an earlier process is recovered as interrupted — resumable, not
+// actively running. Cancel requests cancellation, reconciliation keeps the
+// invocation attached, and the command reports the binding with exit 0. The
+// same-process attached→cancelled transition is covered in the controlplane
+// tests.
+func TestLoopCancelAttachedAcrossProcesses(t *testing.T) {
+	workspace := setupLoopCLI(t, func(d *loop.Definition) { d.PlanMode = loop.PlanReview })
+	service, err := controlplane.New(workspace, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := service.StartLoopInvocation(context.Background(), "loop-1")
+	if err != nil {
+		t.Fatalf("start err = %v", err)
+	}
+	if invocation.Status != loop.Attached || invocation.RunID == "" {
+		t.Fatalf("invocation=%+v", invocation)
+	}
+	code, stdout, stderr := runLoopCLI(t, "cancel", "--workspace", workspace, invocation.ID)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, invocation.ID+": attached") || !strings.Contains(stdout, "Cancellation requested — session "+invocation.SessionID+" run "+invocation.RunID) {
+		t.Fatalf("stdout=%s", stdout)
+	}
+	store, err := loopstore.NewStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.GetInvocation(invocation.ID)
+	if err != nil || persisted.Status != loop.Attached {
+		t.Fatalf("persisted=%+v err=%v", persisted, err)
+	}
+}
+
+func TestLoopRunHistoryCancelUsageExitsTwo(t *testing.T) {
+	for _, args := range [][]string{{"run"}, {"history"}, {"cancel"}} {
+		if code, _, _ := runLoopCLI(t, args...); code != 2 {
+			t.Fatalf("%v code=%d", args, code)
+		}
 	}
 }
