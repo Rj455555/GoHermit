@@ -159,9 +159,13 @@ func workerResult(child *session.Session, assignment team.Assignment, prompt str
 			handoff.Checks = append(handoff.Checks, team.Check{Command: result.Command, Passed: result.Passed, Summary: result.Summary})
 		}
 	}
-	if assignment.WorkItem.Role == team.RoleVerifier && len(handoff.Checks) == 0 {
-		handoff.Checks = []team.Check{{Command: "required deterministic verification", Passed: false, Summary: "Verifier did not record a test result"}}
-	}
+	// A Verifier that ran no test leaves Checks genuinely empty — do not
+	// fabricate a synthetic failing entry here. internal/team.handoffChecksPassed
+	// already treats empty Checks as unconditionally unverified for any
+	// mission with a mutating WorkItem (the exact case this used to force),
+	// and empty Checks is the correct, honest signal for a purely read-only
+	// mission whose Verifier had nothing to run — forcing a fake failing
+	// Check there defeats that path entirely regardless of Issues.
 	tokens := run.TotalTokens
 	if tokens == 0 {
 		tokens = contextmgr.EstimateTokens(prompt) + contextmgr.EstimateTokens(run.FinalMessage)

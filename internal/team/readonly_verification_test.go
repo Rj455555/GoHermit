@@ -45,7 +45,7 @@ func TestReadOnlyMissionPassesVerificationWithNoChecksAndNoIssues(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missionHasMutation(mission) {
+	if MissionHasMutation(mission) {
 		t.Fatalf("goal without a mutation marker must select the read-only topology: %+v", mission.WorkItems)
 	}
 	worker := &readOnlyVerifierWorker{}
@@ -97,7 +97,7 @@ func TestMutationMissionStillFailsVerificationWithNoChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !missionHasMutation(mission) {
+	if !MissionHasMutation(mission) {
 		t.Fatalf("goal with a mutation marker must select the mutation topology: %+v", mission.WorkItems)
 	}
 	worker := &readOnlyVerifierWorker{}
