@@ -1462,7 +1462,9 @@ Phase 3 Gate revision record (2026-07-28):
 - Gate implementation commit:
   `ada73f11573bdab13fd05a84154c99dfd8b14816`
   (`fix(skills): harden phase 3 catalog gate`).
-- Evidence commit: `EVIDENCE_COMMIT_PENDING`.
+- Evidence commit:
+  `e6f8484320f10040aa10d66cad1fc0f32b40df21`
+  (`docs(plan): record phase 3 gate revision`).
 - Draft PR: [#36](https://github.com/Rj455555/GoHermit/pull/36), targeting
   `main`; it remains Draft and must not be merged before Owner reapproval.
 - Digest root cause: native Manifest validation accepted uppercase SHA-256,
