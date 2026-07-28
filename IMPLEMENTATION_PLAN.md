@@ -14,7 +14,7 @@
   `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`.
 - Phase 6: `OWNER_APPROVED`; squash-merged through PR #39 into
   `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`.
-- Phase 7: `IN_PROGRESS` on clean branch
+- Phase 7: `COMPLETE_WAITING_FOR_OWNER` on clean branch
   `agent/electronic-employees-v0.7-phase7`.
 - Phase 8 and every later product-code change remain blocked.
 - Required terminal status:
@@ -67,7 +67,7 @@
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` |
 | 6 | Runtime Preparation | `OWNER_APPROVED` |
-| 7 | Manual Execution Lifecycle | `IN_PROGRESS` |
+| 7 | Manual Execution Lifecycle | `COMPLETE_WAITING_FOR_OWNER` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
@@ -127,7 +127,7 @@ STATUS: WAITING_FOR_PHASE_7_APPROVAL
 
 ---
 
-Plan status: `PHASE_7_IN_PROGRESS`
+Plan status: `PHASE_7_COMPLETE_WAITING_FOR_OWNER`
 Baseline: `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`
 Feature branch: `agent/electronic-employees-v0.7-phase7`
 Last audited: 2026-07-28
@@ -1152,7 +1152,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` | PR #38 squash-merged as `ad31d633`; full Phase 5 is in `origin/main` |
 | 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
-| 7 | Manual Execution Lifecycle | `IN_PROGRESS` | Clean branch `agent/electronic-employees-v0.7-phase7` from `origin/main@f213ac19` |
+| 7 | Manual Execution Lifecycle | `COMPLETE_WAITING_FOR_OWNER` | Implementation `a67c5eb` on clean branch `agent/electronic-employees-v0.7-phase7` from `origin/main@f213ac19` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` | Not started |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
@@ -2185,7 +2185,8 @@ Final Phase 6 Gate revision evidence (2026-07-28):
 
 ### Phase 7: Manual Execution Lifecycle
 
-Status: `IN_PROGRESS`. Phase 8 through Phase 10 remain `BLOCKED_BY_GATE`.
+Status: `COMPLETE_WAITING_FOR_OWNER`. Phase 8 through Phase 10 remain
+`BLOCKED_BY_GATE`.
 
 Independent value:
 
@@ -2237,6 +2238,112 @@ Exit:
   MemoryFact remains absent until Owner acceptance.
 - Activity contains only allowed lifecycle/reference metadata and cannot drive
   recovery or duplicate Session SSE/tool events.
+
+Phase 7 implementation evidence (2026-07-28):
+
+- Product/test implementation commit:
+  `a67c5eb` (`feat(phase7): add manual employee task execution lifecycle`).
+- Actual implementation files:
+  - `internal/controlplane/employee_execution.go`,
+    `internal/controlplane/employee_tasks.go`, `internal/controlplane/runs.go`,
+    and `internal/controlplane/service.go`;
+  - `internal/employeestore/dispatch.go`,
+    `internal/employeestore/artifacts.go`, `internal/employeestore/tasks.go`,
+    `internal/employeestore/store.go`, and the bounded Candidate-capacity seam
+    in `internal/employeestore/phase4.go`;
+  - `internal/employee/task.go`, `internal/session/session.go`,
+    `internal/agent/agent.go`, `internal/app/app.go`, and
+    `internal/tool/tool.go`;
+  - `internal/web/employee_tasks.go` and `internal/web/server.go`;
+  - focused tests in the matching Employee, Employee Store, Session, Agent,
+    Tool, Control Plane, and Web packages.
+- Explicit Start is the only EmployeeTask execution entry. It reconciles the
+  Phase 6 prepared Session, writes a stable Run ID to the bounded dispatch
+  journal, persists that exact Run before launching the existing Runner,
+  atomically binds the Task's mutable Session/Run reference fields, and then
+  removes the completed coordination journal. The Phase 5 immutable
+  `SnapshotDigest` is never rewritten.
+- Dispatch stages `run_prepared`, `run_created`, and `task_bound` are bounded
+  idempotency evidence only. Run status, Plan, Approval, Verification, Event,
+  SSE, Tool, and recovery truth remain exclusively in the existing
+  Session/Run kernel.
+- Task API state is projected on read as `queued`, `prepared`,
+  `waiting_owner`, `running`, `verifying`, `interrupted`, `completed`,
+  `failed`, or `cancelled`. The EmployeeTask file still stores only the
+  Phase 5 inbox state plus immutable snapshot and mutable Session/Run
+  references.
+- The existing global Service Run gate enforces one executing Task for the
+  Workspace and therefore the conservative no-cross-Employee concurrency
+  rule. A separate Employee inbox scan rejects a second active Task for the
+  same Employee. Disabled/archived Employees cannot Start or Resume, while
+  historical Task projection remains readable.
+- Runner context is reconstructed only from the schema-v6 compact Employee
+  snapshot. Runtime tool registration is narrowed to its sealed effective
+  capability intersection, including network denial; it cannot add tools.
+  Existing Approval checks still apply to each call.
+- Completed pre-restart Tool calls now persist a canonical argument digest in
+  the existing Session `ToolRecord`. Resume consumes each completed digest at
+  most once and returns a synthetic prior-completion result instead of
+  replaying the Tool side effect; this is additive Session evidence, not a
+  second Tool state machine.
+- Only an existing `RunCompleted` result (which the existing Runner reaches
+  after verification) can produce post-run data. Candidate provenance binds
+  Employee, Task, Session, Run, and verified time; deterministic retries do not
+  duplicate it and no Candidate is automatically accepted. Artifact metadata
+  is immutable, stable-ID, path/digest-only, capped at 128 entries and 256 KiB,
+  mode `0600`, and does not store content, prompts, reasoning, raw Tool data,
+  credentials, Git operations, PRs, or deployment actions.
+- Named Phase 7 tests include:
+  - `TestEmployeeTaskConcurrentStartCreatesAndStartsOneStableRun`;
+  - `TestEmployeeTaskStartReconcilesBindingCrashPoints`;
+  - `TestEmployeeTaskInterruptedResumeUsesOriginalRun`;
+  - `TestEmployeeTaskPreparedAndWaitingOwnerCancellationIsIdempotent`;
+  - `TestEmployeeTaskVerificationFailureCreatesNoCandidateOrArtifact`;
+  - `TestEmployeeTaskVerifiedOutcomeCreatesCandidateWithoutPromotion`;
+  - `TestEmployeeTaskStartRejectsDisabledAndArchivedEmployeeWithoutDispatch`;
+  - `TestEmployeeTaskBindingMismatchFailsClosedWithoutExecution`;
+  - `TestInterruptedRunDoesNotReplayCompletedToolCall`;
+  - `TestTaskBindingIsAtomicIdempotentAndPreservesSnapshot`;
+  - `TestVerifiedArtifactMetadataIsBoundedImmutableAndReopens`;
+  - `TestArtifactSymlinkFailsClosedAndLeavesExternalFileUnchanged`;
+  - `TestStableRunIDIsIdempotentAndNeverCreatesReplacement`;
+  - `TestRegistryEmployeePolicyCanOnlyNarrowExistingTools`;
+  - `TestEmployeeTaskExecutionMutationsRequireSameOriginAndTrueEmptyBody`.
+- Local verification:
+  - PASS Phase 7 scoped Control Plane/Run Control/Employee Store/Memory/Web
+    tests and Session/Agent/Approval/Verification/Loop/Loop Store/Team
+    regressions;
+  - PASS `go test ./... -count=1`;
+  - PASS `go test -race ./... -count=1`;
+  - PASS `go vet ./...`;
+  - PASS CLI and Web builds to `/tmp/gohermit-phase7-build`;
+  - PASS `gofmt`, `git diff --check`, credential-shaped secret scan, and
+    independent Ruby/Psych parse of `compose.yaml`;
+  - PASS macOS real Session Store and Artifact symlink/containment tests
+    without skip;
+  - targeted coverage: Control Plane 68.8%, Run Control 76.4%, Employee Store
+    74.1%, Employee Memory 91.1%, Web 69.2%.
+- Deliberate file-boundary deviation: Phase 7 required small additive seams in
+  `employee`, `session`, `agent`, `app`, and `tool` because the approved
+  contract requires stable Run construction, execution from sealed compact
+  context, effective-policy enforcement, and completed-Tool no-replay inside
+  the existing kernel. These changes do not introduce a second state machine
+  or any Phase 8 UI.
+- Remaining accepted risks:
+  - Employee/Session/dispatch files remain separate single-file atomic writes;
+    the bounded journal reconciles enumerated crash points but is not a
+    cross-file transaction or second recovery engine.
+  - Locks and the global Run gate remain single-Service-process boundaries;
+    cross-process execution leasing is deferred.
+  - When the bounded 128-item Candidate inbox is full, a verified Run remains
+    completed but does not add another Candidate; Owner cleanup is required
+    before later verified outcomes can be proposed.
+  - Artifact metadata truncates deterministically after 128 sorted modified
+    paths; content remains in the Workspace/Session truth and is never copied
+    into the Employee Store.
+- GitHub Go, Docker, and Web E2E push/PR CI evidence will be appended after the
+  clean branch is pushed and the new Draft PR is created. Phase 8 has not
+  started.
 
 ### Phase 8: Employees and Tasks Web UI
 
@@ -2482,4 +2589,4 @@ is authorized until the Owner explicitly approves Phase 7, for example:
 批准 Phase 7，开始 Phase 8
 ```
 
-STATUS: PHASE_7_IN_PROGRESS
+STATUS: WAITING_FOR_PHASE_7_APPROVAL
