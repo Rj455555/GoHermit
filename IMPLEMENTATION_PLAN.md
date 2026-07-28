@@ -2693,9 +2693,17 @@ Phase 8 Web UI Gate revision evidence (2026-07-29):
     `git diff --check`, credential-shaped secret scan, and Compose YAML parse;
   - no Go source changed, so `gofmt` had no modified Go input.
 - Delivery:
-  - Gate implementation/evidence commit and final push/PR CI are recorded in
-    the Draft PR description after the immutable Head exists, avoiding a
-    self-referential evidence commit chain;
+  - Gate implementation commit:
+    `47d413b3c05632d150439646e2a8cf2ddfeb5b80`;
+  - Push CI
+    [30389376017](https://github.com/Rj455555/GoHermit/actions/runs/30389376017)
+    and PR CI
+    [30389381165](https://github.com/Rj455555/GoHermit/actions/runs/30389381165)
+    both PASS on that implementation Head: Go, Docker/Compose, and Web E2E are
+    green; `live-smoke` is skipped by workflow design;
+  - the final review Head after this one evidence-only synchronization commit
+    is recorded in the Draft PR description rather than making this plan
+    self-referential and creating an infinite evidence commit chain;
   - PR #41 must remain Open, Draft, unmerged, and without auto-merge.
 - Remaining bounded risks:
   - the accepted newest-100 Tasks per Employee global-view limit remains;
