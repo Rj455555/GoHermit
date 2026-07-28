@@ -7,6 +7,9 @@ function json(route: Route, body: unknown, status = 200) {
 async function mockTasks(page: Page) {
   const now = new Date().toISOString()
   let starts = 0
+  let resumes = 0
+  let cancels = 0
+  const approvalDecisions: string[] = []
   let failRefresh = false
   const employee = {
     id: 'employee-ada', revision: 3, state: 'active', name: 'Ada',
@@ -20,14 +23,23 @@ async function mockTasks(page: Page) {
     skills: [], knowledge: [], memory_facts: [], artifacts: [],
     project_binding: { id: 'project-main', label: 'GoHermit', workspace_fingerprint: 'f'.repeat(64), read_allowed: true, mutation_allowed: true, network_allowed: false, allowed_tool_capabilities: ['read'] },
     policy: { allowed_capabilities: ['read'], network_allowed: false, budget: { max_model_calls: 4, max_tokens: 4000, timeout_seconds: 600 } },
+  }, {
+    id: 'task-interrupted', employee_id: employee.id, employee_revision: 3,
+    prompt: 'Resume interrupted release.', state: 'interrupted', created_at: now, updated_at: now,
+    snapshot_digest: 'd'.repeat(64), session_id: 'session-interrupted', run_id: 'run-interrupted',
+    skills: [], knowledge: [], memory_facts: [], artifacts: [],
+    project_binding: { id: 'project-main', label: 'GoHermit', workspace_fingerprint: 'f'.repeat(64), read_allowed: true, mutation_allowed: true, network_allowed: false, allowed_tool_capabilities: ['read'] },
+    policy: { allowed_capabilities: ['read'], network_allowed: false, budget: { max_model_calls: 4, max_tokens: 4000, timeout_seconds: 600 } },
   }]
   const session = {
     id: 'session-existing', title: 'Review release notes.', status: 'closed',
     selection: { company: 'deepseek', access: 'deepseek', model: 'deepseek-chat', agent: 'coding' },
-    plan: { revision: 2, steps: [{ id: 'inspect', description: 'Inspect changes', status: 'completed' }, { id: 'verify', description: 'Run checks', status: 'completed' }] },
-    tools: [{ run_id: 'run-existing', call_id: 'call-1', name: 'read_file', args_digest: 'b'.repeat(64), status: 'completed', turn: 1, started_at: now, completed_at: now }],
-    verification: { status: 'passed', summary: 'All checks passed.' },
-    runs: [{ id: 'run-existing', message: 'Review release notes.', status: 'completed', plan_mode: 'auto', created_at: now, updated_at: now }],
+    tool_calls: [{ run_id: 'run-existing', call_id: 'call-1', name: 'read_file', args_digest: 'b'.repeat(64), status: 'completed', turn: 1, started_at: now, completed_at: now }],
+    test_results: [{ command: 'go test ./...', passed: true, summary: 'All checks passed.' }],
+    runs: [{
+      id: 'run-existing', message: 'Review release notes.', status: 'completed', plan_mode: 'auto', created_at: now, updated_at: now,
+      plan: { revision: 2, steps: [{ id: 'inspect', description: 'Inspect changes', status: 'completed' }, { id: 'verify', description: 'Run checks', status: 'completed' }] },
+    }],
     active_run_id: '',
   }
 
@@ -75,15 +87,44 @@ async function mockTasks(page: Page) {
       Object.assign(task, { state: 'running', session_id: 'session-new', run_id: 'run-new', updated_at: now })
       return json(route, task)
     }
+    if (path === '/api/employee-tasks/task-interrupted/resume' && method === 'POST') {
+      resumes += 1
+      const task = tasks.find(item => item.id === 'task-interrupted')
+      Object.assign(task, { state: 'running', updated_at: now })
+      return json(route, task)
+    }
+    const cancelMatch = path.match(/^\/api\/employee-tasks\/([^/]+)\/cancel$/)
+    if (cancelMatch && method === 'POST') {
+      cancels += 1
+      const task = tasks.find(item => item.id === cancelMatch[1])
+      Object.assign(task, { state: 'cancelled', updated_at: now })
+      return json(route, task)
+    }
     if (path === '/api/sessions/session-existing' && method === 'GET') return json(route, { session, messages: [] })
     if (path === '/api/sessions/session-new' && method === 'GET') return json(route, { session: { ...session, id: 'session-new', status: 'open', active_run_id: 'run-new', runs: [{ ...session.runs[0], id: 'run-new', status: 'running' }] }, messages: [] })
-    if (path === '/api/sessions/session-existing/approvals') return json(route, { approvals: [{ request_id: 'approval-1', session_id: 'session-existing', run_id: 'run-existing', tool: 'write_file', resource_paths: ['CHANGELOG.md'], args_summary: 'Update release notes', status: 'pending', created_at: now, expires_at: new Date(Date.now() + 60000).toISOString() }] })
+    if (path === '/api/sessions/session-interrupted' && method === 'GET') return json(route, { session: {
+      ...session, id: 'session-interrupted', status: 'open', active_run_id: 'run-interrupted',
+      tool_calls: [], test_results: [{command: 'go test ./...', passed: false, summary: 'Focused verification failed.'}],
+      runs: [{ ...session.runs[0], id: 'run-interrupted', status: 'interrupted' }],
+    }, messages: [] })
+    if (path === '/api/sessions/session-existing/approvals') return json(route, { approvals: [
+      { request_id: 'approval-1', session_id: 'session-existing', run_id: 'run-existing', tool: 'write_file', resource_paths: ['CHANGELOG.md'], args_summary: 'Update release notes', status: 'pending', created_at: now, expires_at: new Date(Date.now() + 60000).toISOString() },
+      { request_id: 'approval-2', session_id: 'session-existing', run_id: 'run-existing', tool: 'shell', resource_paths: ['.'], args_summary: 'Run release command', status: 'pending', created_at: now, expires_at: new Date(Date.now() + 60000).toISOString() },
+    ] })
+    if (/^\/api\/sessions\/session-existing\/approvals\/approval-[12]\/decide$/.test(path) && method === 'POST') {
+      approvalDecisions.push((request.postDataJSON() as any).decision)
+      return json(route, { status: 'decided' })
+    }
+    if (path.endsWith('/approvals')) return json(route, { approvals: [] })
     if (path.endsWith('/events')) return route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
     return json(route, { error: `unmocked ${method} ${path}` }, 404)
   })
 
   return {
     starts: () => starts,
+    resumes: () => resumes,
+    cancels: () => cancels,
+    approvalDecisions: () => approvalDecisions,
     failNextRefresh: () => { failRefresh = true },
   }
 }
@@ -93,11 +134,15 @@ test('tasks require explicit Start and render the existing Session execution tru
   await page.goto('/')
   await page.getByTestId('nav-employee-tasks').click()
 
+  await expect(page.getByTestId('task-row')).toHaveCount(2)
+  await expect(page.locator('#task-project-filter')).toContainText('GoHermit')
+  await page.locator('#task-state-filter').selectOption('completed')
   await expect(page.getByTestId('task-row')).toHaveCount(1)
+  await page.locator('#task-state-filter').selectOption('')
   await page.getByTestId('task-new').click()
   await page.getByTestId('task-prompt').fill('Prepare the release checklist.')
   await page.getByTestId('task-create').click()
-  await expect(page.getByTestId('task-row')).toHaveCount(2)
+  await expect(page.getByTestId('task-row')).toHaveCount(3)
   expect(harness.starts()).toBe(0)
   await expect(page.getByTestId('task-status')).toHaveText('queued')
   await page.getByTestId('task-start').click()
@@ -109,11 +154,107 @@ test('tasks require explicit Start and render the existing Session execution tru
   await expect(page.getByTestId('task-plan-step').first().locator('input')).toBeChecked()
   await expect(page.getByTestId('task-tool')).toContainText('read_file')
   await expect(page.getByTestId('task-verification')).toContainText('All checks passed.')
-  await expect(page.getByTestId('task-approval')).toContainText('write_file')
+  await expect(page.getByTestId('task-approval')).toHaveCount(2)
+  await page.getByTestId('task-approval').filter({ hasText: 'write_file' }).getByRole('button', { name: 'Approve' }).click()
+  await page.getByTestId('task-approval').filter({ hasText: 'shell' }).getByRole('button', { name: 'Deny' }).click()
+  expect(harness.approvalDecisions()).toEqual(['approve', 'deny'])
 
   harness.failNextRefresh()
   await page.getByTestId('task-refresh').click()
-  await expect(page.getByTestId('task-error')).toContainText('temporary disconnect')
+  await expect(page.getByTestId('task-error')).toContainText(/temporary disconnect|Live updates disconnected/)
   await expect(page.getByTestId('task-plan-step')).toHaveCount(2)
   await expect(page.getByTestId('task-tool')).toContainText('read_file')
+
+  await page.getByTestId('task-row').filter({ hasText: 'Resume interrupted release.' }).click()
+  await expect(page.getByTestId('task-verification')).toContainText('Focused verification failed.')
+  await page.getByTestId('task-resume').click()
+  expect(harness.resumes()).toBe(1)
+  await page.getByTestId('task-cancel').click()
+  expect(harness.cancels()).toBe(1)
+})
+
+test('task Session SSE resumes by sequence, suppresses duplicates, isolates Tasks, and closes on navigation', async ({ page }) => {
+  await page.addInitScript(() => {
+    const instances: any[] = []
+    class ControlledEventSource {
+      static CONNECTING = 0
+      static OPEN = 1
+      static CLOSED = 2
+      url: string
+      readyState = ControlledEventSource.OPEN
+      closed = false
+      listeners = new Map<string, Array<(event: any) => void>>()
+      onerror: null | (() => void) = null
+      constructor(url: string) {
+        this.url = String(url)
+        instances.push(this)
+      }
+      addEventListener(type: string, listener: (event: any) => void) {
+        this.listeners.set(type, [...(this.listeners.get(type) || []), listener])
+      }
+      emit(type: string, sequence: number, data: Record<string, unknown>) {
+        for (const listener of this.listeners.get(type) || []) {
+          listener({ data: JSON.stringify({...data, sequence}), lastEventId: String(sequence) })
+        }
+      }
+      fail() { this.readyState = ControlledEventSource.CLOSED; this.onerror?.() }
+      close() { this.closed = true; this.readyState = ControlledEventSource.CLOSED }
+    }
+    ;(window as any).EventSource = ControlledEventSource
+    ;(window as any).__taskSSE = { instances }
+  })
+  await mockTasks(page)
+  await page.goto('/')
+  await page.getByTestId('nav-employee-tasks').click()
+  await page.getByTestId('task-row').filter({ hasText: 'Review release notes.' }).click()
+
+  await expect.poll(() => page.evaluate(() => (window as any).__taskSSE.instances.length)).toBe(1)
+  const firstURL = await page.evaluate(() => (window as any).__taskSSE.instances[0].url)
+  expect(firstURL).toContain('/api/sessions/session-existing/events?after=0')
+  await page.evaluate(() => {
+    const source = (window as any).__taskSSE.instances[0]
+    source.emit('plan_updated', 4, {run_id: 'run-existing', message: 'plan four'})
+    source.emit('plan_updated', 4, {run_id: 'run-existing', message: 'duplicate'})
+    source.emit('tool_completed', 5, {run_id: 'other-run', message: 'wrong run'})
+    source.emit('tool_completed', 6, {run_id: 'run-existing', message: 'tool six'})
+  })
+  await expect(page.locator('#task-events .timeline-event')).toHaveCount(2)
+  await expect(page.locator('#task-events')).not.toContainText('duplicate')
+  await expect(page.locator('#task-events')).not.toContainText('wrong run')
+  await expect.poll(() => page.evaluate(() => (window as any).__taskSSE.instances.length)).toBe(1)
+
+  await page.getByTestId('task-row').filter({ hasText: 'Resume interrupted release.' }).click()
+  await expect.poll(() => page.evaluate(() => (window as any).__taskSSE.instances.length)).toBe(2)
+  await expect(page.locator('#task-events .timeline-event')).toHaveCount(0)
+  await page.getByTestId('task-row').filter({ hasText: 'Review release notes.' }).click()
+  await expect.poll(() => page.evaluate(() => (window as any).__taskSSE.instances.at(-1).url)).toContain('after=6')
+  await expect(page.locator('#task-events .timeline-event')).toHaveCount(2)
+
+  await page.evaluate(() => (window as any).__taskSSE.instances.at(-1).fail())
+  await page.getByTestId('task-refresh').click()
+  await expect.poll(() => page.evaluate(() => (window as any).__taskSSE.instances.at(-1).url)).toContain('after=6')
+
+  await page.getByTestId('nav-employees').click()
+  await expect.poll(() => page.evaluate(() => (window as any).__taskSSE.instances.at(-1).closed)).toBe(true)
+})
+
+test('native EventSource receives non-empty Session history after the saved sequence', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('gohermit.task-sse.task-existing.session-existing', '9'))
+  await mockTasks(page)
+  let requestedAfter = ''
+  await page.route('**/api/sessions/session-existing/events?after=*', async route => {
+    requestedAfter = new URL(route.request().url()).searchParams.get('after') || ''
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      headers: {'Cache-Control': 'no-cache'},
+      body: 'id: 10\nevent: tool_completed\ndata: {"sequence":10,"run_id":"run-existing","message":"history ten"}\n\n',
+    })
+  })
+  await page.goto('/')
+  await page.getByTestId('nav-employee-tasks').click()
+  await page.getByTestId('task-row').filter({ hasText: 'Review release notes.' }).click()
+  await expect(page.locator('#task-events')).toContainText('history ten')
+  expect(requestedAfter).toBe('9')
+  await page.getByTestId('nav-employees').click()
 })

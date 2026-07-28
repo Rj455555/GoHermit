@@ -5,6 +5,47 @@ let employeeCatalogSkills = [];
 let employeeProjects = [];
 let employeeWizardStep = 0;
 let selectedEmployeeTab = 'overview';
+let employeeWizardRecord = null;
+let employeeWizardReadiness = null;
+let employeeWizardKnowledgeSaved = false;
+
+function employeeSkillKey(skill) {
+  return `${skill.skill_id}\0${skill.version}\0${skill.digest}`;
+}
+
+function employeeSkillByKey(key) {
+  return employeeCatalogSkills.find(item => employeeSkillKey(item) === key);
+}
+
+function parseSkillConfiguration(raw, skill) {
+  let value;
+  try {
+    value = JSON.parse(String(raw || '{}'));
+  } catch (_) {
+    throw new Error(`${skill.skill_id}@${skill.version} configuration must be valid JSON.`);
+  }
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    throw new Error(`${skill.skill_id}@${skill.version} configuration must be a JSON object.`);
+  }
+  if (skill.kind === 'skill_md_adapter' && Object.keys(value).length) {
+    throw new Error('SKILL.md Adapter configuration must remain empty and cannot expand permissions.');
+  }
+  const schema = skill.configuration_schema || {};
+  for (const name of schema.required || []) {
+    if (!(name in value)) throw new Error(`${skill.skill_id}@${skill.version} configuration requires ${name}.`);
+  }
+  if (schema.additionalProperties === false && schema.properties) {
+    for (const name of Object.keys(value)) {
+      if (!(name in schema.properties)) throw new Error(`${skill.skill_id}@${skill.version} configuration contains unknown field ${name}.`);
+    }
+  }
+  for (const [name, rule] of Object.entries(schema.properties || {})) {
+    if (!(name in value) || !rule || !rule.type) continue;
+    const actual = Array.isArray(value[name]) ? 'array' : value[name] === null ? 'null' : typeof value[name];
+    if (actual !== rule.type) throw new Error(`${skill.skill_id}@${skill.version} configuration field ${name} must be ${rule.type}.`);
+  }
+  return value;
+}
 
 function showEmployeeError(error, target = '#employee-detail-error') {
   const panel = $(target);
@@ -81,6 +122,9 @@ function startEmployeeWizard() {
   selectedEmployeeSummary = null;
   selectedEmployeeRecord = null;
   employeeWizardStep = 0;
+  employeeWizardRecord = null;
+  employeeWizardReadiness = null;
+  employeeWizardKnowledgeSaved = false;
   $('#employee-wizard-form').reset();
   $('#employee-charter').value = 'Deliver bounded, verifiable work for the Owner.';
   $('#employee-memory-candidates').checked = true;
@@ -136,11 +180,18 @@ function renderWizardSkills() {
   for (const skill of employeeCatalogSkills) {
     const label = document.createElement('label');
     label.className = 'selection-item';
-    label.innerHTML = '<input type="checkbox"><div><strong></strong><span></span><small></small></div>';
-    label.querySelector('input').dataset.skillID = skill.skill_id;
+    label.dataset.testid = 'wizard-skill';
+    label.innerHTML = '<input type="checkbox"><div><strong></strong><span></span><small></small><label class="skill-config">Configuration JSON<textarea data-testid="skill-configuration" rows="2">{}</textarea></label></div>';
+    label.querySelector('input').dataset.skillKey = employeeSkillKey(skill);
     label.querySelector('strong').textContent = skill.title || skill.skill_id;
-    label.querySelector('span').textContent = skill.description || 'Instruction context';
-    label.querySelector('small').textContent = `${skill.kind} · ${skill.skill_id}@${skill.version}`;
+    const requested = skill.kind === 'skill_md_adapter' ? [] : (skill.requested_capabilities || []);
+    const employeeCeiling = $('#employee-capabilities').value.split(',').map(value => value.trim()).filter(Boolean);
+    const effective = requested.filter(capability => employeeCeiling.includes(capability));
+    label.querySelector('span').textContent = `${skill.description || 'Instruction context'} · requested: ${requested.join(', ') || 'zero capabilities'} · effective intersection: ${effective.join(', ') || 'none'}`;
+    label.querySelector('small').textContent = `${skill.kind} · ${skill.skill_id}@${skill.version} · ${skill.digest}`;
+    const configuration = label.querySelector('textarea');
+    configuration.disabled = skill.kind === 'skill_md_adapter';
+    configuration.addEventListener('click', event => event.stopPropagation());
     root.append(label);
   }
 }
@@ -167,27 +218,55 @@ function renderWizardProject() {
 function renderEmployeeWizardStep() {
   document.querySelectorAll('[data-wizard-step]').forEach((section, index) => section.classList.toggle('hidden', index !== employeeWizardStep));
   $('#employee-wizard-progress').textContent = `STEP ${employeeWizardStep + 1} / 9`;
-  $('#wizard-back').disabled = employeeWizardStep === 0;
+  $('#wizard-back').disabled = employeeWizardStep === 0 || Boolean(employeeWizardRecord);
   $('#wizard-next').classList.toggle('hidden', employeeWizardStep === 8);
   $('#employee-create').classList.toggle('hidden', employeeWizardStep !== 8);
   if (employeeWizardStep === 8) {
-    $('#employee-wizard-review').textContent = JSON.stringify(employeeCreatePayload(), null, 2);
+    renderWizardReadiness();
   }
 }
 
-function employeeWizardNext() {
+function validateEmployeeWizardStep() {
   clearEmployeeError('#employee-wizard-error');
   if (employeeWizardStep === 0) {
     for (const input of [$('#employee-id'), $('#employee-name'), $('#employee-job-title')]) {
-      if (!input.reportValidity()) return;
+      if (!input.reportValidity()) return false;
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test($('#employee-id').value)) throw new Error('Employee ID must be path-safe and at most 128 bytes.');
+    if ($('#employee-avatar-kind').value === 'emoji') {
+      const avatar = $('#employee-avatar-value').value.trim();
+      if (!avatar || avatar.length > 8 || /[/\\:%\r\n]/.test(avatar)) throw new Error('Avatar must be a single bounded Emoji, not a path or URL.');
     }
   }
   if (employeeWizardStep === 1 && (!$('#employee-company').value || !$('#employee-access').value || !$('#employee-model').value || !$('#employee-agent').value)) {
-    showEmployeeError(new Error('Choose a ready Provider, Access, Model, and Agent.'), '#employee-wizard-error');
-    return;
+    throw new Error('Choose a ready Provider, Access, Model, and Agent.');
   }
-  employeeWizardStep = Math.min(8, employeeWizardStep + 1);
-  renderEmployeeWizardStep();
+  if (employeeWizardStep === 3) selectedWizardSkills();
+  if (employeeWizardStep === 4) {
+    const kind = $('#employee-knowledge-kind').value;
+    if (kind && (!$('#employee-knowledge-id').value.trim() || !$('#employee-knowledge-title').value.trim())) throw new Error('Knowledge Source ID and Title are required.');
+    if (kind === 'manual_text' && !$('#employee-knowledge-text').value.trim()) throw new Error('Manual Text cannot be empty.');
+    if (kind && kind !== 'manual_text' && !/^[^%\\:\r\n]+$/.test($('#employee-knowledge-path').value.trim())) throw new Error('Knowledge path must be a canonical relative path.');
+  }
+  if (employeeWizardStep === 6 && !$('#employee-wizard-project input:checked')) throw new Error('Select the current Service Workspace.');
+  if (employeeWizardStep === 7) {
+    for (const input of [$('#employee-max-calls'), $('#employee-max-tokens'), $('#employee-timeout'), $('#employee-memory-facts'), $('#employee-memory-bytes')]) {
+      if (!input.reportValidity()) return false;
+    }
+    if (!splitBoundedLines($('#employee-capabilities').value.replaceAll(',', '\n')).length) throw new Error('At least one bounded capability is required.');
+  }
+  return true;
+}
+
+async function employeeWizardNext() {
+  try {
+    if (!validateEmployeeWizardStep()) return;
+    if (employeeWizardStep === 7) await prepareWizardReadiness();
+    employeeWizardStep = Math.min(8, employeeWizardStep + 1);
+    renderEmployeeWizardStep();
+  } catch (error) {
+    showEmployeeError(error, '#employee-wizard-error');
+  }
 }
 
 function splitBoundedLines(value) {
@@ -196,15 +275,97 @@ function splitBoundedLines(value) {
 
 function selectedWizardSkills() {
   return [...$('#employee-wizard-skills').querySelectorAll('input:checked')].map(input => {
-    const skill = employeeCatalogSkills.find(item => item.skill_id === input.dataset.skillID);
+    const skill = employeeSkillByKey(input.dataset.skillKey);
+    if (!skill) throw new Error('Selected Skill version is no longer in the configured Catalog. Reload and choose an explicit version.');
+    const configuration = parseSkillConfiguration(input.closest('.selection-item').querySelector('textarea').value, skill);
     return {
       skill_id: skill.skill_id,
       version: skill.version,
       digest: skill.digest,
-      configuration: {},
+      configuration,
       enabled: true,
     };
   });
+}
+
+function wizardKnowledgeSource() {
+  const kind = $('#employee-knowledge-kind').value;
+  if (!kind) return null;
+  return {
+    id: $('#employee-knowledge-id').value.trim(),
+    kind,
+    title: $('#employee-knowledge-title').value.trim(),
+    ...(kind === 'manual_text'
+      ? {manual_text: $('#employee-knowledge-text').value}
+      : {relative_path: $('#employee-knowledge-path').value.trim()}),
+  };
+}
+
+async function prepareWizardReadiness() {
+  if (employeeWizardReadiness) return;
+  if (!employeeWizardRecord) {
+    const payload = employeeCreatePayload();
+    employeeWizardRecord = await request('/api/employees', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    });
+  }
+  const record = employeeWizardRecord;
+  const source = wizardKnowledgeSource();
+  if (source && !employeeWizardKnowledgeSaved) {
+    await request(`/api/employees/${encodeURIComponent(record.employee.id)}/knowledge`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(source),
+    });
+    employeeWizardKnowledgeSaved = true;
+  }
+  const [dryRun, skills, knowledge] = await Promise.all([
+    request(`/api/employees/${encodeURIComponent(record.employee.id)}/dry-run`, {method: 'POST'}),
+    request(`/api/employees/${encodeURIComponent(record.employee.id)}/skills`),
+    request(`/api/employees/${encodeURIComponent(record.employee.id)}/knowledge?limit=32`),
+  ]);
+  employeeWizardReadiness = {dryRun, skills, knowledge};
+}
+
+function renderWizardReadiness() {
+  const root = $('#employee-wizard-review');
+  root.replaceChildren();
+  if (!employeeWizardReadiness) {
+    root.textContent = 'Run the server readiness check before finishing.';
+    return;
+  }
+  for (const check of employeeWizardReadiness.dryRun.checks || []) {
+    const row = document.createElement('div');
+    row.className = 'context-line';
+    row.innerHTML = '<strong></strong><span></span><em class="status-pill"></em>';
+    row.querySelector('strong').textContent = check.name;
+    row.querySelector('span').textContent = check.detail;
+    row.querySelector('em').textContent = check.ready ? 'ready' : 'blocked';
+    if (!check.ready) {
+      const action = document.createElement('button');
+      action.type = 'button';
+      action.className = 'small-button';
+      action.textContent = check.name.includes('provider') || check.name.includes('access') ? 'Open Settings' : 'Open Employee settings';
+      action.addEventListener('click', () => {
+        if (check.name.includes('provider') || check.name.includes('access')) openSettings();
+        else createEmployeeFromWizard({preventDefault() {}}).then(() => openEmployeeTab('settings'));
+      });
+      row.append(action);
+    }
+    root.append(row);
+  }
+  const supplemental = [
+    ['Skill digest', (employeeWizardReadiness.skills.bindings || []).every(item => item.status === 'current') ? 'All pinned versions and digests are current.' : 'A pinned Skill is missing or has digest drift. Return to Skills.'],
+    ['Knowledge', `${(employeeWizardReadiness.knowledge.sources || []).length} server-indexed source(s).`],
+    ['Budget', `Server persisted ${employeeWizardRecord.employee.budget_policy.max_model_calls} calls / ${employeeWizardRecord.employee.budget_policy.max_tokens} tokens.`],
+    ['Concurrency', `Server persisted max ${employeeWizardRecord.employee.concurrency_policy.max_running_tasks} running Task.`],
+  ];
+  for (const [name, detail] of supplemental) {
+    const row = document.createElement('div');
+    row.className = 'context-line';
+    row.innerHTML = '<strong></strong><span></span>';
+    row.querySelector('strong').textContent = name;
+    row.querySelector('span').textContent = detail;
+    root.append(row);
+  }
 }
 
 function employeeCreatePayload() {
@@ -259,12 +420,9 @@ async function createEmployeeFromWizard(event) {
   event.preventDefault();
   clearEmployeeError('#employee-wizard-error');
   try {
-    const record = await request('/api/employees', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(employeeCreatePayload()),
-    });
-    toast('Employee created');
+    const record = employeeWizardRecord;
+    if (!record || !employeeWizardReadiness) throw new Error('Complete the real server Dry Run before finishing.');
+    toast(employeeWizardReadiness.dryRun.ready ? 'Employee created and ready' : 'Employee created; readiness is blocked');
     await loadEmployees(false);
     await openEmployee(record.employee.id);
   } catch (error) {
@@ -308,6 +466,7 @@ async function openEmployeeTab(tab) {
   const employeeID = selectedEmployeeRecord.employee.id;
   try {
     if (tab === 'overview') return renderEmployeeOverview();
+    if (tab === 'settings') return renderEmployeeSettings();
     if (tab === 'skills') return renderEmployeeSkills(await request(`/api/employees/${encodeURIComponent(employeeID)}/skills`));
     if (tab === 'knowledge') return renderEmployeeKnowledge(await request(`/api/employees/${encodeURIComponent(employeeID)}/knowledge?limit=32`));
     if (tab === 'memory') {
@@ -334,10 +493,16 @@ function resourceSection(title, subtitle = '') {
   return section;
 }
 
-function renderEmployeeOverview() {
+async function renderEmployeeOverview() {
   const value = selectedEmployeeRecord.employee;
   const root = $('#employee-detail-content');
   root.replaceChildren();
+  const [readiness, tasks] = await Promise.all([
+    request(`/api/employees/${encodeURIComponent(value.id)}/dry-run`, {method: 'POST'}).catch(error => ({ready: false, checks: [{name: 'readiness', ready: false, detail: error.message}]})),
+    request(`/api/employees/${encodeURIComponent(value.id)}/tasks?limit=100`).catch(() => ({tasks: []})),
+  ]);
+  const active = (tasks.tasks || []).find(task => !employeeTaskTerminalStates.has(task.state));
+  const recentVerified = (tasks.tasks || []).find(task => task.state === 'completed');
   const cards = document.createElement('div');
   cards.className = 'resource-grid';
   for (const [label, content] of [
@@ -345,6 +510,11 @@ function renderEmployeeOverview() {
     ['Model', `${value.default_selection.company} / ${value.default_selection.model}`],
     ['Agent Profile', value.agent_profile],
     ['Concurrency', `${value.concurrency_policy.max_running_tasks} running Task`],
+    ['Effective policy ceiling', `${(value.permission_policy.allowed_capabilities || []).join(', ') || 'none'}${value.permission_policy.network_allowed ? ' + network' : ''}`],
+    ['Budget', `${value.budget_policy.max_model_calls} calls · ${value.budget_policy.max_tokens} tokens · ${value.budget_policy.timeout_seconds}s`],
+    ['Active Task', active ? `${active.state}: ${active.prompt}` : 'None'],
+    ['Recent verification', recentVerified ? `${recentVerified.state}: ${recentVerified.prompt}` : 'No verified Task yet'],
+    ['Readiness', readiness.ready ? 'Ready' : `Blocked: ${(readiness.checks || []).filter(check => !check.ready).map(check => check.detail).join('; ')}`],
     ['Memory', value.memory_policy.promotion],
     ['Projects', String(selectedEmployeeRecord.project_bindings.length)],
   ]) {
@@ -358,43 +528,112 @@ function renderEmployeeOverview() {
   root.append(cards);
 }
 
+function renderEmployeeSettings() {
+  const root = $('#employee-detail-content');
+  const value = selectedEmployeeRecord.employee;
+  const archived = value.state === 'archived';
+  const section = resourceSection('Settings', `Expected revision ${value.revision}`);
+  const form = document.createElement('form');
+  form.className = 'form-grid';
+  form.innerHTML = '<label>Name<input class="settings-name" maxlength="8192" required></label><label>Job title<input class="settings-title" maxlength="8192" required></label><label class="wide">Charter<textarea class="settings-charter" maxlength="8192" required></textarea></label><label>Capabilities<input class="settings-capabilities" maxlength="8192"></label><label>Max model calls<input class="settings-calls" type="number" min="1" max="1000"></label><label>Max tokens<input class="settings-tokens" type="number" min="1" max="10000000"></label><label>Timeout seconds<input class="settings-timeout" type="number" min="1" max="86400"></label><button class="small-button primary" type="submit">Save Settings</button>';
+  form.querySelector('.settings-name').value = value.name;
+  form.querySelector('.settings-title').value = value.job_title;
+  form.querySelector('.settings-charter').value = value.charter;
+  form.querySelector('.settings-capabilities').value = (value.permission_policy.allowed_capabilities || []).join(', ');
+  form.querySelector('.settings-calls').value = value.budget_policy.max_model_calls;
+  form.querySelector('.settings-tokens').value = value.budget_policy.max_tokens;
+  form.querySelector('.settings-timeout').value = value.budget_policy.timeout_seconds;
+  form.querySelectorAll('input, textarea, button').forEach(control => { control.disabled = archived; });
+  form.addEventListener('submit', saveEmployeeSettings);
+  section.append(form);
+  if (archived) {
+    const note = document.createElement('div');
+    note.className = 'form-errors';
+    note.textContent = 'Archived Employees remain readable, but configuration is immutable.';
+    section.append(note);
+  }
+  root.replaceChildren(section);
+}
+
+async function saveEmployeeSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!form.reportValidity()) return;
+  const proposed = structuredClone(selectedEmployeeRecord.employee);
+  proposed.name = form.querySelector('.settings-name').value.trim();
+  proposed.job_title = form.querySelector('.settings-title').value.trim();
+  proposed.charter = form.querySelector('.settings-charter').value.trim();
+  proposed.permission_policy.allowed_capabilities = form.querySelector('.settings-capabilities').value.split(',').map(value => value.trim()).filter(Boolean);
+  proposed.budget_policy = {
+    max_model_calls: Number(form.querySelector('.settings-calls').value),
+    max_tokens: Number(form.querySelector('.settings-tokens').value),
+    timeout_seconds: Number(form.querySelector('.settings-timeout').value),
+  };
+  try {
+    selectedEmployeeRecord = await request(`/api/employees/${encodeURIComponent(proposed.id)}`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({expected_revision: selectedEmployeeRecord.employee.revision, employee: proposed, project_bindings: selectedEmployeeRecord.project_bindings}),
+    });
+    renderEmployeeHeader();
+    renderEmployeeSettings();
+  } catch (error) { showEmployeeError(error); }
+}
+
 function renderEmployeeSkills(result) {
   const root = $('#employee-detail-content');
   const section = resourceSection('Skills', 'Pinned digest and compatibility status');
-  const statuses = new Map((result.bindings || []).map(item => [`${item.binding.skill_id}\0${item.binding.version}`, item]));
-  const visible = employeeCatalogSkills.length ? employeeCatalogSkills : (result.bindings || []).map(item => ({
-    skill_id: item.binding.skill_id, version: item.binding.version, digest: item.binding.digest,
-    title: item.binding.skill_id, description: '', kind: item.kind,
-  }));
+  const statuses = new Map((result.bindings || []).map(item => [employeeSkillKey(item.binding), item]));
+  const visibleByKey = new Map(employeeCatalogSkills.map(skill => [employeeSkillKey(skill), skill]));
+  for (const item of result.bindings || []) {
+    const key = employeeSkillKey(item.binding);
+    if (!visibleByKey.has(key)) {
+      visibleByKey.set(key, {
+        skill_id: item.binding.skill_id, version: item.binding.version, digest: item.binding.digest,
+        title: item.binding.skill_id, description: 'Pinned version is unavailable or its digest is stale.', kind: item.kind || 'missing',
+        requested_capabilities: [], configuration_schema: {},
+      });
+    }
+  }
+  const visible = [...visibleByKey.values()];
   for (const skill of visible) {
-    const status = statuses.get(`${skill.skill_id}\0${skill.version}`);
+    const status = statuses.get(employeeSkillKey(skill));
     const row = document.createElement('label');
     row.className = 'resource-row';
     row.dataset.testid = 'employee-skill';
-    row.innerHTML = '<div><strong></strong><span></span><small></small></div><div class="resource-row-actions"><em class="status-pill"></em><input type="checkbox"></div>';
+    row.innerHTML = '<div><strong></strong><span></span><small></small><label class="skill-config">Configuration JSON<textarea data-testid="skill-configuration" rows="2">{}</textarea></label></div><div class="resource-row-actions"><em class="status-pill"></em><input type="checkbox"></div>';
     row.querySelector('strong').textContent = skill.title || skill.skill_id;
-    row.querySelector('span').textContent = skill.description || `${skill.kind || status?.kind || 'Skill'} context`;
-    row.querySelector('small').textContent = `${skill.kind || status?.kind || 'skill'} · ${skill.skill_id}@${skill.version} · ${(skill.digest || '').slice(0, 12)}`;
+    const requested = skill.kind === 'skill_md_adapter' ? [] : (skill.requested_capabilities || []);
+    const employeeCeiling = selectedEmployeeRecord.employee.permission_policy.allowed_capabilities || [];
+    const effective = requested.filter(capability => employeeCeiling.includes(capability));
+    row.querySelector('span').textContent = `${skill.description || `${skill.kind || status?.kind || 'Skill'} context`} · requested: ${requested.join(', ') || 'zero capabilities'} · effective intersection: ${effective.join(', ') || 'none'}`;
+    row.querySelector('small').textContent = `${skill.kind || status?.kind || 'skill'} · ${skill.skill_id}@${skill.version} · ${skill.digest || ''}`;
     row.querySelector('em').textContent = status ? status.status : 'available';
     row.querySelector('input').checked = Boolean(status && status.binding.enabled);
-    row.querySelector('input').dataset.skillID = skill.skill_id;
+    row.querySelector('input').dataset.skillKey = employeeSkillKey(skill);
+    const configuration = row.querySelector('textarea');
+    configuration.value = JSON.stringify((status && status.binding.configuration) || {}, null, 2);
+    configuration.disabled = skill.kind === 'skill_md_adapter' || selectedEmployeeRecord.employee.state === 'archived' || !employeeCatalogSkills.some(item => employeeSkillKey(item) === employeeSkillKey(skill));
+    row.querySelector('input').disabled = selectedEmployeeRecord.employee.state === 'archived' || !employeeCatalogSkills.some(item => employeeSkillKey(item) === employeeSkillKey(skill));
     section.append(row);
   }
   const header = section.querySelector('header');
   const save = document.createElement('button');
   save.className = 'small-button';
   save.textContent = 'Save bindings';
+  save.disabled = selectedEmployeeRecord.employee.state === 'archived';
   save.addEventListener('click', () => saveEmployeeSkills(section, result.revision));
   header.append(save);
   root.replaceChildren(section);
 }
 
 async function saveEmployeeSkills(section, revision) {
-  const bindings = [...section.querySelectorAll('input[type=checkbox]:checked')].map(input => {
-    const skill = employeeCatalogSkills.find(item => item.skill_id === input.dataset.skillID);
-    return {skill_id: skill.skill_id, version: skill.version, digest: skill.digest, configuration: {}, enabled: true};
-  });
   try {
+    const bindings = [...section.querySelectorAll('input[type=checkbox]:checked')].map(input => {
+      const skill = employeeSkillByKey(input.dataset.skillKey);
+      if (!skill) throw new Error('Pinned Skill version/digest is unavailable; it cannot be silently replaced.');
+      const configuration = parseSkillConfiguration(input.closest('.resource-row').querySelector('textarea').value, skill);
+      return {skill_id: skill.skill_id, version: skill.version, digest: skill.digest, configuration, enabled: true};
+    });
     const record = await request(`/api/employees/${encodeURIComponent(selectedEmployeeRecord.employee.id)}/skills`, {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({expected_revision: revision, bindings}),
@@ -410,7 +649,8 @@ function renderEmployeeKnowledge(data) {
   const sources = resourceSection('Knowledge sources', 'Deterministic local index');
   const add = document.createElement('div');
   add.className = 'resource-row';
-  add.innerHTML = '<div class="form-grid"><label>Source ID<input class="knowledge-id" maxlength="128"></label><label>Title<input class="knowledge-title" maxlength="8192"></label><label class="wide">Manual text<textarea class="knowledge-text" maxlength="65536"></textarea></label></div><button class="small-button">Add</button>';
+  add.innerHTML = '<div class="form-grid"><label>Kind<select class="knowledge-kind"><option value="manual_text">Manual Text</option><option value="file">Local file</option><option value="project_docs">Project docs</option></select></label><label>Source ID<input class="knowledge-id" maxlength="128"></label><label>Title<input class="knowledge-title" maxlength="8192"></label><label class="wide">Manual text or canonical relative path<textarea class="knowledge-text" maxlength="65536"></textarea></label></div><button class="small-button">Add</button>';
+  add.querySelectorAll('input, textarea, select, button').forEach(control => { control.disabled = selectedEmployeeRecord.employee.state === 'archived'; });
   add.querySelector('button').addEventListener('click', () => addEmployeeKnowledge(add));
   sources.append(add);
   for (const source of data.sources || []) {
@@ -420,7 +660,8 @@ function renderEmployeeKnowledge(data) {
     row.innerHTML = '<div><strong></strong><span></span><small></small></div><div class="resource-row-actions"><button class="small-button refresh">Refresh</button><button class="small-button danger-text delete">Delete</button></div>';
     row.querySelector('strong').textContent = source.title;
     row.querySelector('span').textContent = `${source.kind} · ${source.status}`;
-    row.querySelector('small').textContent = source.id;
+    row.querySelector('small').textContent = `${source.id} · digest ${source.digest}`;
+    row.querySelectorAll('button').forEach(button => { button.disabled = selectedEmployeeRecord.employee.state === 'archived'; });
     row.querySelector('.refresh').addEventListener('click', () => refreshEmployeeKnowledge(source.id));
     row.querySelector('.delete').addEventListener('click', () => deleteEmployeeKnowledge(source.id));
     sources.append(row);
@@ -442,9 +683,11 @@ function renderEmployeeKnowledge(data) {
 async function addEmployeeKnowledge(row) {
   const source = {
     id: row.querySelector('.knowledge-id').value.trim(),
-    kind: 'manual_text',
+    kind: row.querySelector('.knowledge-kind').value,
     title: row.querySelector('.knowledge-title').value.trim(),
-    manual_text: row.querySelector('.knowledge-text').value,
+    ...(row.querySelector('.knowledge-kind').value === 'manual_text'
+      ? {manual_text: row.querySelector('.knowledge-text').value}
+      : {relative_path: row.querySelector('.knowledge-text').value.trim()}),
   };
   try {
     await request(`/api/employees/${encodeURIComponent(selectedEmployeeRecord.employee.id)}/knowledge`, {
@@ -481,6 +724,7 @@ function renderEmployeeMemory(memory, pending) {
     row.querySelector('small').textContent = memoryProvenance(candidate.provenance);
     row.querySelector('.accept').addEventListener('click', () => decideMemoryCandidate(candidate.id, true));
     row.querySelector('.reject').addEventListener('click', () => decideMemoryCandidate(candidate.id, false));
+    row.querySelectorAll('button').forEach(button => { button.disabled = selectedEmployeeRecord.employee.state === 'archived'; });
     candidates.append(row);
   }
   const facts = resourceSection('Accepted memory', 'Employee-isolated long-term facts');
@@ -493,6 +737,7 @@ function renderEmployeeMemory(memory, pending) {
     row.querySelector('small').textContent = memoryProvenance(fact.provenance);
     row.querySelector('.edit').addEventListener('click', () => editMemoryFact(fact));
     row.querySelector('.forget').addEventListener('click', () => forgetMemoryFact(fact.id));
+    row.querySelectorAll('button').forEach(button => { button.disabled = selectedEmployeeRecord.employee.state === 'archived'; });
     facts.append(row);
   }
   root.replaceChildren(candidates, facts);
@@ -534,13 +779,40 @@ function renderEmployeeProjects() {
     const row = document.createElement('div');
     row.className = 'resource-row';
     row.dataset.testid = 'employee-project';
-    row.innerHTML = '<div><strong></strong><span></span><small></small></div>';
+    row.innerHTML = '<div><strong></strong><span></span><small></small></div><div class="resource-row-actions"><label><input class="project-mutation" type="checkbox"> Mutation</label><label><input class="project-network" type="checkbox"> Network</label></div>';
     row.querySelector('strong').textContent = binding.label;
     row.querySelector('span').textContent = binding.workspace_real_path;
     row.querySelector('small').textContent = `${binding.read_allowed ? 'read' : ''}${binding.mutation_allowed ? ' + mutation' : ''} · ${binding.workspace_fingerprint || ''}`;
+    row.dataset.bindingID = binding.id;
+    row.querySelector('.project-mutation').checked = binding.mutation_allowed;
+    row.querySelector('.project-network').checked = binding.network_allowed;
+    row.querySelectorAll('input').forEach(input => { input.disabled = selectedEmployeeRecord.employee.state === 'archived'; });
     section.append(row);
   }
+  const save = document.createElement('button');
+  save.className = 'small-button';
+  save.textContent = 'Save Workspace policy';
+  save.disabled = selectedEmployeeRecord.employee.state === 'archived';
+  save.addEventListener('click', () => saveEmployeeProjects(section));
+  section.querySelector('header').append(save);
   root.replaceChildren(section);
+}
+
+async function saveEmployeeProjects(section) {
+  const proposed = structuredClone(selectedEmployeeRecord);
+  for (const row of section.querySelectorAll('[data-binding-id]')) {
+    const binding = proposed.project_bindings.find(item => item.id === row.dataset.bindingID);
+    binding.mutation_allowed = row.querySelector('.project-mutation').checked;
+    binding.network_allowed = row.querySelector('.project-network').checked;
+  }
+  try {
+    selectedEmployeeRecord = await request(`/api/employees/${encodeURIComponent(proposed.employee.id)}`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({expected_revision: selectedEmployeeRecord.employee.revision, employee: proposed.employee, project_bindings: proposed.project_bindings}),
+    });
+    renderEmployeeHeader();
+    renderEmployeeProjects();
+  } catch (error) { showEmployeeError(error); }
 }
 
 function renderEmployeeTasks(page) {
@@ -581,6 +853,7 @@ function renderEmployeeActivity(page) {
 }
 
 async function transitionSelectedEmployee(action) {
+  if ((action === 'disable' || action === 'archive') && !window.confirm(`${action === 'archive' ? 'Archive is terminal' : 'Disable is reversible'}. Continue?`)) return;
   try {
     const record = await request(`/api/employees/${encodeURIComponent(selectedEmployeeRecord.employee.id)}/${action}`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -618,7 +891,12 @@ $('#employee-state-filter').addEventListener('change', () => loadEmployees(false
 $('#employee-company').addEventListener('change', () => fillEmployeeAccessChoices());
 $('#employee-access').addEventListener('change', () => fillEmployeeModelChoices());
 $('#employee-avatar-kind').addEventListener('change', () => $('#employee-avatar-value-field').classList.toggle('hidden', $('#employee-avatar-kind').value !== 'emoji'));
-$('#wizard-next').addEventListener('click', employeeWizardNext);
+$('#employee-knowledge-kind').addEventListener('change', () => {
+  const manual = $('#employee-knowledge-kind').value === 'manual_text';
+  $('#employee-knowledge-text-field').classList.toggle('hidden', !manual);
+  $('#employee-knowledge-path-field').classList.toggle('hidden', manual || !$('#employee-knowledge-kind').value);
+});
+$('#wizard-next').addEventListener('click', () => employeeWizardNext());
 $('#wizard-back').addEventListener('click', () => { employeeWizardStep = Math.max(0, employeeWizardStep - 1); renderEmployeeWizardStep(); });
 $('#employee-wizard-form').addEventListener('submit', createEmployeeFromWizard);
 document.querySelectorAll('[data-employee-tab]').forEach(button => button.addEventListener('click', () => openEmployeeTab(button.dataset.employeeTab)));

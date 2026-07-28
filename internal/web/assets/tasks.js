@@ -4,8 +4,9 @@ let selectedTaskSession = null;
 let selectedTaskMessages = [];
 let taskEmployees = [];
 let taskCreateContext = null;
-let taskEventSource = null;
-let taskRuntimeEvents = [];
+const taskEventStreams = new Map();
+let activeTaskEventKey = '';
+let taskCheckpointRefresh = null;
 
 const employeeTaskTerminalStates = new Set(['completed', 'failed', 'cancelled']);
 const taskSessionEventTypes = [
@@ -40,10 +41,27 @@ async function loadEmployeeTaskWorkbench(openSaved = true) {
     return data.tasks || [];
   }));
   employeeTaskItems = pages.flat().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  fillTaskProjectFilters();
   renderEmployeeTaskList();
   if (!openSaved) return;
   const savedID = localStorage.getItem('gohermit.employee-task');
   if (savedID && employeeTaskItems.some(item => item.id === savedID)) await openEmployeeTask(savedID);
+}
+
+function fillTaskProjectFilters() {
+  const previous = $('#task-project-filter').value;
+  const projects = new Map();
+  for (const task of employeeTaskItems) {
+    if (task.project_binding && task.project_binding.id) {
+      projects.set(task.project_binding.id, task.project_binding.label || task.project_binding.id);
+    }
+  }
+  setOptions(
+    $('#task-project-filter'),
+    [{id: '', label: 'All Projects'}, ...[...projects].map(([id, label]) => ({id, label}))],
+    previous,
+    item => item.label,
+  );
 }
 
 function fillTaskEmployeeFilters() {
@@ -58,8 +76,15 @@ function renderEmployeeTaskList() {
   const root = $('#employee-task-list');
   root.replaceChildren();
   const employeeID = $('#task-employee-filter').value;
+  const projectID = $('#task-project-filter').value;
   const state = $('#task-state-filter').value;
-  const visible = employeeTaskItems.filter(item => (!employeeID || item.employee_id === employeeID) && (!state || item.state === state));
+  const updatedWindow = Number($('#task-updated-filter').value || 0);
+  const cutoff = updatedWindow > 0 ? Date.now() - updatedWindow * 1000 : 0;
+  const visible = employeeTaskItems.filter(item =>
+    (!employeeID || item.employee_id === employeeID) &&
+    (!projectID || (item.project_binding && item.project_binding.id === projectID)) &&
+    (!state || item.state === state) &&
+    (!cutoff || Date.parse(item.updated_at) >= cutoff));
   if (!visible.length) {
     const empty = document.createElement('div');
     empty.className = 'sidebar-empty';
@@ -132,13 +157,18 @@ function renderTaskCreateSelections() {
   memoryRoot.replaceChildren();
   for (const item of taskCreateContext.skills.bindings || []) {
     if (!item.binding.enabled || item.status !== 'current') continue;
-    skillRoot.append(taskSelectionItem(
+    const selection = taskSelectionItem(
       item.binding.skill_id,
-      `${item.binding.version} · ${item.status}`,
-      item.binding.skill_id,
+      `${item.binding.version} · ${item.binding.digest} · ${item.status}`,
+      `${item.binding.skill_id}\0${item.binding.version}\0${item.binding.digest}`,
       'skill',
       true,
-    ));
+    );
+    const input = selection.querySelector('input');
+    input.dataset.skillID = item.binding.skill_id;
+    input.dataset.version = item.binding.version;
+    input.dataset.digest = item.binding.digest;
+    skillRoot.append(selection);
   }
   const citationsBySource = new Map();
   for (const index of taskCreateContext.knowledge.indexes || []) {
@@ -184,7 +214,10 @@ function taskCreatePayload() {
   return {
     prompt: $('#task-prompt').value,
     skills: selectedTaskCreateValues('skill').map(input => {
-      const item = taskCreateContext.skills.bindings.find(value => value.binding.skill_id === input.dataset.id);
+      const item = taskCreateContext.skills.bindings.find(value =>
+        value.binding.skill_id === input.dataset.skillID &&
+        value.binding.version === input.dataset.version &&
+        value.binding.digest === input.dataset.digest);
       return {skill_id: item.binding.skill_id, version: item.binding.version};
     }),
     knowledge: selectedTaskCreateValues('knowledge').map(input => ({
@@ -263,7 +296,7 @@ async function openEmployeeTask(taskID, knownTask = null) {
   $('#task-detail').classList.remove('hidden');
   renderEmployeeTaskList();
   renderEmployeeTaskDetail();
-  if (task.session_id) connectTaskEvents(task.session_id);
+  if (task.session_id) connectTaskEvents(task, false);
   else closeTaskEvents();
 }
 
@@ -371,7 +404,7 @@ async function decideTaskApproval(requestID, decision) {
     await request(`/api/sessions/${encodeURIComponent(selectedEmployeeTask.session_id)}/approvals/${encodeURIComponent(requestID)}/decide`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision}),
     });
-    await openEmployeeTask(selectedEmployeeTask.id);
+    await refreshTaskCheckpoint(false);
   } catch (error) { showTaskError(error); }
 }
 
@@ -409,35 +442,86 @@ function renderTaskArtifacts() {
   if (!root.childElementCount) root.innerHTML = '<div class="review-empty">No verified Artifacts.</div>';
 }
 
-function connectTaskEvents(sessionID) {
-  closeTaskEvents();
-  taskEventSource = new EventSource(`/api/sessions/${encodeURIComponent(sessionID)}/events`);
+function taskEventKey(taskID, sessionID) {
+  return `${taskID}\0${sessionID}`;
+}
+
+function taskEventStorageKey(taskID, sessionID) {
+  return `gohermit.task-sse.${taskID}.${sessionID}`;
+}
+
+function taskEventStream(task) {
+  const key = taskEventKey(task.id, task.session_id);
+  let stream = taskEventStreams.get(key);
+  if (!stream) {
+    const saved = Number(localStorage.getItem(taskEventStorageKey(task.id, task.session_id)) || 0);
+    stream = {
+      taskID: task.id,
+      sessionID: task.session_id,
+      runID: task.run_id || '',
+      lastSequence: Number.isSafeInteger(saved) && saved > 0 ? saved : 0,
+      events: [],
+      source: null,
+      healthy: false,
+    };
+    taskEventStreams.set(key, stream);
+  }
+  stream.runID = task.run_id || '';
+  return stream;
+}
+
+function connectTaskEvents(task, force) {
+  const key = taskEventKey(task.id, task.session_id);
+  const stream = taskEventStream(task);
+  if (!force && activeTaskEventKey === key && stream.source && stream.source.readyState !== EventSource.CLOSED) return;
+  if (activeTaskEventKey && activeTaskEventKey !== key) closeTaskEvents();
+  if (stream.source) stream.source.close();
+  activeTaskEventKey = key;
+  stream.healthy = true;
+  stream.source = new EventSource(`/api/sessions/${encodeURIComponent(task.session_id)}/events?after=${stream.lastSequence}`);
   for (const type of taskSessionEventTypes) {
-    taskEventSource.addEventListener(type, event => {
+    stream.source.addEventListener(type, event => {
       let data = {};
-      try { data = JSON.parse(event.data || '{}'); } catch (_) {}
-      taskRuntimeEvents.push({type, data, time: new Date().toISOString()});
-      if (taskRuntimeEvents.length > 200) taskRuntimeEvents.shift();
+      try { data = JSON.parse(event.data || '{}'); } catch (_) { return; }
+      const sequence = Number(event.lastEventId || data.sequence);
+      if (!Number.isSafeInteger(sequence) || sequence <= stream.lastSequence) return;
+      const eventRunID = data.run_id || data.runID || '';
+      if (stream.runID && eventRunID && eventRunID !== stream.runID) return;
+      stream.lastSequence = sequence;
+      localStorage.setItem(taskEventStorageKey(stream.taskID, stream.sessionID), String(sequence));
+      stream.events.push({type, data, sequence, time: new Date().toISOString()});
+      if (stream.events.length > 200) stream.events.shift();
       renderTaskRuntimeEvents();
       if (['session_updated', 'plan_updated', 'approval_decided', 'task_completed', 'task_failed', 'task_cancelled'].includes(type)) {
-        openEmployeeTask(selectedEmployeeTask.id).catch(error => showTaskError(error));
+        refreshTaskCheckpoint(false).catch(error => showTaskError(error));
       }
     });
   }
-  taskEventSource.onerror = () => {
+  stream.source.onerror = () => {
+    stream.healthy = false;
     showTaskError(new Error('Live updates disconnected. Existing timeline is preserved; use Refresh to recover.'));
   };
 }
 
 function closeTaskEvents() {
-  if (taskEventSource) taskEventSource.close();
-  taskEventSource = null;
+  if (!activeTaskEventKey) return;
+  const stream = taskEventStreams.get(activeTaskEventKey);
+  if (stream && stream.source) stream.source.close();
+  if (stream) {
+    stream.source = null;
+    stream.healthy = false;
+  }
+  activeTaskEventKey = '';
 }
 
 function renderTaskRuntimeEvents() {
   const root = $('#task-events');
   root.replaceChildren();
-  for (const event of taskRuntimeEvents.slice(-50)) {
+  const key = selectedEmployeeTask && selectedEmployeeTask.session_id
+    ? taskEventKey(selectedEmployeeTask.id, selectedEmployeeTask.session_id)
+    : '';
+  const stream = key ? taskEventStreams.get(key) : null;
+  for (const event of ((stream && stream.events) || []).slice(-50)) {
     const row = document.createElement('li');
     row.className = 'timeline-event';
     row.innerHTML = '<strong></strong><span></span><small></small>';
@@ -457,9 +541,23 @@ async function mutateEmployeeTask(action) {
   } catch (error) { showTaskError(error); }
 }
 
-async function refreshEmployeeTask() {
+async function refreshTaskCheckpoint(recoverEvents) {
   if (!selectedEmployeeTask) return;
-  await openEmployeeTask(selectedEmployeeTask.id);
+  if (taskCheckpointRefresh) return taskCheckpointRefresh;
+  const taskID = selectedEmployeeTask.id;
+  taskCheckpointRefresh = (async () => {
+    await openEmployeeTask(taskID);
+    if (!recoverEvents || !selectedEmployeeTask || selectedEmployeeTask.id !== taskID || !selectedEmployeeTask.session_id) return;
+    const stream = taskEventStream(selectedEmployeeTask);
+    if (!stream.source || !stream.healthy || stream.source.readyState === EventSource.CLOSED) {
+      connectTaskEvents(selectedEmployeeTask, true);
+    }
+  })().finally(() => { taskCheckpointRefresh = null; });
+  return taskCheckpointRefresh;
+}
+
+async function refreshEmployeeTask() {
+  await refreshTaskCheckpoint(true);
 }
 
 function openEmployeeTaskInAgent() {
@@ -473,7 +571,9 @@ $('#task-create-close').addEventListener('click', showTaskEmpty);
 $('#task-create-panel').addEventListener('submit', createEmployeeTask);
 $('#task-create-employee').addEventListener('change', () => loadTaskCreateContext($('#task-create-employee').value).catch(error => showTaskError(error)));
 $('#task-employee-filter').addEventListener('change', renderEmployeeTaskList);
+$('#task-project-filter').addEventListener('change', renderEmployeeTaskList);
 $('#task-state-filter').addEventListener('change', renderEmployeeTaskList);
+$('#task-updated-filter').addEventListener('change', renderEmployeeTaskList);
 $('#task-start').addEventListener('click', () => mutateEmployeeTask('start'));
 $('#task-resume').addEventListener('click', () => mutateEmployeeTask('resume'));
 $('#task-cancel').addEventListener('click', () => mutateEmployeeTask('cancel'));

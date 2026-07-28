@@ -23,6 +23,7 @@ const loopEventTypes = [
 
 function switchWorkbenchView(view) {
   const target = ['agent', 'dashboard', 'employees', 'employee-tasks', 'loops'].includes(view) ? view : 'agent';
+  if (target !== 'employee-tasks' && typeof closeTaskEvents === 'function') closeTaskEvents();
   $('#agent-view').classList.toggle('hidden', target !== 'agent');
   $('#dashboard-view').classList.toggle('hidden', target !== 'dashboard');
   $('#employees-view').classList.toggle('hidden', target !== 'employees');
