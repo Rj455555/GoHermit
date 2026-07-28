@@ -24,7 +24,6 @@ import (
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/model"
-	"github.com/Rj455555/GoHermit/internal/storage"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
 )
@@ -325,16 +324,25 @@ type commitJournal struct {
 }
 
 func NewStore(workspace, directory string) (*Store, error) {
-	abs, err := filepath.Abs(workspace)
+	if err := validateStoreDirectory(directory); err != nil {
+		return nil, err
+	}
+	workspaceRoot, err := canonicalWorkspaceRoot(workspace)
 	if err != nil {
 		return nil, err
 	}
-	root := filepath.Join(abs, directory)
-	rel, err := filepath.Rel(abs, root)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, errors.New("session directory escapes workspace")
+	root := filepath.Join(workspaceRoot, directory)
+	if err = ensureSessionContained(workspaceRoot, root); err != nil {
+		return nil, err
 	}
-	return &Store{workspace: abs, root: root, pending: map[string][]event.Event{}, sequences: map[string]uint64{}}, nil
+	if _, err = ensureDirectoryChain(workspaceRoot, root, false); err != nil {
+		return nil, fmt.Errorf("validate Session Store root: %w", err)
+	}
+	sessions := filepath.Join(root, "sessions")
+	if _, err = ensureDirectoryChain(workspaceRoot, sessions, false); err != nil {
+		return nil, fmt.Errorf("validate Session Store sessions directory: %w", err)
+	}
+	return &Store{workspace: workspaceRoot, root: root, pending: map[string][]event.Event{}, sequences: map[string]uint64{}}, nil
 }
 func (s *Store) sessionDir(id string) (string, error) {
 	return sessionIDPathWithRoot(s.root, id)
@@ -360,12 +368,8 @@ func sessionIDPathWithRoot(root, id string) (string, error) {
 }
 
 func (s *Store) Has(id string) bool {
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(filepath.Join(dir, "session.json"))
-	return err == nil
+	exists, err := s.CheckTarget(id)
+	return err == nil && exists
 }
 func (s *Store) Save(ctx context.Context, session *Session) error {
 	if err := ctx.Err(); err != nil {
@@ -467,16 +471,12 @@ func (s *Store) CommitDetachedEvent(ctx context.Context, sessionID string, runti
 	if runtimeEvent.SessionID != sessionID {
 		return event.Event{}, errors.New("event session does not match checkpoint")
 	}
-	dir, err := s.sessionDir(sessionID)
-	if err != nil {
-		return event.Event{}, err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err = s.recoverJournalLocked(dir, sessionID); err != nil {
+	if err := s.recoverJournalLocked(sessionID); err != nil {
 		return event.Event{}, err
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "session.json"))
+	raw, err := s.readSessionFile(sessionID, "session.json", maxSessionStoreFileBytes)
 	if err != nil {
 		return event.Event{}, fmt.Errorf("read parent checkpoint: %w", err)
 	}
@@ -529,16 +529,12 @@ func (s *Store) commitLocked(ctx context.Context, session *Session, events []eve
 		s.sequences[session.ID] = session.NextEventSequence
 	}
 	session.UpdatedAt = time.Now().UTC()
-	dir, err := s.sessionDir(session.ID)
-	if err != nil {
-		return err
-	}
 	journal := commitJournal{Version: commitJournalVersion, Session: session, Events: events}
 	data, err := json.MarshalIndent(journal, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err = storage.AtomicWrite(filepath.Join(dir, "commit.json"), append(data, '\n'), 0600); err != nil {
+	if err = s.atomicWriteSessionFile(session.ID, "commit.json", append(data, '\n')); err != nil {
 		return fmt.Errorf("write commit journal: %w", err)
 	}
 	if s.commitStageHook != nil {
@@ -546,21 +542,24 @@ func (s *Store) commitLocked(ctx context.Context, session *Session, events []eve
 			return err
 		}
 	}
-	return s.applyJournalLocked(dir, journal)
+	return s.applyJournalLocked(session.ID, journal)
 }
 
-func (s *Store) applyJournalLocked(dir string, journal commitJournal) error {
+func (s *Store) applyJournalLocked(sessionID string, journal commitJournal) error {
 	if journal.Version != commitJournalVersion || journal.Session == nil {
 		return errors.New("corrupt commit journal")
+	}
+	if journal.Session.ID != sessionID {
+		return errors.New("commit journal session mismatch")
 	}
 	data, err := json.MarshalIndent(journal.Session, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err = storage.AtomicWrite(filepath.Join(dir, "session.json"), append(data, '\n'), 0600); err != nil {
+	if err = s.atomicWriteSessionFile(sessionID, "session.json", append(data, '\n')); err != nil {
 		return fmt.Errorf("write checkpoint: %w", err)
 	}
-	if err = storage.AtomicWrite(filepath.Join(dir, "summary.md"), []byte(journal.Session.Summary), 0600); err != nil {
+	if err = s.atomicWriteSessionFile(sessionID, "summary.md", []byte(journal.Session.Summary)); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
 	if s.commitStageHook != nil {
@@ -568,7 +567,7 @@ func (s *Store) applyJournalLocked(dir string, journal commitJournal) error {
 			return err
 		}
 	}
-	if err = appendEventsIdempotent(filepath.Join(dir, "events.jsonl"), journal.Events); err != nil {
+	if err = s.appendEventsIdempotent(sessionID, journal.Events); err != nil {
 		return err
 	}
 	if s.commitStageHook != nil {
@@ -576,17 +575,17 @@ func (s *Store) applyJournalLocked(dir string, journal commitJournal) error {
 			return err
 		}
 	}
-	if err = os.Remove(filepath.Join(dir, "commit.json")); err != nil && !os.IsNotExist(err) {
+	if err = s.removeSessionFile(sessionID, "commit.json"); err != nil {
 		return fmt.Errorf("remove commit journal: %w", err)
 	}
 	return nil
 }
 
-func appendEventsIdempotent(path string, events []event.Event) error {
+func (s *Store) appendEventsIdempotent(sessionID string, events []event.Event) error {
 	if len(events) == 0 {
 		return nil
 	}
-	last, err := lastEventSequence(path)
+	last, err := s.lastEventSequence(sessionID)
 	if err != nil {
 		return err
 	}
@@ -602,11 +601,11 @@ func appendEventsIdempotent(path string, events []event.Event) error {
 	if len(pending) == 0 {
 		return nil
 	}
-	return appendEvents(path, pending)
+	return s.appendEvents(sessionID, pending)
 }
 
-func lastEventSequence(path string) (uint64, error) {
-	f, err := os.Open(path)
+func (s *Store) lastEventSequence(sessionID string) (uint64, error) {
+	f, err := s.openSessionFile(sessionID, "events.jsonl")
 	if os.IsNotExist(err) {
 		return 0, nil
 	}
@@ -628,11 +627,8 @@ func lastEventSequence(path string) (uint64, error) {
 	}
 	return last, scanner.Err()
 }
-func appendEvents(path string, events []event.Event) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+func (s *Store) appendEvents(sessionID string, events []event.Event) error {
+	f, err := s.openSessionFileAppend(sessionID, "events.jsonl")
 	if err != nil {
 		return err
 	}
@@ -681,17 +677,13 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return nil, err
-	}
 	s.mu.Lock()
-	if err = s.recoverJournalLocked(dir, id); err != nil {
+	if err := s.recoverJournalLocked(id); err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
 	s.mu.Unlock()
-	b, err := os.ReadFile(filepath.Join(dir, "session.json"))
+	b, err := s.readSessionFile(id, "session.json", maxSessionStoreFileBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint: %w", err)
 	}
@@ -746,8 +738,11 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	if err = validateSessionCheckpoint(&out); err != nil {
 		return nil, fmt.Errorf("corrupt checkpoint: %w", err)
 	}
-	current, _ := filepath.Abs(s.workspace)
-	saved, _ := filepath.Abs(out.Workspace)
+	current := s.workspace
+	saved, workspaceErr := canonicalWorkspaceRoot(out.Workspace)
+	if workspaceErr != nil {
+		return nil, fmt.Errorf("resolve saved workspace: %w", workspaceErr)
+	}
 	if current != saved {
 		return nil, fmt.Errorf("workspace mismatch: saved %s, current %s", saved, current)
 	}
@@ -760,16 +755,13 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	return &out, nil
 }
 
-func (s *Store) recoverJournalLocked(dir, sessionID string) error {
-	data, err := os.ReadFile(filepath.Join(dir, "commit.json"))
+func (s *Store) recoverJournalLocked(sessionID string) error {
+	data, err := s.readSessionFile(sessionID, "commit.json", maxSessionStoreFileBytes)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read commit journal: %w", err)
-	}
-	if len(data) > 8<<20 {
-		return errors.New("commit journal exceeds size limit")
 	}
 	if !utf8.Valid(data) {
 		return errors.New("corrupt commit journal: invalid UTF-8")
@@ -786,7 +778,7 @@ func (s *Store) recoverJournalLocked(dir, sessionID string) error {
 	if err = validateSessionCheckpoint(journal.Session); err != nil {
 		return fmt.Errorf("corrupt commit journal: %w", err)
 	}
-	return s.applyJournalLocked(dir, journal)
+	return s.applyJournalLocked(sessionID, journal)
 }
 
 func (s *Store) Recover(ctx context.Context, id string) (*Session, error) {
@@ -861,11 +853,14 @@ func (s *Store) Clean(ctx context.Context, olderThan time.Duration) (int, error)
 	if olderThan <= 0 {
 		return 0, errors.New("older-than must be positive")
 	}
-	base := filepath.Join(s.root, "sessions")
-	entries, err := os.ReadDir(base)
-	if os.IsNotExist(err) {
+	base, exists, err := s.sessionsDir(false)
+	if err != nil {
+		return 0, err
+	}
+	if !exists {
 		return 0, nil
 	}
+	entries, err := os.ReadDir(base)
 	if err != nil {
 		return 0, err
 	}
@@ -875,37 +870,48 @@ func (s *Store) Clean(ctx context.Context, olderThan time.Duration) (int, error)
 		if err := ctx.Err(); err != nil {
 			return count, err
 		}
-		if !entry.IsDir() {
-			continue
+		target, targetExists, targetErr := s.safeSessionDir(entry.Name(), false)
+		if targetErr != nil {
+			return count, targetErr
+		}
+		if !targetExists || !entry.IsDir() {
+			return count, errors.New("Session Store contains an unsafe session entry")
 		}
 		info, err := entry.Info()
 		if err == nil && info.ModTime().Before(cutoff) {
-			target := filepath.Join(base, entry.Name())
-			rel, _ := filepath.Rel(base, target)
-			if rel == entry.Name() {
-				if err = os.RemoveAll(target); err != nil {
-					return count, err
-				}
-				count++
+			if err = ensureSessionContained(base, target); err != nil {
+				return count, err
 			}
+			if err = os.RemoveAll(target); err != nil {
+				return count, err
+			}
+			count++
 		}
 	}
 	return count, nil
 }
 func (s *Store) List() ([]string, error) {
-	base := filepath.Join(s.root, "sessions")
-	entries, err := os.ReadDir(base)
-	if os.IsNotExist(err) {
+	base, exists, err := s.sessionsDir(false)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
 		return nil, nil
 	}
+	entries, err := os.ReadDir(base)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() {
-			out = append(out, e.Name())
+		_, targetExists, targetErr := s.safeSessionDir(e.Name(), false)
+		if targetErr != nil {
+			return nil, targetErr
 		}
+		if !targetExists || !e.IsDir() {
+			return nil, errors.New("Session Store contains an unsafe session entry")
+		}
+		out = append(out, e.Name())
 	}
 	sort.Strings(out)
 	return out, nil
@@ -991,30 +997,17 @@ func (s *Store) AppendMessage(id string, message MessageRecord) error {
 	if message.CreatedAt.IsZero() {
 		message.CreatedAt = time.Now().UTC()
 	}
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return appendJSONLines(filepath.Join(dir, "messages.jsonl"), []MessageRecord{message})
-}
-
-func appendJSONLines[T any](path string, records []T) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := s.openSessionFileAppend(id, "messages.jsonl")
 	if err != nil {
 		return err
 	}
 	w := bufio.NewWriterSize(f, 32<<10)
 	enc := json.NewEncoder(w)
-	for _, record := range records {
-		if err = enc.Encode(record); err != nil {
-			_ = f.Close()
-			return err
-		}
+	if err = enc.Encode(message); err != nil {
+		_ = f.Close()
+		return err
 	}
 	if err = w.Flush(); err == nil {
 		err = f.Sync()
@@ -1026,11 +1019,7 @@ func appendJSONLines[T any](path string, records []T) error {
 }
 
 func (s *Store) Messages(id string) ([]MessageRecord, error) {
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.Open(filepath.Join(dir, "messages.jsonl"))
+	f, err := s.openSessionFile(id, "messages.jsonl")
 	if os.IsNotExist(err) {
 		loaded, loadErr := s.Load(context.Background(), id)
 		if loadErr != nil {
@@ -1062,11 +1051,7 @@ func (s *Store) Messages(id string) ([]MessageRecord, error) {
 }
 
 func (s *Store) Events(id string, after uint64) ([]event.Event, error) {
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.Open(filepath.Join(dir, "events.jsonl"))
+	f, err := s.openSessionFile(id, "events.jsonl")
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -1101,7 +1086,7 @@ func (s *Store) ListSummaries(ctx context.Context, limit int) ([]SessionSummary,
 	for _, id := range ids {
 		loaded, loadErr := s.Load(ctx, id)
 		if loadErr != nil {
-			continue
+			return nil, loadErr
 		}
 		if loaded.Hidden {
 			continue

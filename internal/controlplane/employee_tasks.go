@@ -102,7 +102,11 @@ func (s *Service) PrepareEmployeeTask(ctx context.Context, taskID string) (Emplo
 		Model:   task.EmployeeSnapshot.Employee.DefaultSelection.Model,
 		Agent:   task.EmployeeSnapshot.Employee.AgentProfile,
 	}
-	_, agentProfile, err := config.ResolveSelection(selection)
+	liveModels, err := s.validateSelection(ctx, selection)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classified(KindConflict, fmt.Errorf("provider, access, model, or Agent Profile is not ready: %w", err))
+	}
+	_, agentProfile, err := config.ResolveSelectionWithModels(selection, liveModels)
 	if err != nil {
 		return EmployeeTaskPreparation{}, classified(KindConflict, fmt.Errorf("provider, access, model, or Agent Profile is not ready: %w", err))
 	}
@@ -184,6 +188,13 @@ func (s *Service) PrepareEmployeeTask(ctx context.Context, taskID string) (Emplo
 		TaskSnapshotDigest: task.SnapshotDigest, CompactSnapshotDigest: compact.Digest,
 		WorkspaceRealPath: workspace, Stage: employeestore.DispatchPrepared,
 	}
+	if s.store == nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, errors.New("Session Store is unavailable"))
+	}
+	sessionExists, err := s.store.CheckTarget(sessionID)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, fmt.Errorf("Session Store target is unsafe or unavailable: %w", err))
+	}
 	journal, err := s.employees.PrepareDispatch(expectedJournal)
 	if err != nil {
 		return EmployeeTaskPreparation{}, classifyEmployeeStore(err)
@@ -191,10 +202,7 @@ func (s *Service) PrepareEmployeeTask(ctx context.Context, taskID string) (Emplo
 	if err := s.callPrepareStageHook("journal_written"); err != nil {
 		return EmployeeTaskPreparation{}, classified(KindInternal, err)
 	}
-	if s.store == nil {
-		return EmployeeTaskPreparation{}, classified(KindInternal, errors.New("Session Store is unavailable"))
-	}
-	if s.store.Has(sessionID) {
+	if sessionExists {
 		existing, loadErr := s.store.Load(ctx, sessionID)
 		if loadErr != nil {
 			return EmployeeTaskPreparation{}, classified(KindInternal, loadErr)

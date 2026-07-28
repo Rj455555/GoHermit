@@ -227,6 +227,111 @@ func TestPrepareEmployeeTaskReadinessDriftFailsBeforeJournalOrSession(t *testing
 	}
 }
 
+func TestPrepareEmployeeTaskUsesLiveCodexModelCatalog(t *testing.T) {
+	t.Run("pinned model missing from live catalog", func(t *testing.T) {
+		fixture := newPhase6FixtureWithSelection(t, employee.ModelSelection{
+			Company: "openai", Access: "openai-codex", Model: "gpt-5.3-codex",
+		})
+		fixture.service.codexModels = []config.ModelOption{{
+			ID: "account-other-model", Label: "Other", Provider: "openai-codex",
+		}}
+		fixture.service.codexModelsAt = time.Now()
+
+		if _, err := fixture.service.PrepareEmployeeTask(context.Background(), fixture.taskID); err == nil {
+			t.Fatal("model absent from live Codex catalog must fail readiness")
+		} else if serviceErr, ok := err.(*Error); !ok || serviceErr.Kind != KindConflict {
+			t.Fatalf("error = %#v, want conflict", err)
+		}
+		assertNoPreparationWrites(t, fixture)
+	})
+
+	t.Run("live-only pinned model can prepare", func(t *testing.T) {
+		fixture := newPhase6FixtureWithSelection(t, employee.ModelSelection{
+			Company: "openai", Access: "openai-codex", Model: "account-live-only-model",
+		})
+		fixture.service.codexModels = []config.ModelOption{{
+			ID: "account-live-only-model", Label: "Live only", Provider: "openai-codex",
+		}}
+		fixture.service.codexModelsAt = time.Now()
+
+		prepared, err := fixture.service.PrepareEmployeeTask(context.Background(), fixture.taskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if prepared.State != EmployeeTaskPrepared {
+			t.Fatalf("preparation = %#v", prepared)
+		}
+		if fixture.builds.Load() != 0 {
+			t.Fatalf("live model readiness built runtime %d times", fixture.builds.Load())
+		}
+	})
+}
+
+func TestPrepareEmployeeTaskNonCodexKeepsStaticReadiness(t *testing.T) {
+	fixture := newPhase6Fixture(t)
+	fixture.service.codexModels = []config.ModelOption{{
+		ID: "irrelevant-codex-model", Label: "Irrelevant", Provider: "openai-codex",
+	}}
+	fixture.service.codexModelsAt = time.Now()
+	if _, err := fixture.service.PrepareEmployeeTask(context.Background(), fixture.taskID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrepareEmployeeTaskRejectsUnsafeSessionTargetBeforeDispatch(t *testing.T) {
+	fixture := newPhase6Fixture(t)
+	task, err := fixture.employees.GetTask(fixture.taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := canonicalWorkspace(fixture.workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := stableEmployeeSessionID(task, workspace)
+	outside := t.TempDir()
+	marker := filepath.Join(outside, "marker.txt")
+	if err = os.WriteFile(marker, []byte("unchanged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sessionsDir := filepath.Join(fixture.workspace, ".gohermit", "sessions")
+	if err = os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Symlink(outside, filepath.Join(sessionsDir, sessionID)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = fixture.service.PrepareEmployeeTask(context.Background(), fixture.taskID); err == nil {
+		t.Fatal("unsafe Session target must fail readiness")
+	}
+	assertNoPreparationWrites(t, fixture)
+	raw, err := os.ReadFile(marker)
+	if err != nil || string(raw) != "unchanged" {
+		t.Fatalf("external target changed: %q, %v", raw, err)
+	}
+}
+
+func TestPrepareEmployeeTaskRejectsUnavailableSessionStoreBeforeDispatch(t *testing.T) {
+	fixture := newPhase6Fixture(t)
+	fixture.service.store = nil
+	if _, err := fixture.service.PrepareEmployeeTask(context.Background(), fixture.taskID); err == nil {
+		t.Fatal("unavailable Session Store must fail readiness")
+	}
+	assertNoPreparationWrites(t, fixture)
+}
+
+func assertNoPreparationWrites(t *testing.T, fixture *phase6Fixture) {
+	t.Helper()
+	if _, err := fixture.employees.LoadDispatch(fixture.taskID); !errors.Is(err, os.ErrNotExist) &&
+		!errors.Is(err, employeestore.ErrNotFound) {
+		t.Fatalf("readiness failure left dispatch journal: %v", err)
+	}
+	if fixture.builds.Load() != 0 || fixture.service.Active() {
+		t.Fatalf("execution side effect: builds=%d active=%t", fixture.builds.Load(), fixture.service.Active())
+	}
+}
+
 func TestPrepareEmployeeTaskRejectsMismatchedExistingSession(t *testing.T) {
 	fixture := newPhase6Fixture(t)
 	result, err := fixture.service.PrepareEmployeeTask(context.Background(), fixture.taskID)
@@ -289,6 +394,12 @@ type phase6Fixture struct {
 }
 
 func newPhase6Fixture(t *testing.T) *phase6Fixture {
+	return newPhase6FixtureWithSelection(t, employee.ModelSelection{
+		Company: "deepseek", Access: "deepseek", Model: "deepseek-chat",
+	})
+}
+
+func newPhase6FixtureWithSelection(t *testing.T, selection employee.ModelSelection) *phase6Fixture {
 	t.Helper()
 	workspace, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -313,8 +424,12 @@ func newPhase6Fixture(t *testing.T) *phase6Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := credentials.SetAPIKey("deepseek", "phase-six-readiness-value"); err != nil {
-		t.Fatal(err)
+	if selection.Access == "openai-codex" {
+		t.Setenv("GOHERMIT_CODEX_ACCESS_TOKEN", "phase-six-codex-readiness-token")
+	} else {
+		if err := credentials.SetAPIKey("deepseek", "phase-six-readiness-value"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	fixture := &phase6Fixture{
 		employees: employees, sessions: sessions, credentials: credentials, workspace: workspace,
@@ -330,6 +445,7 @@ func newPhase6Fixture(t *testing.T) *phase6Fixture {
 		},
 	}
 	draft := controlPlaneDraft("employee-a")
+	draft.DefaultSelection = selection
 	draft.PermissionPolicy = employee.PermissionPolicy{
 		AllowedCapabilities: []string{"read", "write"}, NetworkAllowed: false,
 	}
@@ -337,14 +453,11 @@ func newPhase6Fixture(t *testing.T) *phase6Fixture {
 		SkillID: "review", Version: "1.0.0", Digest: digest,
 		Configuration: json.RawMessage(`{}`), Enabled: true,
 	}}
-	record, err := fixture.service.CreateEmployee(context.Background(), EmployeeInput{
-		Employee: draft,
-		ProjectBindings: []employee.ProjectBinding{{
-			ID: "project-a", Label: "Current workspace", WorkspaceRealPath: workspace,
-			ReadAllowed: true, MutationAllowed: true,
-			AllowedToolCapabilities: []string{"read", "write"},
-		}},
-	})
+	record, err := employees.Create(draft, []employee.ProjectBinding{{
+		ID: "project-a", Label: "Current workspace", WorkspaceRealPath: workspace,
+		ReadAllowed: true, MutationAllowed: true,
+		AllowedToolCapabilities: []string{"read", "write"},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
