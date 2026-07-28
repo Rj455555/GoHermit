@@ -12,11 +12,13 @@
   `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`.
 - Phase 5: `OWNER_APPROVED`; squash-merged through PR #38 into
   `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`.
-- Phase 6: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
-  `agent/electronic-employees-v0.7-phase6`.
-- Phase 7 and every later product-code change remain blocked.
+- Phase 6: `OWNER_APPROVED`; squash-merged through PR #39 into
+  `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`.
+- Phase 7: `OWNER_APPROVED`; ready for Owner-authorized squash merge through
+  PR #40 from clean branch `agent/electronic-employees-v0.7-phase7`.
+- Phase 8 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_6_REAPPROVAL`.
+  `PHASE_7_OWNER_APPROVED_PENDING_MERGE`.
 
 ### Fixed invariants
 
@@ -64,31 +66,28 @@
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `OWNER_APPROVED` |
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` |
-| 6 | Runtime Preparation | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` |
+| 6 | Runtime Preparation | `OWNER_APPROVED` |
+| 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
 
 ### Current phase scope
 
-- Phases 1 through 5 are Owner-approved and closed to further implementation.
-- Runtime Preparation implementation and its final Gate revision are complete:
-  readiness revalidation now uses the existing live Codex account model
-  catalog, while the Session Store fixes a canonical real Workspace/Store root
-  and fails closed on unsafe parent/final paths before dispatch. Bounded compact
-  context, schema v6, stable Session ID, dispatch reconciliation, and every
-  revised readiness path still stop with zero execution.
-- Make no further product-code change while Phase 6 awaits Owner review.
-- Keep Phase 7 and all later phases blocked until the next explicit Owner Gate.
+- Phases 1 through 7 are Owner-approved and closed to further implementation.
+- Phase 7 Manual Execution Lifecycle is complete and awaiting the authorized
+  PR #40 squash merge before Phase 8 work begins.
+- Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery remains
+  the only execution truth and kernel.
+- Keep Phase 8 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No Run creation/start, model/provider inference, Tool execution, execution
-  Workspace lease, Workspace mutation, Knowledge refresh, Memory Candidate,
-  automatic start, Phase 7 lifecycle, UI, Team Role Mapping, version, or
-  release change.
-- No Phase 7 implementation.
+- No second Run/Event/Plan/Approval/Verification/Tool/recovery state machine,
+  Task SSE, scheduler, daemon, auto-start-next, automatic Memory acceptance,
+  multi-Workspace, cross-Employee read-only concurrency, Team Role Mapping,
+  Phase 8 UI, version, or release change.
+- No Phase 8 implementation.
 - No merge, auto-merge, force push, or automatic Workspace submission.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
@@ -111,32 +110,25 @@ git diff --check
 
 ### Next Gate
 
-Phase 7 may start only after the Owner explicitly approves Phase 6,
-for example:
+Phase 8 may start only after the Owner-authorized PR #40 squash merge is
+confirmed in the latest `origin/main`. Until then, stop with:
 
 ```text
-批准 Phase 6，开始 Phase 7
-```
-
-Until then, stop with:
-
-```text
-STATUS: WAITING_FOR_PHASE_6_REAPPROVAL
+STATUS: PHASE_7_OWNER_APPROVED_PENDING_MERGE
 ```
 
 ---
 
-Plan status: `PHASE_6_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
-Baseline: `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`
-Feature branch: `agent/electronic-employees-v0.7-phase6`
-Last audited: 2026-07-28
+Plan status: `PHASE_7_OWNER_APPROVED_PENDING_MERGE`
+Baseline: `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`
+Feature branch: `agent/electronic-employees-v0.7-phase7`
+Last audited: 2026-07-29
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phases 1 through
-5 are Owner-approved. Phase 6 implementation and Gate revision verification
-are complete and awaiting Owner reapproval; Phase 7 through Phase 10 remain
-blocked.
+7 are Owner-approved. Phase 8 through Phase 10 remain blocked until PR #40 is
+confirmed merged and a clean Phase 8 branch is created from the latest main.
 Each Owner approval authorizes exactly one phase.
 
 ## 1. Current-state evidence
@@ -1151,8 +1143,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` | PR #38 squash-merged as `ad31d633`; full Phase 5 is in `origin/main` |
-| 6 | Runtime Preparation | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `bcb291bc6712ea74792a75db33c08ad414ba8664`; Gate revision `fc38fff`; clean branch `agent/electronic-employees-v0.7-phase6` from `origin/main@ad31d633` |
-| 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
+| 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
+| 7 | Manual Execution Lifecycle | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `a67c5eb`; Recovery Gate `7d265bd` on clean branch `agent/electronic-employees-v0.7-phase7` from `origin/main@f213ac19` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` | Not started |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
@@ -2185,6 +2177,9 @@ Final Phase 6 Gate revision evidence (2026-07-28):
 
 ### Phase 7: Manual Execution Lifecycle
 
+Status: `OWNER_APPROVED`. Phase 8 through Phase 10 remain `BLOCKED_BY_GATE`
+until PR #40 is confirmed merged into the latest `origin/main`.
+
 Independent value:
 
 - Explicit Start consumes the Phase 6 prepared state and creates/starts exactly
@@ -2235,6 +2230,255 @@ Exit:
   MemoryFact remains absent until Owner acceptance.
 - Activity contains only allowed lifecycle/reference metadata and cannot drive
   recovery or duplicate Session SSE/tool events.
+
+Phase 7 implementation evidence (2026-07-28):
+
+- Product/test implementation commit:
+  `a67c5eb` (`feat(phase7): add manual employee task execution lifecycle`).
+- Initial implementation-evidence commit:
+  `cd70778` (`docs(plan): record phase 7 implementation evidence`).
+- CI stabilization commit:
+  `d8d5b1b` (`fix(phase7): wait for resumed run projection`). The first PR
+  workflow (`30373666574`) exposed a scheduling race in which Resume had
+  successfully relaunched the original Run but could project the prior
+  `interrupted` checkpoint before the Runner goroutine persisted `running`.
+  Resume now performs a bounded read-only wait for the existing Session/Run
+  checkpoint, including idempotent repeated Resume; it never manufactures a
+  Task state or creates a replacement Run. A missing transition fails
+  explicitly instead of returning a stale successful response.
+- Actual implementation files:
+  - `internal/controlplane/employee_execution.go`,
+    `internal/controlplane/employee_tasks.go`, `internal/controlplane/runs.go`,
+    and `internal/controlplane/service.go`;
+  - `internal/employeestore/dispatch.go`,
+    `internal/employeestore/artifacts.go`, `internal/employeestore/tasks.go`,
+    `internal/employeestore/store.go`, and the bounded Candidate-capacity seam
+    in `internal/employeestore/phase4.go`;
+  - `internal/employee/task.go`, `internal/session/session.go`,
+    `internal/agent/agent.go`, `internal/app/app.go`, and
+    `internal/tool/tool.go`;
+  - `internal/web/employee_tasks.go` and `internal/web/server.go`;
+  - focused tests in the matching Employee, Employee Store, Session, Agent,
+    Tool, Control Plane, and Web packages.
+- Explicit Start is the only EmployeeTask execution entry. It reconciles the
+  Phase 6 prepared Session, writes a stable Run ID to the bounded dispatch
+  journal, persists that exact Run before launching the existing Runner,
+  atomically binds the Task's mutable Session/Run reference fields, and then
+  removes the completed coordination journal. The Phase 5 immutable
+  `SnapshotDigest` is never rewritten.
+- Dispatch stages `run_prepared`, `run_created`, and `task_bound` are bounded
+  idempotency evidence only. Run status, Plan, Approval, Verification, Event,
+  SSE, Tool, and recovery truth remain exclusively in the existing
+  Session/Run kernel.
+- Task API state is projected on read as `queued`, `prepared`,
+  `waiting_owner`, `running`, `verifying`, `interrupted`, `completed`,
+  `failed`, or `cancelled`. The EmployeeTask file still stores only the
+  Phase 5 inbox state plus immutable snapshot and mutable Session/Run
+  references.
+- The existing global Service Run gate enforces one executing Task for the
+  Workspace and therefore the conservative no-cross-Employee concurrency
+  rule. A separate Employee inbox scan rejects a second active Task for the
+  same Employee. Disabled/archived Employees cannot Start or Resume, while
+  historical Task projection remains readable.
+- Runner context is reconstructed only from the schema-v6 compact Employee
+  snapshot. Runtime tool registration is narrowed to its sealed effective
+  capability intersection, including network denial; it cannot add tools.
+  Existing Approval checks still apply to each call.
+- Completed pre-restart Tool calls now persist a canonical argument digest in
+  the existing Session `ToolRecord`. Resume consumes each completed digest at
+  most once and returns a synthetic prior-completion result instead of
+  replaying the Tool side effect; this is additive Session evidence, not a
+  second Tool state machine.
+- Only an existing `RunCompleted` result (which the existing Runner reaches
+  after verification) can produce post-run data. Candidate provenance binds
+  Employee, Task, Session, Run, and verified time; deterministic retries do not
+  duplicate it and no Candidate is automatically accepted. Artifact metadata
+  is immutable, stable-ID, path/digest-only, capped at 128 entries and 256 KiB,
+  mode `0600`, and does not store content, prompts, reasoning, raw Tool data,
+  credentials, Git operations, PRs, or deployment actions.
+- Named Phase 7 tests include:
+  - `TestEmployeeTaskConcurrentStartCreatesAndStartsOneStableRun`;
+  - `TestEmployeeTaskStartReconcilesBindingCrashPoints`;
+  - `TestEmployeeTaskInterruptedResumeUsesOriginalRun`;
+  - `TestEmployeeTaskPreparedAndWaitingOwnerCancellationIsIdempotent`;
+  - `TestEmployeeTaskVerificationFailureCreatesNoCandidateOrArtifact`;
+  - `TestEmployeeTaskVerifiedOutcomeCreatesCandidateWithoutPromotion`;
+  - `TestEmployeeTaskStartRejectsDisabledAndArchivedEmployeeWithoutDispatch`;
+  - `TestEmployeeTaskBindingMismatchFailsClosedWithoutExecution`;
+  - `TestInterruptedRunDoesNotReplayCompletedToolCall`;
+  - `TestTaskBindingIsAtomicIdempotentAndPreservesSnapshot`;
+  - `TestVerifiedArtifactMetadataIsBoundedImmutableAndReopens`;
+  - `TestArtifactSymlinkFailsClosedAndLeavesExternalFileUnchanged`;
+  - `TestStableRunIDIsIdempotentAndNeverCreatesReplacement`;
+  - `TestRegistryEmployeePolicyCanOnlyNarrowExistingTools`;
+  - `TestEmployeeTaskExecutionMutationsRequireSameOriginAndTrueEmptyBody`.
+- Local verification:
+  - PASS `TestEmployeeTaskInterruptedResumeUsesOriginalRun` with `-count=50`
+    after the CI stabilization;
+  - PASS Phase 7 scoped Control Plane/Run Control/Employee Store/Memory/Web
+    tests and Session/Agent/Approval/Verification/Loop/Loop Store/Team
+    regressions;
+  - PASS `go test ./... -count=1`;
+  - PASS `go test -race ./... -count=1`;
+  - PASS `go vet ./...`;
+  - PASS CLI and Web builds to `/tmp/gohermit-phase7-build`;
+  - PASS `gofmt`, `git diff --check`, credential-shaped secret scan, and
+    independent Ruby/Psych parse of `compose.yaml`;
+  - PASS macOS real Session Store and Artifact symlink/containment tests
+    without skip;
+  - targeted coverage: Control Plane 68.8%, Run Control 76.4%, Employee Store
+    74.1%, Employee Memory 91.1%, Web 69.2%.
+- Deliberate file-boundary deviation: Phase 7 required small additive seams in
+  `employee`, `session`, `agent`, `app`, and `tool` because the approved
+  contract requires stable Run construction, execution from sealed compact
+  context, effective-policy enforcement, and completed-Tool no-replay inside
+  the existing kernel. These changes do not introduce a second state machine
+  or any Phase 8 UI.
+- Remaining accepted risks:
+  - Employee/Session/dispatch files remain separate single-file atomic writes;
+    the bounded journal reconciles enumerated crash points but is not a
+    cross-file transaction or second recovery engine.
+  - Locks and the global Run gate remain single-Service-process boundaries;
+    cross-process execution leasing is deferred.
+  - When the bounded 128-item Candidate inbox is full, a verified Run remains
+    completed but does not add another Candidate; Owner cleanup is required
+    before later verified outcomes can be proposed.
+  - Artifact metadata truncates deterministically after 128 sorted modified
+    paths; content remains in the Workspace/Session truth and is never copied
+    into the Employee Store.
+- GitHub CI:
+  - initial push workflow `30373599234`: Go, Docker, and Web E2E PASS;
+  - initial PR workflow `30373666574`: Docker and Web E2E PASS; Go exposed the
+    Resume projection scheduling race described above;
+  - stabilization push workflow
+    [30374549389](https://github.com/Rj455555/GoHermit/actions/runs/30374549389):
+    Go, Docker, and Web E2E PASS;
+  - stabilization PR workflow
+    [30374553688](https://github.com/Rj455555/GoHermit/actions/runs/30374553688):
+    Go, Docker, and Web E2E PASS;
+  - `live-smoke` was skipped by workflow design in each successful run.
+- Review branch `agent/electronic-employees-v0.7-phase7` remains based on
+  `origin/main@f213ac19`; Draft PR
+  [#40](https://github.com/Rj455555/GoHermit/pull/40) remains Open, Draft,
+  unmerged, and without auto-merge. Phase 8 has not started.
+
+Phase 7 Recovery Gate evidence (2026-07-29):
+
+- Recovery Gate implementation/test commit:
+  `7d265bd` (`fix(phase7): harden interrupted tool recovery evidence`).
+- Root causes:
+  - `toolCallDigest` compacted raw JSON without structurally normalizing object
+    keys, strings, or numbers, so a semantically identical provider retry
+    could receive a different digest and replay a completed side effect.
+  - recovery collected every completed ToolRecord for the Run, so a matching
+    call from an earlier Turn could suppress a legitimate new call.
+  - ToolRecord fields had become recovery authority without common
+    fail-closed validation at Save, Load, Recover, and commit-journal apply.
+- Canonical argument digest:
+  - accepts exactly one valid UTF-8 JSON value, capped at 64 KiB and 64 nesting
+    levels;
+  - rejects trailing/multiple values, duplicate object keys, invalid UTF-8,
+    isolated-surrogate replacement, invalid JSON, and oversized input;
+  - recursively normalizes object order, whitespace, string escapes, and exact
+    decimal-number representation without float precision loss;
+  - hashes only `tool name + NUL + canonical JSON` and persists only canonical
+    lowercase SHA-256, never raw arguments.
+- Recovery frontier:
+  - every new ToolRecord stores the exact Run ID and Turn;
+  - semantic digest matching collects only completed records whose Turn equals
+    the interrupted Run's persisted `EndTurn`;
+  - each matching completed record is counted and consumed at most once;
+  - earlier Turns and `started`/`uncertain` records cannot enter the digest
+    pool, so uncertain reality still requires inspection and replanning;
+  - legacy no-digest records never participate in semantic matching and may
+    suppress only the exact tool-name/provider-Call-ID identity.
+- ToolRecord fail-closed contract:
+  - maximum 500 records; Call ID maximum 256 bytes; tool name maximum 128
+    bytes;
+  - Run ID must resolve within the same Session; Call IDs are unique per Run;
+  - non-empty digest is exactly 64 lowercase hexadecimal characters and
+    requires a valid Turn within Session and Run boundaries;
+  - lifecycle status is only `started`, `completed`, or `uncertain`;
+    `started_at`, `completed_at`, and record time must form a valid ordering;
+  - pre-Phase-7 records with empty status remain readable, while a completed
+    no-digest compatibility record may use exact Call ID only;
+  - the same validator runs before Save/CommitEvents, after strict Load
+    migration, during Recover, before recovered journal application, and
+    inside direct journal apply. Corruption fails before any tool execution.
+- No Session schema bump was needed. `ToolRecord.turn` is an additive schema-v6
+  field; existing schema-v1 through schema-v6 migration remains one-way and
+  legacy records retain their exact-ID-only compatibility boundary.
+- Added/expanded tests:
+  - `TestToolCallDigestCanonicalizesJSON`;
+  - `TestToolCallDigestRejectsAmbiguousOrUnboundedJSON`;
+  - `TestInvalidToolArgumentsNeverExecute`;
+  - `TestInterruptedRunDoesNotReplayCompletedToolCall`;
+  - `TestRecoveryCanonicalDigestIgnoresWhitespaceAndEquivalentEscapes`;
+  - `TestRecoveryExecutesGenuinelyDifferentArguments`;
+  - `TestRecoveryDoesNotConsumeMatchingCallFromEarlierTurn`;
+  - `TestRecoveryNeverSuppressesStartedOrUncertainCall`;
+  - `TestRecoveryConsumesEachFrontierCompletionOnce`;
+  - `TestRecoveryCountsMultipleFrontierCompletions`;
+  - `TestRecoveryLegacyRecordUsesExactCallIDOnly`;
+  - `TestCorruptToolRecordPreventsRecoveryBeforeToolExecution`;
+  - `TestToolRecordValidationRejectsUnsafeRecoveryEvidence`;
+  - `TestToolRecordCorruptionMakesLoadAndRecoverFailClosed`;
+  - `TestCommitJournalApplyRejectsCorruptToolRecord`;
+  - `TestApplyJournalValidatesToolRecordBeforeWritingCheckpoint`;
+  - `TestLegacyToolRecordWithoutDigestRoundTrips`.
+- Local verification:
+  - PASS `go test ./internal/agent ./internal/session ./internal/controlplane -count=1`;
+  - PASS the same scoped packages with `-race -count=1`;
+  - PASS `go test ./... -count=1` and `go test -race ./... -count=1`;
+  - PASS `go vet ./...`, both required CLI/Web builds, `gofmt`, and
+    `git diff --check`;
+  - PASS credential-shaped secret scan and independent Ruby/Psych
+    `compose.yaml` parse;
+  - focused package coverage: Agent 77.0%, Session 74.4%.
+- GitHub implementation-head CI:
+  - push workflow
+    [30377838145](https://github.com/Rj455555/GoHermit/actions/runs/30377838145):
+    Go, Docker, and Web E2E PASS;
+  - PR workflow
+    [30377841927](https://github.com/Rj455555/GoHermit/actions/runs/30377841927):
+    Go, Docker, and Web E2E PASS;
+  - `live-smoke` skipped by workflow design.
+- Initial Recovery Gate evidence commit:
+  `09b90ba` (`docs(plan): record phase 7 recovery gate evidence`).
+- Evidence-head CI exposed one pre-existing Phase 7 projection race:
+  - push workflow
+    [30378206311](https://github.com/Rj455555/GoHermit/actions/runs/30378206311)
+    passed;
+  - PR workflow
+    [30378209923](https://github.com/Rj455555/GoHermit/actions/runs/30378209923)
+    failed only `TestEmployeeTaskConcurrentStartCreatesAndStartsOneStableRun`:
+    the stable Run was bound and launched, but Start could project the prior
+    `prepared` checkpoint before the Runner goroutine persisted `running`.
+- Start projection stabilization commit:
+  `b99213b` (`fix(phase7): await started run projection`).
+  Start now uses the existing bounded, read-only Session/Run projection wait
+  after a successful launch. An `errRunActive` retry is idempotent only when
+  the active identity is the same Session/Run; a different active Run remains
+  a conflict. No state is manufactured and no replacement Run is created.
+- Stabilization verification:
+  - PASS `TestEmployeeTaskConcurrentStartCreatesAndStartsOneStableRun` with
+    `-count=50`;
+  - PASS the complete scoped normal/race and repository-wide normal/race
+    suites, vet, CLI/Web builds, gofmt, and diff check;
+  - push workflow
+    [30378858495](https://github.com/Rj455555/GoHermit/actions/runs/30378858495):
+    Go, Docker, and Web E2E PASS;
+  - PR workflow
+    [30378861605](https://github.com/Rj455555/GoHermit/actions/runs/30378861605):
+    Go, Docker, and Web E2E PASS;
+  - `live-smoke` skipped by workflow design.
+- Remaining accepted risk: no-digest legacy records cannot support semantic
+  argument comparison; compatibility therefore depends on the provider's
+  exact Call ID identity. They never enter the new digest frontier. All new
+  records carry both canonical digest and Turn.
+- The exact final review Head and final evidence-head CI are recorded in PR
+  #40 after the single plan-evidence commit is pushed, avoiding an infinite
+  self-referential evidence chain. Phase 8 remains completely unstarted.
 
 ### Phase 8: Employees and Tasks Web UI
 
@@ -2473,11 +2717,8 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-The Phase 6 Gate ends here. No Phase 7 implementation is authorized until the
-Owner explicitly approves Phase 6, for example:
+Phase 7 is Owner-approved. No Phase 8 implementation is authorized until PR
+#40 is confirmed merged and the clean Phase 8 branch is created from the latest
+`origin/main`.
 
-```text
-批准 Phase 6，开始 Phase 7
-```
-
-STATUS: WAITING_FOR_PHASE_6_REAPPROVAL
+STATUS: PHASE_7_OWNER_APPROVED_PENDING_MERGE

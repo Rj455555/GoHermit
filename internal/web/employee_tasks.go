@@ -64,6 +64,36 @@ func (s *Server) cancelEmployeeTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, task)
 }
 
+func (s *Server) startEmployeeTask(w http.ResponseWriter, r *http.Request) {
+	if !requireSameOrigin(w, r) {
+		return
+	}
+	if !requirePhase4EmptyBody(w, r, "Employee Task start") {
+		return
+	}
+	task, err := s.svc.StartEmployeeTask(r.Context(), r.PathValue("taskID"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
+func (s *Server) resumeEmployeeTask(w http.ResponseWriter, r *http.Request) {
+	if !requireSameOrigin(w, r) {
+		return
+	}
+	if !requirePhase4EmptyBody(w, r, "Employee Task resume") {
+		return
+	}
+	task, err := s.svc.ResumeEmployeeTask(r.Context(), r.PathValue("taskID"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
 func employeeTaskListOptions(w http.ResponseWriter, r *http.Request) (employeestore.TaskListOptions, bool) {
 	limit := 0
 	if raw := r.URL.Query().Get("limit"); raw != "" {

@@ -448,7 +448,7 @@ type EmployeeTaskView struct {
 	EmployeeID       string                            `json:"employee_id"`
 	EmployeeRevision int                               `json:"employee_revision"`
 	Prompt           string                            `json:"prompt"`
-	State            employee.TaskState                `json:"state"`
+	State            EmployeeTaskExecutionState        `json:"state"`
 	CreatedAt        time.Time                         `json:"created_at"`
 	UpdatedAt        time.Time                         `json:"updated_at"`
 	CancelledAt      *time.Time                        `json:"cancelled_at,omitempty"`
@@ -461,6 +461,12 @@ type EmployeeTaskView struct {
 	SnapshotDigest   string                            `json:"snapshot_digest"`
 	SessionID        string                            `json:"session_id"`
 	RunID            string                            `json:"run_id"`
+	Artifacts        []employeestore.Artifact          `json:"artifacts"`
+}
+
+type EmployeeTaskPage struct {
+	Tasks      []EmployeeTaskView `json:"tasks"`
+	NextCursor string             `json:"next_cursor,omitempty"`
 }
 
 func (s *Service) CreateEmployeeTask(_ context.Context, employeeID string, input EmployeeTaskCreateInput) (EmployeeTaskView, error) {
@@ -508,28 +514,55 @@ func (s *Service) CreateEmployeeTask(_ context.Context, employeeID string, input
 	if err != nil {
 		return EmployeeTaskView{}, classifyEmployeeStore(err)
 	}
-	return projectEmployeeTask(created), nil
+	return projectEmployeeTaskMetadata(created), nil
 }
 
-func (s *Service) ListEmployeeTasks(_ context.Context, employeeID string, options employeestore.TaskListOptions) (employeestore.TaskPage, error) {
+func (s *Service) ListEmployeeTasks(ctx context.Context, employeeID string, options employeestore.TaskListOptions) (EmployeeTaskPage, error) {
 	page, err := s.employees.ListTasks(employeeID, options)
-	return page, classifyEmployeeStore(err)
+	if err != nil {
+		return EmployeeTaskPage{}, classifyEmployeeStore(err)
+	}
+	result := EmployeeTaskPage{Tasks: make([]EmployeeTaskView, 0, len(page.Tasks)), NextCursor: page.NextCursor}
+	for _, summary := range page.Tasks {
+		task, loadErr := s.employees.GetTask(summary.ID)
+		if loadErr != nil {
+			return EmployeeTaskPage{}, classifyEmployeeStore(loadErr)
+		}
+		view, projectErr := s.projectEmployeeTask(ctx, task)
+		if projectErr != nil {
+			return EmployeeTaskPage{}, projectErr
+		}
+		result.Tasks = append(result.Tasks, view)
+	}
+	return result, nil
 }
 
-func (s *Service) GetEmployeeTask(_ context.Context, taskID string) (EmployeeTaskView, error) {
+func (s *Service) GetEmployeeTask(ctx context.Context, taskID string) (EmployeeTaskView, error) {
 	task, err := s.employees.GetTask(taskID)
 	if err != nil {
 		return EmployeeTaskView{}, classifyEmployeeStore(err)
 	}
-	return projectEmployeeTask(task), nil
+	return s.projectEmployeeTask(ctx, task)
 }
 
-func (s *Service) CancelEmployeeTask(_ context.Context, taskID string) (EmployeeTaskView, error) {
+func (s *Service) CancelEmployeeTask(ctx context.Context, taskID string) (EmployeeTaskView, error) {
+	s.employeeTaskMu.Lock()
+	defer s.employeeTaskMu.Unlock()
+	current, err := s.employees.GetTask(taskID)
+	if err != nil {
+		return EmployeeTaskView{}, classifyEmployeeStore(err)
+	}
+	if current.SessionID != "" {
+		return s.cancelBoundEmployeeTask(ctx, current)
+	}
 	task, err := s.employees.CancelTask(taskID)
 	if err != nil {
 		return EmployeeTaskView{}, classifyEmployeeStore(err)
 	}
-	return projectEmployeeTask(task), nil
+	if err := s.employees.DiscardPreparedDispatch(task.ID); err != nil {
+		return EmployeeTaskView{}, classifyEmployeeStore(err)
+	}
+	return s.projectEmployeeTask(ctx, task)
 }
 
 func selectTaskSkills(bindings []employee.SkillBinding, selections []EmployeeTaskSkillSelection) ([]employee.SkillBinding, error) {
@@ -669,7 +702,7 @@ func selectTaskProject(bindings []employee.ProjectBinding, bindingID string) (em
 	return employee.ProjectBinding{}, fmt.Errorf("ProjectBinding %q is not in this Employee revision", bindingID)
 }
 
-func projectEmployeeTask(task employee.EmployeeTask) EmployeeTaskView {
+func projectEmployeeTaskMetadata(task employee.EmployeeTask) EmployeeTaskView {
 	project := EmployeeTaskProjectProjection{
 		ID: task.ProjectBinding.ID, Label: task.ProjectBinding.Label,
 		WorkspaceFingerprint: task.ProjectBinding.WorkspaceFingerprint,
@@ -683,7 +716,7 @@ func projectEmployeeTask(task employee.EmployeeTask) EmployeeTaskView {
 	}
 	return EmployeeTaskView{
 		SchemaVersion: task.SchemaVersion, ID: task.ID, EmployeeID: task.EmployeeID,
-		EmployeeRevision: task.EmployeeRevision, Prompt: task.Prompt, State: task.State,
+		EmployeeRevision: task.EmployeeRevision, Prompt: task.Prompt, State: EmployeeTaskExecutionState(task.State),
 		CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt, CancelledAt: cloneControlPlaneTime(task.CancelledAt),
 		EmployeeSnapshot: EmployeeTaskSnapshotMetadata{
 			SchemaVersion: task.EmployeeSnapshot.SchemaVersion,
@@ -694,7 +727,7 @@ func projectEmployeeTask(task employee.EmployeeTask) EmployeeTaskView {
 		Knowledge:      append([]employee.TaskKnowledgeSnapshot{}, task.Knowledge...),
 		MemoryFacts:    append([]employee.TaskMemoryFactSnapshot{}, task.MemoryFacts...),
 		ProjectBinding: project, Policy: task.Policy, SnapshotDigest: task.SnapshotDigest,
-		SessionID: task.SessionID, RunID: task.RunID,
+		SessionID: task.SessionID, RunID: task.RunID, Artifacts: []employeestore.Artifact{},
 	}
 }
 

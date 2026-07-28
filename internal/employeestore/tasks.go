@@ -37,6 +37,8 @@ type TaskSummary struct {
 	UpdatedAt        time.Time          `json:"updated_at"`
 	CancelledAt      *time.Time         `json:"cancelled_at,omitempty"`
 	SnapshotDigest   string             `json:"snapshot_digest"`
+	SessionID        string             `json:"session_id,omitempty"`
+	RunID            string             `json:"run_id,omitempty"`
 }
 
 type TaskPage struct {
@@ -217,6 +219,48 @@ func (s *Store) CancelTask(taskID string) (employee.EmployeeTask, error) {
 	return next.Clone(), nil
 }
 
+// BindTask atomically updates one Task record with stable Session/Run
+// references and then its metadata index. Exact retries are idempotent.
+func (s *Store) BindTask(taskID, sessionID, runID string) (employee.EmployeeTask, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.getTaskLocked(taskID)
+	if err != nil {
+		return employee.EmployeeTask{}, err
+	}
+	next, err := employee.BindTask(current, sessionID, runID, time.Now().UTC())
+	if err != nil {
+		return employee.EmployeeTask{}, fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	if reflect.DeepEqual(current, next) {
+		return current.Clone(), nil
+	}
+	index, err := s.loadTaskIndex(next.EmployeeID)
+	if err != nil {
+		return employee.EmployeeTask{}, err
+	}
+	position := findTaskSummary(index.Tasks, next.ID)
+	if position < 0 {
+		return employee.EmployeeTask{}, fmt.Errorf("%w: bound Employee Task is absent from index", ErrCorrupt)
+	}
+	if err := s.writeJSON(next, employee.MaxTaskFileBytes, next.EmployeeID, "tasks", next.ID+".json"); err != nil {
+		return employee.EmployeeTask{}, err
+	}
+	index.Tasks[position] = summarizeTask(next)
+	sortTaskSummaries(index.Tasks)
+	if err := s.saveTaskIndex(index); err != nil {
+		return employee.EmployeeTask{}, err
+	}
+	if err := s.appendActivity(next.EmployeeID, ActivityEvent{
+		EmployeeID: next.EmployeeID, Type: ActivityExecutionRef,
+		EmployeeRevision: next.EmployeeRevision, TaskID: next.ID,
+		SessionID: next.SessionID, RunID: next.RunID,
+	}); err != nil {
+		return employee.EmployeeTask{}, err
+	}
+	return next.Clone(), nil
+}
+
 func (s *Store) getTaskLocked(taskID string) (employee.EmployeeTask, error) {
 	if err := validateStoreID(taskID); err != nil {
 		return employee.EmployeeTask{}, err
@@ -341,6 +385,17 @@ func (s *Store) loadTaskIndex(employeeID string) (taskIndexFile, error) {
 			}
 			continue
 		}
+		if strings.HasSuffix(entry.Name(), ".artifacts.json") {
+			taskID := strings.TrimSuffix(entry.Name(), ".artifacts.json")
+			summary, exists := expectedFiles[taskID+".json"]
+			if !exists {
+				return taskIndexFile{}, fmt.Errorf("%w: Artifact metadata has no indexed Employee Task", ErrCorrupt)
+			}
+			if _, err := s.loadArtifactFile(summary); err != nil {
+				return taskIndexFile{}, err
+			}
+			continue
+		}
 		summary, exists := expectedFiles[entry.Name()]
 		if !exists {
 			return taskIndexFile{}, fmt.Errorf("%w: unindexed Employee Task entry %q", ErrCorrupt, entry.Name())
@@ -412,11 +467,23 @@ func validateTaskIndex(index taskIndexFile, employeeID string) error {
 		}
 		switch item.State {
 		case employee.TaskQueued:
-			if item.CancelledAt != nil || !item.UpdatedAt.Equal(item.CreatedAt) {
+			if (item.SessionID == "") != (item.RunID == "") {
+				return errors.New("Employee Task index contains incomplete execution binding")
+			}
+			if item.SessionID != "" {
+				if err := validateStoreID(item.SessionID); err != nil {
+					return errors.New("Employee Task index contains invalid Session id")
+				}
+				if err := validateStoreID(item.RunID); err != nil {
+					return errors.New("Employee Task index contains invalid Run id")
+				}
+			}
+			if item.CancelledAt != nil || (item.SessionID == "" && !item.UpdatedAt.Equal(item.CreatedAt)) {
 				return errors.New("Employee Task index contains invalid queued lifecycle")
 			}
 		case employee.TaskCancelled:
-			if item.CancelledAt == nil || !item.CancelledAt.Equal(item.UpdatedAt) {
+			if item.CancelledAt == nil || !item.CancelledAt.Equal(item.UpdatedAt) ||
+				item.SessionID != "" || item.RunID != "" {
 				return errors.New("Employee Task index contains invalid cancelled lifecycle")
 			}
 		default:
@@ -443,6 +510,8 @@ func summarizeTask(task employee.EmployeeTask) TaskSummary {
 		UpdatedAt:        task.UpdatedAt,
 		CancelledAt:      cloneTaskTime(task.CancelledAt),
 		SnapshotDigest:   task.SnapshotDigest,
+		SessionID:        task.SessionID,
+		RunID:            task.RunID,
 	}
 }
 

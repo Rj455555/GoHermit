@@ -22,6 +22,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/approval"
 	modelauth "github.com/Rj455555/GoHermit/internal/auth"
 	"github.com/Rj455555/GoHermit/internal/config"
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/employeestore"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/knowledge"
@@ -78,30 +79,33 @@ func classified(kind Kind, err error) *Error {
 // event journal; transports wrap it with request parsing and response
 // writing.
 type Service struct {
-	Workspace        string
-	ConfigPath       string
-	active           atomic.Bool
-	store            *session.Store
-	runMu            sync.Mutex
-	prepareMu        sync.Mutex
-	activeSession    string
-	activeRun        string
-	cancelRun        context.CancelFunc
-	publish          Publisher
-	credentials      *modelauth.Store
-	owner            *owner.Store
-	logins           *modelauth.LoginManager
-	build            func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error)
-	codexModelsMu    sync.Mutex
-	codexModels      []config.ModelOption
-	codexModelsAt    time.Time
-	teamWorker       team.Worker
-	teamTemplates    *teamtemplate.Store
-	loopStore        *loopstore.Store
-	employees        *employeestore.Store
-	skills           *skill.Catalog
-	knowledge        *knowledge.Catalog
-	prepareStageHook func(string) error
+	Workspace             string
+	ConfigPath            string
+	active                atomic.Bool
+	store                 *session.Store
+	runMu                 sync.Mutex
+	prepareMu             sync.Mutex
+	employeeTaskMu        sync.Mutex
+	activeSession         string
+	activeRun             string
+	cancelRun             context.CancelFunc
+	publish               Publisher
+	credentials           *modelauth.Store
+	owner                 *owner.Store
+	logins                *modelauth.LoginManager
+	build                 func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error)
+	buildEmployee         func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption, employee.EffectivePolicy) (*app.Runtime, error)
+	codexModelsMu         sync.Mutex
+	codexModels           []config.ModelOption
+	codexModelsAt         time.Time
+	teamWorker            team.Worker
+	teamTemplates         *teamtemplate.Store
+	loopStore             *loopstore.Store
+	employees             *employeestore.Store
+	skills                *skill.Catalog
+	knowledge             *knowledge.Catalog
+	prepareStageHook      func(string) error
+	employeeTaskStageHook func(string) error
 	// approvals is the single in-process rendezvous between parked runners
 	// and DecideApproval for the whole service lifetime (ADR 0011, C3).
 	approvals *approvalBroker
@@ -168,6 +172,12 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		approvals: broker,
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
 			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: broker}, nil)
+		},
+		buildEmployee: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption, policy employee.EffectivePolicy) (*app.Runtime, error) {
+			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{
+				Selection: &selection, APIKey: apiKey, Models: models, Approvals: broker,
+				EffectivePolicy: &policy,
+			}, nil)
 		},
 	}, nil
 }

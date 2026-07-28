@@ -249,7 +249,7 @@ func (s *Store) AddMemoryCandidate(id string, candidate employeememory.Candidate
 		return ErrConflict
 	}
 	if len(candidates) >= employeememory.MaxCandidates {
-		return errors.New("Memory Candidate limit reached")
+		return fmt.Errorf("%w: Memory Candidate limit reached", ErrCapacity)
 	}
 	candidates = append(candidates, candidate)
 	employeememory.SortCandidates(candidates)
