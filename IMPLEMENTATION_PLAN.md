@@ -14,11 +14,11 @@
   `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`.
 - Phase 6: `OWNER_APPROVED`; squash-merged through PR #39 into
   `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`.
-- Phase 7: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
-  `agent/electronic-employees-v0.7-phase7`.
+- Phase 7: `OWNER_APPROVED`; ready for Owner-authorized squash merge through
+  PR #40 from clean branch `agent/electronic-employees-v0.7-phase7`.
 - Phase 8 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_7_REAPPROVAL`.
+  `PHASE_7_OWNER_APPROVED_PENDING_MERGE`.
 
 ### Fixed invariants
 
@@ -67,18 +67,16 @@
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` |
 | 6 | Runtime Preparation | `OWNER_APPROVED` |
-| 7 | Manual Execution Lifecycle | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
+| 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
 
 ### Current phase scope
 
-- Phases 1 through 6 are Owner-approved and closed to further implementation.
-- Phase 7 implements only Manual Execution Lifecycle: explicit Start,
-  at-most-once existing Run creation/launch, immutable Task binding, projected
-  status, cancel/resume/restart, conservative Employee/Workspace concurrency,
-  and verified bounded Candidate/Artifact production.
+- Phases 1 through 7 are Owner-approved and closed to further implementation.
+- Phase 7 Manual Execution Lifecycle is complete and awaiting the authorized
+  PR #40 squash merge before Phase 8 work begins.
 - Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery remains
   the only execution truth and kernel.
 - Keep Phase 8 and all later phases blocked until the next explicit Owner Gate.
@@ -112,22 +110,16 @@ git diff --check
 
 ### Next Gate
 
-Phase 8 may start only after the Owner explicitly approves Phase 7,
-for example:
+Phase 8 may start only after the Owner-authorized PR #40 squash merge is
+confirmed in the latest `origin/main`. Until then, stop with:
 
 ```text
-批准 Phase 7，开始 Phase 8
-```
-
-Until then, stop with:
-
-```text
-STATUS: WAITING_FOR_PHASE_7_REAPPROVAL
+STATUS: PHASE_7_OWNER_APPROVED_PENDING_MERGE
 ```
 
 ---
 
-Plan status: `PHASE_7_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
+Plan status: `PHASE_7_OWNER_APPROVED_PENDING_MERGE`
 Baseline: `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`
 Feature branch: `agent/electronic-employees-v0.7-phase7`
 Last audited: 2026-07-29
@@ -135,8 +127,8 @@ Last audited: 2026-07-29
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phases 1 through
-6 are Owner-approved. Phase 7 is the only authorized implementation scope;
-Phase 8 through Phase 10 remain blocked.
+7 are Owner-approved. Phase 8 through Phase 10 remain blocked until PR #40 is
+confirmed merged and a clean Phase 8 branch is created from the latest main.
 Each Owner approval authorizes exactly one phase.
 
 ## 1. Current-state evidence
@@ -2185,8 +2177,8 @@ Final Phase 6 Gate revision evidence (2026-07-28):
 
 ### Phase 7: Manual Execution Lifecycle
 
-Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 8 through Phase 10 remain
-`BLOCKED_BY_GATE`.
+Status: `OWNER_APPROVED`. Phase 8 through Phase 10 remain `BLOCKED_BY_GATE`
+until PR #40 is confirmed merged into the latest `origin/main`.
 
 Independent value:
 
@@ -2725,11 +2717,8 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-Phase 7 is the only authorized implementation scope. No Phase 8 implementation
-is authorized until the Owner explicitly approves Phase 7, for example:
+Phase 7 is Owner-approved. No Phase 8 implementation is authorized until PR
+#40 is confirmed merged and the clean Phase 8 branch is created from the latest
+`origin/main`.
 
-```text
-批准 Phase 7，开始 Phase 8
-```
-
-STATUS: WAITING_FOR_PHASE_7_REAPPROVAL
+STATUS: PHASE_7_OWNER_APPROVED_PENDING_MERGE
