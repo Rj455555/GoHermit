@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/storage"
@@ -925,6 +926,9 @@ func (s *Store) atomicWriteMode(data []byte, exclusive bool, parts ...string) er
 }
 
 func decodeStrict(raw []byte, target any) error {
+	if !utf8.Valid(raw) {
+		return errors.New("employee store file is invalid UTF-8")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {

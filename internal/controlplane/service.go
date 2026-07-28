@@ -24,6 +24,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/employeestore"
 	"github.com/Rj455555/GoHermit/internal/event"
+	"github.com/Rj455555/GoHermit/internal/knowledge"
 	"github.com/Rj455555/GoHermit/internal/loopstore"
 	"github.com/Rj455555/GoHermit/internal/owner"
 	"github.com/Rj455555/GoHermit/internal/session"
@@ -98,6 +99,7 @@ type Service struct {
 	loopStore     *loopstore.Store
 	employees     *employeestore.Store
 	skills        *skill.Catalog
+	knowledge     *knowledge.Catalog
 	// approvals is the single in-process rendezvous between parked runners
 	// and DecideApproval for the whole service lifetime (ADR 0011, C3).
 	approvals *approvalBroker
@@ -135,6 +137,10 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	knowledgeCatalog, err := knowledge.NewCatalog("")
+	if err != nil {
+		return nil, err
+	}
 	store, err := session.NewStore(workspace, conf.Storage.Directory)
 	if err != nil {
 		return nil, err
@@ -156,6 +162,7 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		loopStore: loopStore, loopStoreErr: loopStoreErr,
 		employees: employeeStore,
 		skills:    skillCatalog,
+		knowledge: knowledgeCatalog,
 		approvals: broker,
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
 			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: broker}, nil)
