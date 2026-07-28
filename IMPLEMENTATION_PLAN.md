@@ -12,11 +12,13 @@
   `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`.
 - Phase 5: `OWNER_APPROVED`; squash-merged through PR #38 into
   `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`.
-- Phase 6: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
-  `agent/electronic-employees-v0.7-phase6`.
-- Phase 7 and every later product-code change remain blocked.
+- Phase 6: `OWNER_APPROVED`; squash-merged through PR #39 into
+  `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`.
+- Phase 7: `IN_PROGRESS` on clean branch
+  `agent/electronic-employees-v0.7-phase7`.
+- Phase 8 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_6_REAPPROVAL`.
+  `WAITING_FOR_PHASE_7_APPROVAL`.
 
 ### Fixed invariants
 
@@ -64,31 +66,30 @@
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `OWNER_APPROVED` |
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` |
-| 6 | Runtime Preparation | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` |
+| 6 | Runtime Preparation | `OWNER_APPROVED` |
+| 7 | Manual Execution Lifecycle | `IN_PROGRESS` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
 
 ### Current phase scope
 
-- Phases 1 through 5 are Owner-approved and closed to further implementation.
-- Runtime Preparation implementation and its final Gate revision are complete:
-  readiness revalidation now uses the existing live Codex account model
-  catalog, while the Session Store fixes a canonical real Workspace/Store root
-  and fails closed on unsafe parent/final paths before dispatch. Bounded compact
-  context, schema v6, stable Session ID, dispatch reconciliation, and every
-  revised readiness path still stop with zero execution.
-- Make no further product-code change while Phase 6 awaits Owner review.
-- Keep Phase 7 and all later phases blocked until the next explicit Owner Gate.
+- Phases 1 through 6 are Owner-approved and closed to further implementation.
+- Phase 7 implements only Manual Execution Lifecycle: explicit Start,
+  at-most-once existing Run creation/launch, immutable Task binding, projected
+  status, cancel/resume/restart, conservative Employee/Workspace concurrency,
+  and verified bounded Candidate/Artifact production.
+- Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery remains
+  the only execution truth and kernel.
+- Keep Phase 8 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No Run creation/start, model/provider inference, Tool execution, execution
-  Workspace lease, Workspace mutation, Knowledge refresh, Memory Candidate,
-  automatic start, Phase 7 lifecycle, UI, Team Role Mapping, version, or
-  release change.
-- No Phase 7 implementation.
+- No second Run/Event/Plan/Approval/Verification/Tool/recovery state machine,
+  Task SSE, scheduler, daemon, auto-start-next, automatic Memory acceptance,
+  multi-Workspace, cross-Employee read-only concurrency, Team Role Mapping,
+  Phase 8 UI, version, or release change.
+- No Phase 8 implementation.
 - No merge, auto-merge, force push, or automatic Workspace submission.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
@@ -111,32 +112,31 @@ git diff --check
 
 ### Next Gate
 
-Phase 7 may start only after the Owner explicitly approves Phase 6,
+Phase 8 may start only after the Owner explicitly approves Phase 7,
 for example:
 
 ```text
-批准 Phase 6，开始 Phase 7
+批准 Phase 7，开始 Phase 8
 ```
 
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_6_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_7_APPROVAL
 ```
 
 ---
 
-Plan status: `PHASE_6_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
-Baseline: `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`
-Feature branch: `agent/electronic-employees-v0.7-phase6`
+Plan status: `PHASE_7_IN_PROGRESS`
+Baseline: `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`
+Feature branch: `agent/electronic-employees-v0.7-phase7`
 Last audited: 2026-07-28
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phases 1 through
-5 are Owner-approved. Phase 6 implementation and Gate revision verification
-are complete and awaiting Owner reapproval; Phase 7 through Phase 10 remain
-blocked.
+6 are Owner-approved. Phase 7 is the only authorized implementation scope;
+Phase 8 through Phase 10 remain blocked.
 Each Owner approval authorizes exactly one phase.
 
 ## 1. Current-state evidence
@@ -1151,8 +1151,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` | PR #38 squash-merged as `ad31d633`; full Phase 5 is in `origin/main` |
-| 6 | Runtime Preparation | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `bcb291bc6712ea74792a75db33c08ad414ba8664`; Gate revision `fc38fff`; clean branch `agent/electronic-employees-v0.7-phase6` from `origin/main@ad31d633` |
-| 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
+| 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
+| 7 | Manual Execution Lifecycle | `IN_PROGRESS` | Clean branch `agent/electronic-employees-v0.7-phase7` from `origin/main@f213ac19` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` | Not started |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
@@ -2185,6 +2185,8 @@ Final Phase 6 Gate revision evidence (2026-07-28):
 
 ### Phase 7: Manual Execution Lifecycle
 
+Status: `IN_PROGRESS`. Phase 8 through Phase 10 remain `BLOCKED_BY_GATE`.
+
 Independent value:
 
 - Explicit Start consumes the Phase 6 prepared state and creates/starts exactly
@@ -2473,11 +2475,11 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-The Phase 6 Gate ends here. No Phase 7 implementation is authorized until the
-Owner explicitly approves Phase 6, for example:
+Phase 7 is the only authorized implementation scope. No Phase 8 implementation
+is authorized until the Owner explicitly approves Phase 7, for example:
 
 ```text
-批准 Phase 6，开始 Phase 7
+批准 Phase 7，开始 Phase 8
 ```
 
-STATUS: WAITING_FOR_PHASE_6_REAPPROVAL
+STATUS: PHASE_7_IN_PROGRESS
