@@ -8,10 +8,10 @@
 - Phase 1: Owner-approved on 2026-07-28.
 - Phase 2: Owner-approved on 2026-07-28 after both security Gate revisions.
 - Phase 3: Owner-approved on 2026-07-28 after the clean-branch Gate revision.
-- Phase 4: explicitly authorized and `IN_PROGRESS`.
+- Phase 4: implementation complete; `COMPLETE_WAITING_FOR_OWNER`.
 - Phase 5 and every later product-code change remain blocked.
 - Required terminal status:
-  `PHASE_4_IN_PROGRESS`.
+  `WAITING_FOR_PHASE_4_APPROVAL`.
 
 ### Fixed invariants
 
@@ -57,7 +57,7 @@
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `OWNER_APPROVED` |
-| 4 | Knowledge Base and Employee Memory | `IN_PROGRESS` |
+| 4 | Knowledge Base and Employee Memory | `COMPLETE_WAITING_FOR_OWNER` |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` |
@@ -68,9 +68,8 @@
 ### Current phase scope
 
 - Phases 1 through 3 are Owner-approved and closed to further implementation.
-- Implement only deterministic explicit-root local Knowledge/Citations,
-  owner-scoped Employee-isolated Memory and Candidate management, bounded
-  Knowledge/Memory context layers, and their Control Plane/Web APIs.
+- Phase 4 implementation and verification are complete. No further product
+  change is authorized while it waits for Owner approval.
 - Keep Phase 5 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
@@ -111,12 +110,12 @@ for example:
 Until then, stop with:
 
 ```text
-STATUS: PHASE_4_IN_PROGRESS
+STATUS: WAITING_FOR_PHASE_4_APPROVAL
 ```
 
 ---
 
-Plan status: `PHASE_4_IN_PROGRESS`
+Plan status: `WAITING_FOR_PHASE_4_APPROVAL`
 Baseline: `origin/main@9a75e8f021b2bd5de1522d93e7463b313318c99d`
 Feature branch: `agent/electronic-employees-v0.7-phase3`
 Last audited: 2026-07-28
@@ -124,7 +123,7 @@ Last audited: 2026-07-28
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phases 1 through
-3 are Owner-approved and Phase 4 is the only authorized implementation scope;
+3 are Owner-approved and Phase 4 is complete and waiting for its Owner Gate;
 Phase 5 must not start until the Owner explicitly approves Phase 4. Each Owner
 approval authorizes exactly one phase.
 
@@ -1135,7 +1134,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Owner-approved 2026-07-28; clean implementation `1fff90c`; Gate fix `ada73f1`; Draft PR #36 |
-| 4 | Knowledge Base and Employee Memory | `IN_PROGRESS` | Authorized 2026-07-28; evidence pending |
+| 4 | Knowledge Base and Employee Memory | `COMPLETE_WAITING_FOR_OWNER` | Implementation `6e3a23ca3eff1e710b88f319633e23df598b1f29`; Draft PR #36; evidence commit pending |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
@@ -1566,6 +1565,132 @@ UI.
 Exit: containment/capacity/citation/isolation/secret/edit/Forget tests pass;
 Knowledge and Memory context layers are bounded and Employee-isolated.
 
+#### Phase 4 completion evidence
+
+- Status: `COMPLETE_WAITING_FOR_OWNER`. Phase 5 through Phase 10 remain
+  `BLOCKED_BY_GATE`; no Phase 5 code was started.
+- Implementation commit:
+  `6e3a23ca3eff1e710b88f319633e23df598b1f29`
+  (`feat(employees): add phase 4 knowledge and memory`).
+- Evidence commit: pending until this evidence record is committed.
+- Branch and review: `agent/electronic-employees-v0.7-phase3`; existing Draft
+  PR #36 remains the only PR and must remain Draft/Open/unmerged.
+- Actual product/test files:
+
+```text
+internal/knowledge/knowledge.go
+internal/knowledge/knowledge_test.go
+internal/employeememory/memory.go
+internal/employeememory/memory_test.go
+internal/employeestore/phase4.go
+internal/employeestore/phase4_test.go
+internal/contextmgr/employee_context.go
+internal/contextmgr/employee_context_test.go
+internal/controlplane/employee_knowledge.go
+internal/controlplane/employee_memory.go
+internal/controlplane/employee_phase4_test.go
+internal/controlplane/service.go
+internal/web/employee_knowledge.go
+internal/web/employee_memory.go
+internal/web/employee_phase4_test.go
+internal/web/server.go
+IMPLEMENTATION_PLAN.md
+```
+
+- Knowledge is local-only and synchronous. `GOHERMIT_KNOWLEDGE_ROOT` is the
+  sole optional local root; an unset root permits bounded manual text only and
+  never scans Home. File/directory indexing uses lexical and realpath
+  containment, rejects `%`-encoded/ambiguous paths, traversal, symlinks,
+  non-regular/executable/binary/secret-like/private-runtime content, unsupported
+  extensions, excessive depth/count/bytes, and remote schemes. SHA-256 source,
+  document, and Citation identities plus stable sort/search rules make the
+  index deterministic. No network, URL fetch, embedding, vector store, watcher,
+  background refresh, dependency installer, or script execution was added.
+- Owner-scoped persistence remains inside the existing Employee Store:
+  `<employee>/knowledge/{sources.json,index.json}` and
+  `<employee>/memory/{facts.json,candidates.json}`. Files have strict
+  schema-v1 wrappers and embedded Employee identity, bounded counts/bytes,
+  fail-closed strict JSON/digest validation, existing safe-path containment,
+  mode `0600`, and the existing same-directory atomic write primitive.
+- A Candidate cannot enter durable Memory through any automatic path. Phase 4
+  exposes no Candidate-creation Web API; the bounded Store seam exists for a
+  future verified producer. `POST .../accept` is the explicit Owner promotion
+  action; it creates one idempotent provenance-preserving Fact. Reject removes
+  only the Candidate. Edit preserves provenance, recomputes the digest, and
+  sets `owner_edited`; Forget atomically removes the Fact so later reads and
+  context selection cannot include it.
+- Employee isolation is enforced both by per-Employee safe paths and embedded
+  identities on every Source, Index, Citation, Candidate, and Fact. Cross-
+  Employee reads and promotion attempts are covered by regression tests.
+- Context precedence remains system, Owner, Employee, boundary/project,
+  `AGENTS.md`, Project Memory, pinned Skills, Knowledge, private Employee
+  Memory, recovered state, goal, recent. Knowledge is independently capped at
+  `128 KiB` aggregate/`16 KiB` per item; Memory at `64 KiB`
+  aggregate/`8 KiB` per item. Stable truncation drops recent messages first,
+  then private Memory, then Knowledge under the model hard limit; policy and
+  Phase 3 Skill layers remain unchanged and higher authority.
+- Added APIs:
+  `GET/POST /api/employees/{id}/knowledge`,
+  `POST /api/employees/{id}/knowledge/{sourceID}/refresh`,
+  `DELETE /api/employees/{id}/knowledge/{sourceID}`,
+  `GET /api/employees/{id}/memory`,
+  `GET /api/employees/{id}/memory-candidates`,
+  `POST /api/employees/{id}/memory-candidates/{candidateID}/accept`,
+  `DELETE /api/employees/{id}/memory-candidates/{candidateID}`,
+  `PUT/DELETE /api/employees/{id}/memory/{factID}`. Mutations retain strict
+  bounded JSON and same-origin enforcement. No UI was added.
+- New named regression coverage includes
+  `TestDeterministicIndexStableCitationAndContentChange`,
+  `TestLocalKnowledgeRejectsTraversalEncodedSymlinkAndExecutable`,
+  `TestKnowledgeDirectoryFileCountIsBounded`,
+  `TestKnowledgeDirectoryIndexAndSearchOrdering`,
+  `TestCandidateRequiresProvenanceAndOwnerPromotionPreservesIt`,
+  `TestMemoryRejectsSensitiveOversizedAndTamperedValues`,
+  `TestKnowledgeAndMemoryAreEmployeeIsolatedAndSurviveReopen`,
+  `TestCandidateAcceptRejectEditForgetAndActivityBoundaries`,
+  `TestPhase4FilesFailClosedOnUnknownSchemaIdentityAndOversize`,
+  `TestPhase4StoreRejectsSymlinkEscapeForReadsAndWrites`,
+  `TestEmployeeKnowledgeAndMemoryLayersAreOrderedAndIndependentlyBounded`,
+  `TestEmployeeKnowledgeControlPlaneIndexesSearchesAndIsolates`,
+  `TestEmployeeMemoryControlPlaneRequiresExplicitOwnerAcceptance`,
+  `TestEmployeeKnowledgeAndMemoryAPI`, and
+  `TestPhase4APIStrictBoundedSameOriginAndErrorMapping`.
+- macOS validation completed on 2026-07-28:
+
+```text
+PASS gofmt on all Phase 4 Go files
+PASS go test ./internal/knowledge ./internal/employeememory ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
+PASS go test ./internal/tool/builtin ./internal/contextmgr -count=1
+PASS go test ./... -count=1
+PASS go test -race ./... -count=1
+PASS go vet ./...
+PASS go build -o /tmp/gohermit-phase4-cli ./cmd/hermit
+PASS go build -o /tmp/gohermit-phase4-web ./cmd/hermit-web
+PASS git diff --cached --check
+PASS credential-shaped secret-pattern scan
+PASS macOS real symlink and executable-bit tests; marker never created
+PASS compose.yaml parse through Python PyYAML
+PASS Knowledge package coverage 79.9%; Employee Memory package coverage 86.4%
+PENDING GitHub CI after push
+```
+
+- Deviation: the approved Expected files named
+  `internal/contextmgr/context.go` and `context_test.go`; Phase 3 established
+  the Employee-specific extension contract in `employee_context.go` and
+  `employee_context_test.go`, so Phase 4 extended those exact files to preserve
+  the legacy `BuildRun` path byte-for-byte. No behavior or file outside the
+  authorized integration boundary was changed.
+- Accepted/remaining risks: persistence retains the approved single-file
+  atomicity with no cross-file transaction. Source/index and
+  Candidate/accepted-Fact pairs can temporarily disagree after a process crash;
+  all reads fail closed and acceptance is idempotent, with a subsequent retry
+  removing an already-promoted Candidate. Manual Knowledge text is stored
+  bounded in `sources.json`; file content is referenced by digest/Citation and
+  not copied wholesale. Candidate provenance is structurally/digest validated
+  in Phase 4, while verification against a real Task/Session/Run is deferred to
+  the authorized runtime producer in Phase 7. Phase 4 does not automatically
+  select context; immutable Task-time selection remains Phase 5/6 work.
+
 ### Phase 5: Employee Task Inbox persistence and API
 
 Independent value:
@@ -1947,11 +2072,12 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-Phase 4 is the only authorized implementation scope. No Phase 5 implementation
-is authorized until the Owner explicitly approves Phase 4, for example:
+Phase 4 implementation is complete and no further product change is
+authorized. No Phase 5 implementation is authorized until the Owner explicitly
+approves Phase 4, for example:
 
 ```text
 批准 Phase 4，开始 Phase 5
 ```
 
-STATUS: PHASE_4_IN_PROGRESS
+STATUS: WAITING_FOR_PHASE_4_APPROVAL
