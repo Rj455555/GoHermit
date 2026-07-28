@@ -129,6 +129,7 @@ type SessionSummary struct {
 type ToolRecord struct {
 	Time        time.Time  `json:"time"`
 	RunID       string     `json:"run_id,omitempty"`
+	Turn        int        `json:"turn,omitempty"`
 	CallID      string     `json:"call_id"`
 	Name        string     `json:"name"`
 	ArgsDigest  string     `json:"args_digest,omitempty"`
@@ -422,6 +423,9 @@ func validateSessionCheckpoint(value *Session) error {
 	if err := validateSessionPlans(value); err != nil {
 		return err
 	}
+	if err := validateSessionToolRecords(value); err != nil {
+		return err
+	}
 	emptyPreparation := value.EmployeeID == "" && value.EmployeeTaskID == "" &&
 		value.EmployeeRevision == 0 && value.EmployeeTaskSnapshotDigest == "" &&
 		value.EmployeeContextSnapshot == nil
@@ -550,6 +554,136 @@ func validateSessionPlans(session *Session) error {
 	return nil
 }
 
+const (
+	maxToolRecords     = 500
+	maxToolCallIDBytes = 256
+	maxToolNameBytes   = 128
+)
+
+func validateSessionToolRecords(session *Session) error {
+	if session == nil {
+		return errors.New("session checkpoint is required")
+	}
+	if len(session.ToolCalls) > maxToolRecords {
+		return fmt.Errorf("too many ToolRecords: %d", len(session.ToolCalls))
+	}
+	runs := make(map[string]*Run, len(session.Runs))
+	for i := range session.Runs {
+		if session.Runs[i].ID == "" {
+			continue
+		}
+		if _, duplicate := runs[session.Runs[i].ID]; duplicate && len(session.ToolCalls) > 0 {
+			return fmt.Errorf("duplicate Run ID %q", session.Runs[i].ID)
+		}
+		runs[session.Runs[i].ID] = &session.Runs[i]
+	}
+	callIDs := make(map[string]struct{}, len(session.ToolCalls))
+	for i := range session.ToolCalls {
+		record := &session.ToolCalls[i]
+		if err := validateToolRecord(record, runs, session.Turns); err != nil {
+			return fmt.Errorf("invalid ToolRecord %d: %w", i, err)
+		}
+		if record.RunID != "" {
+			key := record.RunID + "\x00" + record.CallID
+			if _, duplicate := callIDs[key]; duplicate {
+				return fmt.Errorf("invalid ToolRecord %d: duplicate Call ID for Run", i)
+			}
+			callIDs[key] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func validateToolRecord(record *ToolRecord, runs map[string]*Run, sessionTurns int) error {
+	if record == nil {
+		return errors.New("record is required")
+	}
+	if err := validateToolRecordText("Call ID", record.CallID, maxToolCallIDBytes); err != nil {
+		return err
+	}
+	if err := validateToolRecordText("tool name", record.Name, maxToolNameBytes); err != nil {
+		return err
+	}
+	var run *Run
+	if record.RunID != "" {
+		run = runs[record.RunID]
+		if run == nil {
+			return fmt.Errorf("Run ID %q does not exist", record.RunID)
+		}
+	}
+	if record.Time.IsZero() {
+		return errors.New("time is required")
+	}
+	if record.Status == "" {
+		if record.ArgsDigest != "" || record.Turn != 0 || !record.StartedAt.IsZero() || record.CompletedAt != nil {
+			return errors.New("legacy ToolRecord has execution recovery fields")
+		}
+		return nil
+	}
+	switch record.Status {
+	case "started", "completed", "uncertain":
+	default:
+		return fmt.Errorf("unknown status %q", record.Status)
+	}
+	if run == nil {
+		return errors.New("Run ID is required for lifecycle ToolRecord")
+	}
+	if record.StartedAt.IsZero() || !record.Time.Equal(record.StartedAt) {
+		return errors.New("started_at must equal the record time")
+	}
+	if record.Status == "completed" {
+		if record.CompletedAt == nil {
+			return errors.New("completed ToolRecord requires completed_at")
+		}
+		if record.CompletedAt.Before(record.StartedAt) {
+			return errors.New("completed_at precedes started_at")
+		}
+	} else if record.CompletedAt != nil {
+		return errors.New("non-completed ToolRecord cannot have completed_at")
+	}
+	if record.ArgsDigest == "" {
+		// Compatibility path for records created before Phase 7 recovery
+		// digests. They can only match the exact provider Call ID.
+		if record.Turn != 0 {
+			return errors.New("legacy ToolRecord cannot have a Turn")
+		}
+		return nil
+	}
+	if !isCanonicalSHA256(record.ArgsDigest) {
+		return errors.New("args_digest must be canonical lowercase SHA-256")
+	}
+	if record.Turn < 1 || record.Turn > sessionTurns ||
+		record.Turn < run.StartTurn || record.Turn > run.EndTurn {
+		return errors.New("Turn is outside the referenced Run boundary")
+	}
+	return nil
+}
+
+func validateToolRecordText(field, value string, limit int) error {
+	if value == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	if len(value) > limit {
+		return fmt.Errorf("%s exceeds %d bytes", field, limit)
+	}
+	if !utf8.ValidString(value) || strings.ContainsRune(value, utf8.RuneError) {
+		return fmt.Errorf("%s contains invalid UTF-8", field)
+	}
+	return nil
+}
+
+func isCanonicalSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Store) commitLocked(ctx context.Context, session *Session, events []event.Event) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -582,6 +716,9 @@ func (s *Store) applyJournalLocked(sessionID string, journal commitJournal) erro
 	}
 	if journal.Session.ID != sessionID {
 		return errors.New("commit journal session mismatch")
+	}
+	if err := validateSessionCheckpoint(journal.Session); err != nil {
+		return fmt.Errorf("corrupt commit journal: %w", err)
 	}
 	data, err := json.MarshalIndent(journal.Session, "", "  ")
 	if err != nil {

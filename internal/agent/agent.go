@@ -9,10 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
 	"github.com/Rj455555/GoHermit/internal/event"
@@ -78,7 +81,10 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 	if active.PlanMode == session.PlanReview && !active.PlanApproved {
 		return errors.New("review plan must be approved before execution")
 	}
-	completedBeforeStart := completedToolCalls(s.ToolCalls, active.ID)
+	completedBeforeStart := completedToolFrontier{}
+	if active.Status == session.RunInterrupted {
+		completedBeforeStart = completedToolCalls(s.ToolCalls, active.ID, active.EndTurn)
+	}
 	planCreated := false
 	if active.Plan == nil {
 		plan, err := taskplan.ForGoal(active.ID, active.Message, s.Selection.Agent)
@@ -227,7 +233,11 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			return err
 		}
 		for _, call := range response.Message.ToolCalls {
-			if consumeCompletedTool(completedBeforeStart, call) {
+			argsDigest, digestErr := toolCallDigest(call)
+			if digestErr != nil {
+				return r.fail(runCtx, s, "invalid tool arguments", digestErr)
+			}
+			if consumeCompletedTool(completedBeforeStart, call, argsDigest) {
 				messages = append(messages, model.Message{
 					Role: model.RoleTool, ToolCallID: call.ID,
 					Content: tool.MarshalResult(tool.Result{
@@ -248,7 +258,7 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			startedAt := time.Now().UTC()
 			s.ToolCalls = appendBoundedTool(s.ToolCalls, session.ToolRecord{
 				Time: startedAt, StartedAt: startedAt, RunID: active.ID,
-				CallID: call.ID, Name: call.Name, ArgsDigest: toolCallDigest(call),
+				Turn: turn, CallID: call.ID, Name: call.Name, ArgsDigest: argsDigest,
 				Status: "started",
 			}, 500)
 			if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
@@ -348,43 +358,200 @@ func appendBoundedTool(records []session.ToolRecord, r session.ToolRecord, max i
 	return records
 }
 
-func completedToolCalls(records []session.ToolRecord, runID string) map[string]int {
-	result := make(map[string]int)
+type completedToolFrontier struct {
+	digests     map[string]int
+	legacyCalls map[string]int
+}
+
+func completedToolCalls(records []session.ToolRecord, runID string, frontierTurn int) completedToolFrontier {
+	result := completedToolFrontier{
+		digests:     make(map[string]int),
+		legacyCalls: make(map[string]int),
+	}
 	for _, record := range records {
 		if record.RunID != runID || record.Status != "completed" {
 			continue
 		}
-		key := record.Name + "\x00" + record.ArgsDigest
 		if record.ArgsDigest == "" {
-			key = record.Name + "\x00call:" + record.CallID
+			// Legacy schema-v1-v6 records predate canonical argument digests and
+			// Turn evidence. They may only suppress the exact provider Call ID;
+			// they never participate in semantic argument matching.
+			result.legacyCalls[record.Name+"\x00call:"+record.CallID]++
+			continue
 		}
-		result[key]++
+		if frontierTurn > 0 && record.Turn == frontierTurn {
+			result.digests[record.Name+"\x00"+record.ArgsDigest]++
+		}
 	}
 	return result
 }
 
-func consumeCompletedTool(completed map[string]int, call model.ToolCall) bool {
-	digestKey := call.Name + "\x00" + toolCallDigest(call)
-	if completed[digestKey] > 0 {
-		completed[digestKey]--
+func consumeCompletedTool(completed completedToolFrontier, call model.ToolCall, argsDigest string) bool {
+	digestKey := call.Name + "\x00" + argsDigest
+	if completed.digests[digestKey] > 0 {
+		completed.digests[digestKey]--
 		return true
 	}
 	callKey := call.Name + "\x00call:" + call.ID
-	if completed[callKey] > 0 {
-		completed[callKey]--
+	if completed.legacyCalls[callKey] > 0 {
+		completed.legacyCalls[callKey]--
 		return true
 	}
 	return false
 }
 
-func toolCallDigest(call model.ToolCall) string {
-	raw := append([]byte(nil), call.Arguments...)
-	var compact bytes.Buffer
-	if json.Compact(&compact, raw) == nil {
-		raw = compact.Bytes()
+const (
+	maxToolArgumentsBytes = 64 << 10
+	maxToolJSONDepth      = 64
+)
+
+func toolCallDigest(call model.ToolCall) (string, error) {
+	canonical, err := canonicalToolArguments(call.Arguments)
+	if err != nil {
+		return "", err
 	}
-	sum := sha256.Sum256(append([]byte(call.Name+"\x00"), raw...))
-	return hex.EncodeToString(sum[:])
+	sum := sha256.Sum256(append([]byte(call.Name+"\x00"), canonical...))
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalToolArguments(raw json.RawMessage) ([]byte, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("tool arguments must contain one JSON value")
+	}
+	if len(raw) > maxToolArgumentsBytes {
+		return nil, fmt.Errorf("tool arguments exceed %d bytes", maxToolArgumentsBytes)
+	}
+	if !utf8.Valid(raw) {
+		return nil, errors.New("tool arguments are invalid UTF-8")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	value, err := decodeCanonicalJSON(decoder, 0)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tool arguments: %w", err)
+	}
+	if token, trailingErr := decoder.Token(); trailingErr != io.EOF {
+		if trailingErr != nil {
+			return nil, fmt.Errorf("invalid trailing JSON content: %w", trailingErr)
+		}
+		return nil, fmt.Errorf("multiple JSON values are not allowed (trailing token %v)", token)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize tool arguments: %w", err)
+	}
+	return canonical, nil
+}
+
+func decodeCanonicalJSON(decoder *json.Decoder, depth int) (any, error) {
+	if depth > maxToolJSONDepth {
+		return nil, errors.New("JSON nesting exceeds limit")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch value := token.(type) {
+	case json.Delim:
+		switch value {
+		case '{':
+			object := make(map[string]any)
+			for decoder.More() {
+				keyToken, keyErr := decoder.Token()
+				if keyErr != nil {
+					return nil, keyErr
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return nil, errors.New("object key is not a string")
+				}
+				if strings.ContainsRune(key, utf8.RuneError) {
+					return nil, errors.New("object key contains invalid Unicode replacement")
+				}
+				if _, duplicate := object[key]; duplicate {
+					return nil, fmt.Errorf("duplicate object key %q", key)
+				}
+				item, itemErr := decodeCanonicalJSON(decoder, depth+1)
+				if itemErr != nil {
+					return nil, itemErr
+				}
+				object[key] = item
+			}
+			closeToken, closeErr := decoder.Token()
+			if closeErr != nil || closeToken != json.Delim('}') {
+				return nil, errors.New("unterminated JSON object")
+			}
+			return object, nil
+		case '[':
+			array := make([]any, 0)
+			for decoder.More() {
+				item, itemErr := decodeCanonicalJSON(decoder, depth+1)
+				if itemErr != nil {
+					return nil, itemErr
+				}
+				array = append(array, item)
+			}
+			closeToken, closeErr := decoder.Token()
+			if closeErr != nil || closeToken != json.Delim(']') {
+				return nil, errors.New("unterminated JSON array")
+			}
+			return array, nil
+		default:
+			return nil, errors.New("unexpected closing JSON delimiter")
+		}
+	case string:
+		if strings.ContainsRune(value, utf8.RuneError) {
+			return nil, errors.New("string contains invalid Unicode replacement")
+		}
+		return value, nil
+	case json.Number:
+		return canonicalJSONNumber(value)
+	case bool, nil:
+		return value, nil
+	default:
+		return nil, fmt.Errorf("unsupported JSON token %T", token)
+	}
+}
+
+func canonicalJSONNumber(value json.Number) (json.Number, error) {
+	raw := string(value)
+	sign := ""
+	if strings.HasPrefix(raw, "-") {
+		sign = "-"
+		raw = raw[1:]
+	}
+	exponent := 0
+	if index := strings.IndexAny(raw, "eE"); index >= 0 {
+		parsed, err := strconv.Atoi(raw[index+1:])
+		if err != nil {
+			return "", errors.New("JSON number exponent is out of range")
+		}
+		exponent = parsed
+		raw = raw[:index]
+	}
+	fractionDigits := 0
+	if index := strings.IndexByte(raw, '.'); index >= 0 {
+		fractionDigits = len(raw) - index - 1
+		raw = raw[:index] + raw[index+1:]
+	}
+	maxInt := int(^uint(0) >> 1)
+	minInt := -maxInt - 1
+	if exponent < minInt+fractionDigits {
+		return "", errors.New("JSON number exponent is out of range")
+	}
+	exponent -= fractionDigits
+	raw = strings.TrimLeft(raw, "0")
+	if raw == "" {
+		return json.Number("0"), nil
+	}
+	for strings.HasSuffix(raw, "0") {
+		raw = strings.TrimSuffix(raw, "0")
+		if exponent == maxInt {
+			return "", errors.New("JSON number exponent is out of range")
+		}
+		exponent++
+	}
+	return json.Number(sign + raw + "e" + strconv.Itoa(exponent)), nil
 }
 
 // modelAttempts reports how many provider attempts a failed Generate made;
