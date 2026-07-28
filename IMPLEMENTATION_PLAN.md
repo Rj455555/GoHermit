@@ -6,10 +6,11 @@
 
 - Revised plan: Owner-approved on 2026-07-28.
 - Phase 1: Owner-approved on 2026-07-28.
-- Phase 2: implemented and verified; waiting for Owner acceptance.
+- Phase 2: Gate revision implemented and verified after Owner rejection;
+  waiting for Owner reapproval.
 - Phase 3 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_2_APPROVAL`.
+  `WAITING_FOR_PHASE_2_REAPPROVAL`.
 
 ### Fixed invariants
 
@@ -53,7 +54,7 @@
 | Phase | Scope | Gate state |
 |---|---|---|
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` |
-| 2 | Employee Store, Control Plane, and CRUD API | `COMPLETE_WAITING_FOR_OWNER` |
+| 2 | Employee Store, Control Plane, and CRUD API | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `BLOCKED_BY_GATE` |
 | 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` |
@@ -108,12 +109,12 @@ for example:
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_2_APPROVAL
+STATUS: WAITING_FOR_PHASE_2_REAPPROVAL
 ```
 
 ---
 
-Plan status: `WAITING_FOR_PHASE_2_APPROVAL`
+Plan status: `WAITING_FOR_PHASE_2_REAPPROVAL`
 Baseline: `origin/main@b2a187fbcb6c79faaa368977fef40d6ec1786e6c`
 Feature branch: `agent/electronic-employees-v0.7`
 Last audited: 2026-07-28
@@ -1307,6 +1308,55 @@ Phase 2 execution record (2026-07-28):
   semantics remain a later explicit design decision. No Phase 3 subsystem is
   present.
 
+Phase 2 Gate revision record (2026-07-28):
+
+- Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`.
+- Revision commit:
+  `32a9f89602dd216d928c6e97855ea5e0eeee66f2`
+  (`fix(employees): harden phase 2 persistence gate`).
+- `LoadRevision` now validates a domain-compatible bounded Employee ID before
+  constructing a path, rejects absolute, encoded, separator, dot-segment, and
+  traversal forms, requires a positive Revision, requires the Employee in the
+  strict Store index, verifies lexical and resolved-symlink containment, and
+  requires the validated Snapshot Employee ID and Revision to equal the
+  request. Existing embedded Employee identity, Revision, Digest, binding, and
+  size validation remains mandatory.
+- Activity IDs are Store-assigned only. Caller-supplied IDs are rejected;
+  cryptographic-random failures propagate; generated IDs advance beyond the
+  last persisted ID even if the clock does not; loaded Activity rejects
+  malformed, duplicate, or non-increasing IDs. Stable cursor tests cover
+  multiple pages, append, truncation, reopen, malformed cursors, and
+  well-encoded invalid cursors.
+- `List` now validates every indexed Employee and Projects record and fails
+  closed on corrupt/oversized/unknown-schema content or index-record mismatch.
+  `ErrCorrupt` maps to Control Plane `KindInternal` and HTTP 500; not-found and
+  optimistic-revision conflicts retain 404 and 409 mappings.
+- Added Store evidence for index/Employee/Projects/Snapshot/Activity strict
+  schemas, malformed JSON, unknown fields and versions, size limits, swapped
+  identity, Digest tampering, immutable revision collision, symlink escape,
+  index-record disagreement, concurrent expected-revision conflict, Employee
+  filtering/pagination, Activity ordering/pagination/truncation, `0600`
+  permissions, missing Store, and secret-like input rejection.
+- Added Control Plane and Web evidence for create/list/get/update/stale
+  conflict/dry-run/disable/enable/archive/terminal archive/activity/projects,
+  Workspace rejection, strict JSON, request size, same-origin, not-found,
+  conflict, and corrupt-store mappings.
+- Verification after the Gate revision:
+  - `go test ./internal/employee ./internal/employeestore ./internal/controlplane ./internal/web -count=1`: pass;
+  - `go test ./... -count=1`: pass;
+  - `go test -race ./... -count=1`: pass;
+  - `go vet ./...`: pass;
+  - CLI and Web builds: pass;
+  - `gofmt`, `git diff --check`, and secret-pattern scan: pass;
+  - changed Store package statement coverage: 80.9%.
+- Gate revision deviation: testing showed that stable fail-closed listing
+  requires reading and validating each indexed current Employee and Projects
+  record. This adds bounded read amplification (at most 256 records) but stays
+  inside Phase 2 and is required by the accepted fail-closed contract.
+- Remaining accepted risks are unchanged: writes are atomic per file rather
+  than cross-file transactional, and locking is in-process only. No recovery
+  journal or second state machine was added. No Phase 3 subsystem was started.
+
 ### Phase 3: Skill Catalog, SKILL.md Adapter, policy intersection, and context contract
 
 Independent value:
@@ -1773,4 +1823,4 @@ Owner explicitly accepts Phase 2, for example:
 批准 Phase 2，开始 Phase 3
 ```
 
-STATUS: WAITING_FOR_PHASE_2_APPROVAL
+STATUS: WAITING_FOR_PHASE_2_REAPPROVAL
