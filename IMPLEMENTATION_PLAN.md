@@ -7,11 +7,12 @@
 - Revised plan: Owner-approved on 2026-07-28.
 - Phase 1: Owner-approved on 2026-07-28.
 - Phase 2: Owner-approved on 2026-07-28 after both security Gate revisions.
-- Phase 3: clean-branch Gate revision implemented and verified on 2026-07-28;
-  waiting for Owner reapproval.
-- Phase 4 and every later product-code change remain blocked.
+- Phase 3: `OWNER_APPROVED`; squash-merged through PR #36.
+- Phase 4: Gate revision implemented and verified on the clean Phase 4 branch;
+  `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`.
+- Phase 5 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_3_REAPPROVAL`.
+  `WAITING_FOR_PHASE_4_REAPPROVAL`.
 
 ### Fixed invariants
 
@@ -56,8 +57,8 @@
 |---|---|---|
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` |
-| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` |
+| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `OWNER_APPROVED` |
+| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` |
@@ -67,18 +68,19 @@
 
 ### Current phase scope
 
-- Phases 1 and 2 are Owner-approved and closed to further implementation.
-- Review the clean Phase 3 branch, canonical Digest chain, executable-content
-  rejection, encoded-path rejection, complete validation, and Draft PR #36.
-- Keep Phase 4 and all later phases blocked until the next explicit Owner Gate.
+- Phases 1 through 3 are Owner-approved and closed to further implementation.
+- Review only the clean Phase 4 branch, persisted Knowledge integrity chain,
+  bounded empty-body/query handling, canonical provenance ordering, isolation,
+  complete validation, and the replacement Draft PR.
+- Keep Phase 5 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No Skill execution, Knowledge, Memory, EmployeeTask, Session schema v6,
-  Task Runtime, UI, Team Role Mapping, version, or release change.
-- No Phase 4 implementation.
-- No merge of Draft PR #36 and no additional product-code change after the
-  Phase 3 Gate closeout.
+- No EmployeeTask, Session schema v6, Task Runtime, UI, Team Role Mapping,
+  version, or release change.
+- No Phase 5 implementation.
+- No merge, auto-merge, force push, or additional product-code change after
+  the Phase 4 Gate closeout.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -87,8 +89,8 @@
 ```bash
 git branch --show-current
 git status --short
-go test ./internal/skill ./internal/employee ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
-go test ./internal/tool ./internal/tool/builtin ./internal/policy ./internal/approval -count=1
+go test ./internal/knowledge ./internal/employeememory ./internal/employeestore ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
+go test ./internal/tool/builtin ./internal/contextmgr -count=1
 go test ./... -count=1
 go test -race ./... -count=1
 go vet ./...
@@ -99,31 +101,31 @@ git diff --check
 
 ### Next Gate
 
-Phase 4 may start only after the Owner explicitly reapproves Phase 3,
+Phase 5 may start only after the Owner explicitly reapproves Phase 4,
 for example:
 
 ```text
-批准 Phase 3 Gate 修订，开始 Phase 4
+批准 Phase 4 Gate 修订，开始 Phase 5
 ```
 
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_3_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_4_REAPPROVAL
 ```
 
 ---
 
-Plan status: `WAITING_FOR_PHASE_3_REAPPROVAL`
-Baseline: `origin/main@9a75e8f021b2bd5de1522d93e7463b313318c99d`
-Feature branch: `agent/electronic-employees-v0.7-phase3`
+Plan status: `WAITING_FOR_PHASE_4_REAPPROVAL`
+Baseline: `origin/main@d31bcf3b1d9eaf324721cc9004bcf8b9ea95c521`
+Feature branch: `agent/electronic-employees-v0.7-phase4`
 Last audited: 2026-07-28
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
-authorized phase section is the minimum required reading path. Phases 1 and 2
-are Owner-approved and Phase 3 Gate revision is complete; Phase 4 must not
-start until the Owner explicitly reapproves Phase 3. Each Owner approval
+authorized phase section is the minimum required reading path. Phases 1 through
+3 are Owner-approved and the Phase 4 Gate revision is complete; Phase 5 must
+not start until the Owner explicitly reapproves Phase 4. Each Owner approval
 authorizes exactly one phase.
 
 ## 1. Current-state evidence
@@ -1132,8 +1134,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 |---|---|---|---|
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
-| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `1fff90c`; Gate fix `ada73f1`; Draft PR #36 |
-| 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` | Not started |
+| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
+| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `f5d24b0`; Gate fix `75ee1a3`; replacement Draft PR pending |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
@@ -1564,6 +1566,97 @@ UI.
 Exit: containment/capacity/citation/isolation/secret/edit/Forget tests pass;
 Knowledge and Memory context layers are bounded and Employee-isolated.
 
+#### Phase 4 Gate revision evidence
+
+- Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 5 through Phase 10
+  remain `BLOCKED_BY_GATE`; no Phase 5 product file was created or modified.
+- Clean branch: `agent/electronic-employees-v0.7-phase4`, created directly from
+  `origin/main@d31bcf3b1d9eaf324721cc9004bcf8b9ea95c521`.
+- Clean Phase 4 implementation:
+  `f5d24b0` (`feat(employees): add phase 4 knowledge and memory`), produced by
+  cherry-picking only the authorized old implementation
+  `6e3a23ca3eff1e710b88f319633e23df598b1f29`.
+- Gate fix:
+  `75ee1a39abd90233a36dc2e768b55d2f2ebc6fea`
+  (`fix(employees): harden phase 4 persistence gate`).
+- Evidence commit and replacement Draft PR: pending until this record is
+  committed and the clean branch is pushed.
+- Persisted Knowledge validation now treats the stored representation as
+  untrusted. `ValidateSource(..., true)` applies file-independent canonical
+  relative-path validation and rejects absolute/URL/scheme/host, `%`,
+  backslash, CR/LF, traversal, empty/dot components, non-clean paths,
+  forbidden components, and paths over 4 KiB. Title, ManualText, Error,
+  Heading, and Snippet reject NUL, invalid UTF-8, secret-like values, private
+  reasoning, chain-of-thought labels, raw tool arguments, and hidden/full
+  system-prompt content.
+- `ValidateIndex` now requires 1..256 unique strictly path-sorted Documents,
+  canonical lowercase SHA-256 Document digests, at most 4,096 canonical
+  strictly sorted unique terms per Document, 1..1,024 globally unique
+  deterministic Citations, canonical Citation ordering, matching
+  Employee/Source/path/digest metadata, valid line bounds, and bounded
+  canonical Heading/Snippet text.
+- The canonical Source/Index digest is recalculated over the Source identity
+  and metadata plus every ordered Document path/digest, term, Citation identity
+  and metadata, Heading, and Snippet. Persisted `Source.Digest` and
+  `Index.SourceDigest` must both exactly equal that result. Changing a snippet,
+  term, path, Citation field, Document digest, order, or cardinality therefore
+  fails closed. Manual/local content line endings are canonicalized before
+  indexing.
+- ID semantics are explicit: `Source.ID` is an Owner/caller-provided stable
+  bounded ID. A Document has no separate ID and is identified inside an Index
+  by its canonical path plus canonical content digest. Citation IDs and
+  promoted Memory Fact IDs are deterministic SHA-256-derived IDs.
+- Phase 4 empty-body mutations use one 1 KiB bounded reader and verify actual
+  EOF; they do not trust `ContentLength`. Knowledge refresh/delete, Candidate
+  accept/reject, and Memory Forget reject chunked bodies, including
+  `ContentLength == -1`. Knowledge search query text is capped at 4 KiB.
+- Provenance digests sort by the complete tuple
+  `(SourceType, SourceID, SourceTaskID, SourceSessionID, SourceRunID,
+  VerifiedAt)`. Input order cannot affect Candidate/Fact digests; exact
+  duplicate tuples are rejected. The same SourceType/SourceID may refer to
+  different Runs only when the complete tuple differs.
+- New focused tests include:
+  `TestValidateSourceRejectsUnsafePersistedTextAndStaticPaths`,
+  `TestValidateIndexRejectsCanonicalIntegrityTampering`,
+  `TestValidateIndexRejectsUnsafeCitationTextWithRecomputedDigest`,
+  `TestKnowledgeStoreRejectsPersistedSourcePathCorruption`,
+  `TestKnowledgeStoreRejectsPersistedIndexCorruption`,
+  `TestKnowledgeStoreRejectsInvalidUTF8Text`,
+  `TestKnowledgeStoreReopenPreservesStableSearch`,
+  `TestProvenanceDigestUsesCompleteCanonicalTuple`,
+  `TestMemoryCandidateCanonicalProvenanceSurvivesStoreReopen`,
+  `TestPhase4APIRejectsNULManualTextAndOversizedQuery`,
+  `TestPhase4EmptyBodyMutationsRejectChunkedPayloads`, and
+  `TestEmployeeKnowledgeAPICorruptPersistedSourceReturnsInternalError`.
+- macOS validation completed on 2026-07-28:
+
+```text
+PASS gofmt on every changed Go file
+PASS Phase 4 targeted corruption/body/provenance tests
+PASS go test ./internal/knowledge ./internal/employeememory ./internal/employeestore ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
+PASS go test ./internal/tool/builtin ./internal/contextmgr -count=1
+PASS go test ./... -count=1
+PASS go test -race ./... -count=1
+PASS go vet ./...
+PASS CLI and Web builds to /tmp
+PASS git diff --check
+PASS credential-shaped secret-pattern scan
+PASS compose.yaml parse
+PASS macOS real symlink/executable-bit tests; executable marker never created
+PASS Knowledge package coverage 84.4%; Employee Memory coverage 91.1%
+PENDING Docker/Compose/Web E2E GitHub CI after push
+```
+
+- Persistence retains the accepted single-file atomic/no-cross-file-transaction
+  boundary. This Gate adds no Recovery Journal or second state machine.
+- Remaining risks: digest integrity detects corruption but is not a keyed
+  authenticity mechanism; an attacker able to rewrite every file and recompute
+  every digest is outside the local corruption model. Document content itself
+  remains at the explicit local root, so a persisted local Index can validate
+  its canonical stored digest chain without requiring the original file to
+  still exist. Task/Session/Run provenance verification remains Phase 7 work;
+  Phase 4 only validates the complete bounded provenance tuple.
+
 ### Phase 5: Employee Task Inbox persistence and API
 
 Independent value:
@@ -1952,4 +2045,4 @@ until the Owner explicitly reapproves Phase 3, for example:
 批准 Phase 3 Gate 修订，开始 Phase 4
 ```
 
-STATUS: WAITING_FOR_PHASE_3_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_4_REAPPROVAL
