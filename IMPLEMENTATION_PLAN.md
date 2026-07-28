@@ -14,11 +14,13 @@
   `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`.
 - Phase 6: `OWNER_APPROVED`; squash-merged through PR #39 into
   `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`.
-- Phase 7: `OWNER_APPROVED`; ready for Owner-authorized squash merge through
-  PR #40 from clean branch `agent/electronic-employees-v0.7-phase7`.
-- Phase 8 and every later product-code change remain blocked.
+- Phase 7: `OWNER_APPROVED`; squash-merged through PR #40 into
+  `origin/main@d8194df88c474d43d0576e26d61d304df74ecefb`.
+- Phase 8: `IN_PROGRESS` on clean branch
+  `agent/electronic-employees-v0.7-phase8`.
+- Phase 9 and every later product-code change remain blocked.
 - Required terminal status:
-  `PHASE_7_OWNER_APPROVED_PENDING_MERGE`.
+  `WAITING_FOR_PHASE_8_APPROVAL`.
 
 ### Fixed invariants
 
@@ -68,26 +70,26 @@
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` |
 | 6 | Runtime Preparation | `OWNER_APPROVED` |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
-| 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
+| 8 | Employees and Tasks Web UI | `IN_PROGRESS` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
 
 ### Current phase scope
 
 - Phases 1 through 7 are Owner-approved and closed to further implementation.
-- Phase 7 Manual Execution Lifecycle is complete and awaiting the authorized
-  PR #40 squash merge before Phase 8 work begins.
+- Phase 8 implements only the Employees and Tasks Web UI over existing APIs,
+  Session SSE, and the existing execution state machine.
 - Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery remains
   the only execution truth and kernel.
-- Keep Phase 8 and all later phases blocked until the next explicit Owner Gate.
+- Keep Phase 9 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
 - No second Run/Event/Plan/Approval/Verification/Tool/recovery state machine,
   Task SSE, scheduler, daemon, auto-start-next, automatic Memory acceptance,
   multi-Workspace, cross-Employee read-only concurrency, Team Role Mapping,
-  Phase 8 UI, version, or release change.
-- No Phase 8 implementation.
+  Phase 9 implementation, version, or release change.
+- No Phase 9 implementation.
 - No merge, auto-merge, force push, or automatic Workspace submission.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
@@ -110,25 +112,25 @@ git diff --check
 
 ### Next Gate
 
-Phase 8 may start only after the Owner-authorized PR #40 squash merge is
-confirmed in the latest `origin/main`. Until then, stop with:
+Phase 9 may start only after the Owner explicitly approves Phase 8. Until then,
+stop after Phase 8 with:
 
 ```text
-STATUS: PHASE_7_OWNER_APPROVED_PENDING_MERGE
+STATUS: WAITING_FOR_PHASE_8_APPROVAL
 ```
 
 ---
 
-Plan status: `PHASE_7_OWNER_APPROVED_PENDING_MERGE`
-Baseline: `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`
-Feature branch: `agent/electronic-employees-v0.7-phase7`
+Plan status: `PHASE_8_IN_PROGRESS`
+Baseline: `origin/main@d8194df88c474d43d0576e26d61d304df74ecefb`
+Feature branch: `agent/electronic-employees-v0.7-phase8`
 Last audited: 2026-07-29
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phases 1 through
-7 are Owner-approved. Phase 8 through Phase 10 remain blocked until PR #40 is
-confirmed merged and a clean Phase 8 branch is created from the latest main.
+7 are Owner-approved. Phase 8 is the only authorized implementation scope;
+Phase 9 and Phase 10 remain blocked.
 Each Owner approval authorizes exactly one phase.
 
 ## 1. Current-state evidence
@@ -1144,8 +1146,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` | PR #38 squash-merged as `ad31d633`; full Phase 5 is in `origin/main` |
 | 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
-| 7 | Manual Execution Lifecycle | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `a67c5eb`; Recovery Gate `7d265bd` on clean branch `agent/electronic-employees-v0.7-phase7` from `origin/main@f213ac19` |
-| 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
+| 7 | Manual Execution Lifecycle | `OWNER_APPROVED` | Recovery Gate approved and PR #40 squash-merged as `d8194df`; full Phase 7 is in `origin/main` |
+| 8 | Employees and Tasks Web UI | `IN_PROGRESS` | Clean branch `agent/electronic-employees-v0.7-phase8` from `origin/main@d8194df` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` | Not started |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
 
@@ -2482,6 +2484,8 @@ Phase 7 Recovery Gate evidence (2026-07-29):
 
 ### Phase 8: Employees and Tasks Web UI
 
+Status: `IN_PROGRESS`. Phase 9 and Phase 10 remain `BLOCKED_BY_GATE`.
+
 Independent value:
 
 - Delivers Dashboard/Employees/Tasks/Agent/Loops/Settings navigation, the
@@ -2717,8 +2721,7 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-Phase 7 is Owner-approved. No Phase 8 implementation is authorized until PR
-#40 is confirmed merged and the clean Phase 8 branch is created from the latest
-`origin/main`.
+Phase 7 is Owner-approved and merged. Phase 8 is the only authorized
+implementation scope. Phase 9 and Phase 10 remain blocked.
 
-STATUS: PHASE_7_OWNER_APPROVED_PENDING_MERGE
+STATUS: WAITING_FOR_PHASE_8_APPROVAL
