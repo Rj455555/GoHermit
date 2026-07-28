@@ -372,7 +372,7 @@ func (s *Service) ResumeEmployeeTask(ctx context.Context, taskID string) (Employ
 	s.runMu.Lock()
 	if s.activeSession == task.SessionID && s.activeRun == task.RunID {
 		s.runMu.Unlock()
-		return s.projectEmployeeTask(ctx, task)
+		return s.waitForEmployeeRunProjection(ctx, task, EmployeeTaskStateInterrupted)
 	}
 	if s.active.Load() {
 		s.runMu.Unlock()
@@ -401,7 +401,30 @@ func (s *Service) ResumeEmployeeTask(ctx context.Context, taskID string) (Employ
 	if _, err = s.launchSessionRunConfigured(sess, "", &employeeRunLaunch{TaskID: task.ID, Context: compact}); err != nil {
 		return EmployeeTaskView{}, classifiedLaunchError(err)
 	}
-	return s.projectEmployeeTask(ctx, task)
+	return s.waitForEmployeeRunProjection(ctx, task, EmployeeTaskStateInterrupted)
+}
+
+func (s *Service) waitForEmployeeRunProjection(ctx context.Context, task employee.EmployeeTask, previous employee.TaskState) (EmployeeTaskView, error) {
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		view, err := s.projectEmployeeTask(ctx, task)
+		if err != nil {
+			return EmployeeTaskView{}, err
+		}
+		if view.State != previous {
+			return view, nil
+		}
+		select {
+		case <-ctx.Done():
+			return EmployeeTaskView{}, classified(KindInvalid, ctx.Err())
+		case <-deadline.C:
+			return EmployeeTaskView{}, classified(KindInternal, errors.New("resumed Run did not persist its running projection"))
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Service) cancelBoundEmployeeTask(ctx context.Context, task employee.EmployeeTask) (EmployeeTaskView, error) {
