@@ -123,19 +123,78 @@ func TestCatalogRejectsSymlinkAndNonRegularFiles(t *testing.T) {
 }
 
 func TestNativeManifestRejectsURLAndEncodedPaths(t *testing.T) {
-	for name, path := range map[string]string{
-		"url":     "https://example.test/instructions",
-		"encoded": "references/%2e%2e%2foutside",
-	} {
-		t.Run(name, func(t *testing.T) {
+	t.Run("url", func(t *testing.T) {
+		root := t.TempDir()
+		writeNativeFixture(t, root, "skill", baseManifest(), map[string]string{"SKILL.md": "Instructions\n"})
+		rewriteManifestContent(t, root, []string{"SKILL.md", "https://example.test/instructions"})
+		catalog, _ := NewCatalog(root)
+		if _, err := catalog.List(); err == nil {
+			t.Fatal("URL content path must fail closed")
+		}
+	})
+	t.Run("existing encoded path with valid digest", func(t *testing.T) {
+		root := t.TempDir()
+		const encoded = "references/%2e%2e%2foutside"
+		files := map[string]string{"SKILL.md": "Instructions\n", encoded: "literal encoded file\n"}
+		manifest := baseManifest()
+		manifest.ContentFiles = []string{"SKILL.md", encoded}
+		writeNativeFixture(t, root, "skill", manifest, files)
+		if _, err := os.Stat(filepath.Join(root, "skill", "1.0.0", "references", "%2e%2e%2foutside")); err != nil {
+			t.Fatalf("encoded fixture was not created: %v", err)
+		}
+		catalog, _ := NewCatalog(root)
+		if _, err := catalog.List(); err == nil {
+			t.Fatal("existing encoded path with a valid Digest must fail closed")
+		}
+	})
+}
+
+func TestCatalogRejectsExecutableContentWithoutExecutingIt(t *testing.T) {
+	for _, kind := range []string{"native", "adapter"} {
+		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
-			writeNativeFixture(t, root, "skill", baseManifest(), map[string]string{"SKILL.md": "Instructions\n"})
-			rewriteManifestContent(t, root, []string{"SKILL.md", path})
+			marker := filepath.Join(t.TempDir(), "executed")
+			script := "#!/bin/sh\ntouch " + marker + "\n"
+			if kind == "native" {
+				manifest := baseManifest()
+				manifest.ContentFiles = []string{"SKILL.md", "references/install.sh"}
+				writeNativeFixture(t, root, "skill", manifest, map[string]string{
+					"SKILL.md": "Instructions\n", "references/install.sh": script,
+				})
+				if err := os.Chmod(filepath.Join(root, "skill", "1.0.0", "references", "install.sh"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeAdapterFixture(t, root, "adapter", "---\nname: A\ndescription: D\n---\nInstructions", map[string]string{"install.sh": script})
+				if err := os.Chmod(filepath.Join(root, "adapter", "references", "install.sh"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
 			catalog, _ := NewCatalog(root)
 			if _, err := catalog.List(); err == nil {
-				t.Fatal("unsafe content path must fail closed")
+				t.Fatal("executable Skill content must fail closed")
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatal("executable Skill content created its marker")
 			}
 		})
+	}
+}
+
+func TestCatalogLoadsNonExecutableReadOnlyReference(t *testing.T) {
+	root := t.TempDir()
+	writeAdapterFixture(t, root, "adapter", "---\nname: A\ndescription: D\n---\nInstructions", map[string]string{"guide.md": "Read only\n"})
+	path := filepath.Join(root, "adapter", "references", "guide.md")
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	catalog, _ := NewCatalog(root)
+	items, err := catalog.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].References["references/guide.md"] != "Read only\n" {
+		t.Fatalf("read-only reference was not loaded: %#v", items)
 	}
 }
 

@@ -207,6 +207,7 @@ func (c *Catalog) loadNative(skillDirectory, versionDirectory string) (Skill, er
 	if err := validateManifest(manifest, skillDirectory, versionDirectory); err != nil {
 		return Skill{}, corrupt("validate manifest", err)
 	}
+	manifest.Digest = strings.ToLower(manifest.Digest)
 
 	files := make(map[string][]byte, len(manifest.ContentFiles))
 	seenPaths := make(map[string]struct{}, len(manifest.ContentFiles))
@@ -251,7 +252,7 @@ func (c *Catalog) loadNative(skillDirectory, versionDirectory string) (Skill, er
 	if err != nil {
 		return Skill{}, corrupt("calculate manifest digest", err)
 	}
-	if !strings.EqualFold(expected, manifest.Digest) {
+	if expected != manifest.Digest {
 		return Skill{}, corrupt("manifest digest mismatch", nil)
 	}
 	references := make(map[string]string)
@@ -405,6 +406,9 @@ func (c *Catalog) readRegular(limit int, parts ...string) ([]byte, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return nil, corrupt("catalog file is not a regular file", nil)
 	}
+	if info.Mode().Perm()&0o111 != 0 {
+		return nil, corrupt("catalog content file is executable", nil)
+	}
 	if info.Size() > int64(limit) {
 		return nil, corrupt("catalog file size limit exceeded", nil)
 	}
@@ -491,8 +495,8 @@ func validateManifest(manifest Manifest, skillDirectory, versionDirectory string
 }
 
 func validateContentPath(path string) (string, error) {
-	if path == "" || filepath.IsAbs(path) || strings.Contains(path, `\`) {
-		return "", errors.New("content path must be relative")
+	if path == "" || filepath.IsAbs(path) || strings.ContainsAny(path, `\%`) {
+		return "", errors.New("content path must be relative and unambiguous")
 	}
 	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
 	if clean != path || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {

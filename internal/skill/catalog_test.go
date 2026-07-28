@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,31 @@ func TestCatalogDiscoversNativeAndAdapterDeterministically(t *testing.T) {
 	}
 }
 
+func TestNativeManifestDigestIsCanonicalLowercase(t *testing.T) {
+	root := t.TempDir()
+	writeNativeFixture(t, root, "skill", baseManifest(), map[string]string{"SKILL.md": "Instructions\n"})
+	manifestPath := filepath.Join(root, "skill", "1.0.0", "manifest.json")
+	var manifest Manifest
+	if err := json.Unmarshal(mustReadSkill(t, manifestPath), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	lowercase := manifest.Digest
+	manifest.Digest = strings.ToUpper(manifest.Digest)
+	writeJSONSkill(t, manifestPath, manifest)
+
+	catalog, err := NewCatalog(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := catalog.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Manifest.Digest != lowercase {
+		t.Fatalf("Digest was not canonicalized: %#v", items)
+	}
+}
+
 func TestCatalogDoesNotScanUnconfiguredLocationsOrExecuteFiles(t *testing.T) {
 	t.Setenv("GOHERMIT_SKILL_CATALOG", "")
 	catalog, err := NewCatalog("")
@@ -79,6 +105,45 @@ func TestCatalogDoesNotScanUnconfiguredLocationsOrExecuteFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("adapter script or dependency hook executed")
+	}
+}
+
+func TestCatalogResolveUsesExactValidatedIdentity(t *testing.T) {
+	root := t.TempDir()
+	writeAdapterFixture(t, root, "adapter", "---\nname: Adapter\ndescription: Safe\n---\nInstructions\n", nil)
+	catalog, err := NewCatalog(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := catalog.List()
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %#v, %v", items, err)
+	}
+	resolved, err := catalog.Resolve(items[0].Manifest.SkillID, items[0].Manifest.Version)
+	if err != nil || resolved.Manifest.Digest != items[0].Manifest.Digest {
+		t.Fatalf("resolved = %#v, %v", resolved, err)
+	}
+	if _, err := catalog.Resolve("missing", "1"); !os.IsNotExist(err) {
+		t.Fatalf("missing Resolve error = %v", err)
+	}
+	for _, identity := range [][2]string{{"../outside", "1"}, {"adapter", "../outside"}} {
+		if _, err := catalog.Resolve(identity[0], identity[1]); err == nil {
+			t.Fatalf("invalid Resolve identity %#v was accepted", identity)
+		}
+	}
+}
+
+func TestNewCatalogRejectsMissingAndNonDirectoryRoots(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := NewCatalog(missing); err == nil {
+		t.Fatal("missing Catalog root must fail closed")
+	}
+	file := filepath.Join(t.TempDir(), "catalog-file")
+	if err := os.WriteFile(file, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewCatalog(file); err == nil {
+		t.Fatal("non-directory Catalog root must fail closed")
 	}
 }
 
