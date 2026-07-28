@@ -51,6 +51,9 @@ func TestTaskStoreMultipleQueuedStablePaginationFilterCancelAndReopen(t *testing
 	if err != nil || cancelled.State != employee.TaskCancelled {
 		t.Fatalf("cancel = %#v, %v", cancelled, err)
 	}
+	if cancelled.SnapshotDigest != created[1].SnapshotDigest {
+		t.Fatal("cancel rewrote immutable Task Snapshot Digest")
+	}
 	again, err := store.CancelTask(created[1].ID)
 	if err != nil || !reflect.DeepEqual(again, cancelled) {
 		t.Fatalf("idempotent cancel = %#v, %v", again, err)
@@ -67,6 +70,9 @@ func TestTaskStoreMultipleQueuedStablePaginationFilterCancelAndReopen(t *testing
 	loaded, err := reopened.GetTask(cancelled.ID)
 	if err != nil || !reflect.DeepEqual(loaded, cancelled) {
 		t.Fatalf("reopened Task = %#v, %v", loaded, err)
+	}
+	if loaded.SnapshotDigest != created[1].SnapshotDigest {
+		t.Fatal("Store reopen changed immutable Task Snapshot Digest")
 	}
 	reopenedPage, err := reopened.ListTasks("employee-a", TaskListOptions{State: employee.TaskCancelled})
 	if err != nil || len(reopenedPage.Tasks) != 1 {

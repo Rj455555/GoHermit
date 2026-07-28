@@ -436,8 +436,6 @@ func taskSnapshotDigest(task EmployeeTask) (string, error) {
 		MemoryFacts      []TaskMemoryFactSnapshot `json:"memory_facts"`
 		ProjectBinding   ProjectBinding           `json:"project_binding"`
 		Policy           TaskPolicy               `json:"policy"`
-		SessionID        string                   `json:"session_id"`
-		RunID            string                   `json:"run_id"`
 	}{
 		SchemaVersion: task.SchemaVersion, ID: task.ID,
 		EmployeeID: task.EmployeeID, EmployeeRevision: task.EmployeeRevision,
@@ -445,7 +443,6 @@ func taskSnapshotDigest(task EmployeeTask) (string, error) {
 		EmployeeSnapshot: snapshot, Skills: canonicalTaskSkillConfigurations(task.Skills),
 		Knowledge: task.Knowledge, MemoryFacts: task.MemoryFacts,
 		ProjectBinding: task.ProjectBinding, Policy: task.Policy,
-		SessionID: task.SessionID, RunID: task.RunID,
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {

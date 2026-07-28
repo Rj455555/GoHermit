@@ -100,6 +100,94 @@ func TestEmployeeTaskJSONRoundTripPreservesSnapshotDigest(t *testing.T) {
 	}
 }
 
+func TestEmployeeTaskSnapshotDigestExcludesLifecycleAndExecutionProjection(t *testing.T) {
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	task, err := NewTask(validTaskDraft(t, now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := taskSnapshotDigest(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base != task.SnapshotDigest {
+		t.Fatalf("sealed digest got %s want %s", task.SnapshotDigest, base)
+	}
+
+	lifecycle := task.Clone()
+	cancelledAt := now.Add(time.Minute)
+	lifecycle.State = TaskCancelled
+	lifecycle.UpdatedAt = cancelledAt
+	lifecycle.CancelledAt = &cancelledAt
+	assertTaskSnapshotDigest(t, lifecycle, base)
+
+	executionProjection := task.Clone()
+	executionProjection.SessionID = "session-phase6"
+	executionProjection.RunID = "run-phase7"
+	assertTaskSnapshotDigest(t, executionProjection, base)
+}
+
+func TestEmployeeTaskSnapshotDigestCoversEveryImmutableSelection(t *testing.T) {
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	task, err := NewTask(validTaskDraft(t, now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := task.SnapshotDigest
+	for name, mutate := range map[string]func(*EmployeeTask){
+		"prompt":            func(value *EmployeeTask) { value.Prompt += " changed" },
+		"employee snapshot": func(value *EmployeeTask) { value.EmployeeSnapshot.Employee.Name = "Changed" },
+		"skill":             func(value *EmployeeTask) { value.Skills[0].Enabled = false },
+		"knowledge":         func(value *EmployeeTask) { value.Knowledge[0].Citations[0].StartLine++ },
+		"memory":            func(value *EmployeeTask) { value.MemoryFacts[0].FactID = "mem-b" },
+		"project binding":   func(value *EmployeeTask) { value.ProjectBinding.Label = "Changed" },
+		"task policy":       func(value *EmployeeTask) { value.Policy.Budget.MaxTokens-- },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := task.Clone()
+			mutate(&changed)
+			digest, err := taskSnapshotDigest(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if digest == base {
+				t.Fatalf("%s did not change immutable Task Snapshot Digest", name)
+			}
+		})
+	}
+}
+
+func TestValidateEmployeeTaskRejectsFutureExecutionBindings(t *testing.T) {
+	now := time.Now().UTC()
+	task, err := NewTask(validTaskDraft(t, now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*EmployeeTask){
+		"session": func(value *EmployeeTask) { value.SessionID = "session-phase6" },
+		"run":     func(value *EmployeeTask) { value.RunID = "run-phase7" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bound := task.Clone()
+			mutate(&bound)
+			if err := ValidateTask(bound); err == nil {
+				t.Fatalf("Phase 5 accepted %s binding", name)
+			}
+		})
+	}
+}
+
+func assertTaskSnapshotDigest(t *testing.T, task EmployeeTask, want string) {
+	t.Helper()
+	got, err := taskSnapshotDigest(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("Task Snapshot Digest got %s want %s", got, want)
+	}
+}
+
 func TestEmployeeTaskRejectsUnsafePromptAndPhase6State(t *testing.T) {
 	now := time.Now().UTC()
 	for name, mutate := range map[string]func(*EmployeeTask){
