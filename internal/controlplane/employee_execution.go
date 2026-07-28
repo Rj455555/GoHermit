@@ -341,7 +341,14 @@ func (s *Service) reconcileBoundEmployeeTask(ctx context.Context, task employee.
 			if !errors.Is(launchErr, errRunActive) {
 				return EmployeeTaskView{}, classifiedLaunchError(launchErr)
 			}
+			s.runMu.Lock()
+			sameRun := s.activeSession == task.SessionID && s.activeRun == task.RunID
+			s.runMu.Unlock()
+			if !sameRun {
+				return EmployeeTaskView{}, classifiedLaunchError(launchErr)
+			}
 		}
+		return s.waitForEmployeeRunProjection(ctx, task, EmployeeTaskStatePrepared)
 	}
 	return s.projectEmployeeTask(ctx, task)
 }
@@ -421,7 +428,7 @@ func (s *Service) waitForEmployeeRunProjection(ctx context.Context, task employe
 		case <-ctx.Done():
 			return EmployeeTaskView{}, classified(KindInvalid, ctx.Err())
 		case <-deadline.C:
-			return EmployeeTaskView{}, classified(KindInternal, errors.New("resumed Run did not persist its running projection"))
+			return EmployeeTaskView{}, classified(KindInternal, errors.New("Employee Task Run did not persist its next projection"))
 		case <-ticker.C:
 		}
 	}
