@@ -204,6 +204,8 @@ func classifyEmployeeStore(err error) error {
 	switch {
 	case errors.Is(err, employeestore.ErrNotFound):
 		return classified(KindNotFound, err)
+	case errors.Is(err, employeestore.ErrCorrupt):
+		return classified(KindInternal, err)
 	case errors.Is(err, employeestore.ErrConflict), errors.Is(err, employee.ErrArchived), errors.Is(err, employee.ErrInvalidTransition):
 		return classified(KindConflict, err)
 	default:

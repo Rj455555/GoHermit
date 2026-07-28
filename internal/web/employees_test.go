@@ -5,15 +5,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Rj455555/GoHermit/internal/controlplane"
 	"github.com/Rj455555/GoHermit/internal/employee"
+	"github.com/Rj455555/GoHermit/internal/employeestore"
 )
 
 func TestEmployeeAPIAndSingleWorkspaceProjects(t *testing.T) {
-	server, workspace := newEmployeeTestServer(t)
+	server, workspace, _ := newEmployeeTestServer(t)
 	handler := server.Handler()
 	input := controlplane.EmployeeInput{
 		Employee: webEmployeeDraft("employee-api"),
@@ -26,13 +28,60 @@ func TestEmployeeAPIAndSingleWorkspaceProjects(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create status %d: %s", response.Code, response.Body.String())
 	}
+	var record employeestore.Record
+	if err := json.Unmarshal(response.Body.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
 	response = requestJSON(t, handler, http.MethodGet, "/api/employees?limit=1", nil, "")
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"employee-api"`)) {
 		t.Fatalf("list status %d: %s", response.Code, response.Body.String())
 	}
+	response = requestJSON(t, handler, http.MethodGet, "/api/employees/employee-api", nil, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("get status %d: %s", response.Code, response.Body.String())
+	}
+	proposed := record.Employee
+	proposed.Name = "Updated API Employee"
+	update := controlplane.EmployeeUpdateInput{ExpectedRevision: record.Employee.Revision, Employee: proposed, ProjectBindings: record.ProjectBindings}
+	response = requestJSON(t, handler, http.MethodPut, "/api/employees/employee-api", update, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("update status %d: %s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	response = requestJSON(t, handler, http.MethodPut, "/api/employees/employee-api", update, "")
+	if response.Code != http.StatusConflict {
+		t.Fatalf("stale update status %d: %s", response.Code, response.Body.String())
+	}
 	response = requestJSON(t, handler, http.MethodPost, "/api/employees/employee-api/dry-run", nil, "")
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"ready":true`)) {
 		t.Fatalf("dry-run status %d: %s", response.Code, response.Body.String())
+	}
+	for _, transition := range []struct {
+		path  string
+		state employee.State
+	}{
+		{"disable", employee.StateDisabled},
+		{"enable", employee.StateActive},
+		{"archive", employee.StateArchived},
+	} {
+		response = requestJSON(t, handler, http.MethodPost, "/api/employees/employee-api/"+transition.path,
+			controlplane.EmployeeTransitionInput{ExpectedRevision: record.Employee.Revision}, "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status %d: %s", transition.path, response.Code, response.Body.String())
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &record); err != nil {
+			t.Fatal(err)
+		}
+		if record.Employee.State != transition.state {
+			t.Fatalf("%s state = %s", transition.path, record.Employee.State)
+		}
+	}
+	response = requestJSON(t, handler, http.MethodPost, "/api/employees/employee-api/enable",
+		controlplane.EmployeeTransitionInput{ExpectedRevision: record.Employee.Revision}, "")
+	if response.Code != http.StatusConflict {
+		t.Fatalf("archived transition status %d: %s", response.Code, response.Body.String())
 	}
 	response = requestJSON(t, handler, http.MethodGet, "/api/employees/employee-api/activity", nil, "")
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"employee_created"`)) {
@@ -42,10 +91,14 @@ func TestEmployeeAPIAndSingleWorkspaceProjects(t *testing.T) {
 	if response.Code != http.StatusOK || bytes.Count(response.Body.Bytes(), []byte(`"workspace_real_path"`)) != 1 {
 		t.Fatalf("projects status %d: %s", response.Code, response.Body.String())
 	}
+	response = requestJSON(t, handler, http.MethodGet, "/api/employees/missing", nil, "")
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("not found status = %d", response.Code)
+	}
 }
 
 func TestEmployeeAPIStrictJSONAndSameOrigin(t *testing.T) {
-	server, _ := newEmployeeTestServer(t)
+	server, workspace, _ := newEmployeeTestServer(t)
 	handler := server.Handler()
 	response := requestJSON(t, handler, http.MethodPost, "/api/employees", map[string]any{"unknown": true}, "")
 	if response.Code != http.StatusBadRequest {
@@ -55,9 +108,43 @@ func TestEmployeeAPIStrictJSONAndSameOrigin(t *testing.T) {
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin status = %d", response.Code)
 	}
+	input := controlplane.EmployeeInput{
+		Employee:        webEmployeeDraft("employee-other"),
+		ProjectBindings: []employee.ProjectBinding{{ID: "project-other", Label: "Other", WorkspaceRealPath: filepath.Dir(workspace), ReadAllowed: true}},
+	}
+	response = requestJSON(t, handler, http.MethodPost, "/api/employees", input, "")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid workspace status = %d: %s", response.Code, response.Body.String())
+	}
+	large := httptest.NewRequest(http.MethodPost, "/api/employees", bytes.NewReader(bytes.Repeat([]byte("x"), maxEmployeeRequestBytes+1)))
+	large.Host = "gohermit.test"
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, large)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("oversized request status = %d", recorder.Code)
+	}
 }
 
-func newEmployeeTestServer(t *testing.T) (*Server, string) {
+func TestEmployeeAPICorruptStoreMapsInternal(t *testing.T) {
+	server, workspace, state := newEmployeeTestServer(t)
+	handler := server.Handler()
+	input := controlplane.EmployeeInput{
+		Employee:        webEmployeeDraft("employee-corrupt"),
+		ProjectBindings: []employee.ProjectBinding{{ID: "project-corrupt", Label: "Current", WorkspaceRealPath: workspace, ReadAllowed: true}},
+	}
+	if response := requestJSON(t, handler, http.MethodPost, "/api/employees", input, ""); response.Code != http.StatusCreated {
+		t.Fatalf("create status = %d", response.Code)
+	}
+	if err := os.WriteFile(filepath.Join(state, "employees", "index.json"), []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	response := requestJSON(t, handler, http.MethodGet, "/api/employees/employee-corrupt", nil, "")
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("corrupt store status %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func newEmployeeTestServer(t *testing.T) (*Server, string, string) {
 	t.Helper()
 	workspace, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -78,7 +165,7 @@ func newEmployeeTestServer(t *testing.T) (*Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return server, workspace
+	return server, workspace, state
 }
 
 func requestJSON(t *testing.T, handler http.Handler, method, path string, body any, origin string) *httptest.ResponseRecorder {

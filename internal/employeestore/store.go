@@ -36,6 +36,7 @@ const (
 var (
 	ErrNotFound = errors.New("employee not found")
 	ErrConflict = errors.New("employee revision conflict")
+	ErrCorrupt  = errors.New("employee store is corrupt")
 )
 
 type Store struct {
@@ -193,22 +194,22 @@ func (s *Store) getLocked(id string) (Record, error) {
 	}
 	var current employee.Employee
 	if err := decodeFileStrict(filepath.Join(s.root, id, "employee.json"), MaxStoreFileBytes, &current); err != nil {
-		return Record{}, fmt.Errorf("load employee %q: %w", id, err)
+		return Record{}, fmt.Errorf("%w: load employee %q: %v", ErrCorrupt, id, err)
 	}
 	var projects projectsFile
 	if err := decodeFileStrict(filepath.Join(s.root, id, "projects.json"), MaxStoreFileBytes, &projects); err != nil {
-		return Record{}, fmt.Errorf("load employee projects %q: %w", id, err)
+		return Record{}, fmt.Errorf("%w: load employee projects %q: %v", ErrCorrupt, id, err)
 	}
 	if projects.SchemaVersion != StoreSchemaVersion {
-		return Record{}, fmt.Errorf("unsupported employee projects schema version %d", projects.SchemaVersion)
+		return Record{}, fmt.Errorf("%w: unsupported employee projects schema version %d", ErrCorrupt, projects.SchemaVersion)
 	}
 	record := Record{Employee: current, ProjectBindings: projects.Bindings}
 	if err := validateRecord(record); err != nil {
-		return Record{}, err
+		return Record{}, fmt.Errorf("%w: employee %q: %v", ErrCorrupt, id, err)
 	}
 	summary := summarize(record)
 	if summary != index.Employees[position] {
-		return Record{}, errors.New("employee index and record disagree")
+		return Record{}, fmt.Errorf("%w: employee index and record disagree", ErrCorrupt)
 	}
 	return record, nil
 }
@@ -301,21 +302,21 @@ func (s *Store) getLockedWithoutMutex(id string) (Record, error) {
 	}
 	var current employee.Employee
 	if err := decodeFileStrict(filepath.Join(s.root, id, "employee.json"), MaxStoreFileBytes, &current); err != nil {
-		return Record{}, err
+		return Record{}, fmt.Errorf("%w: load employee %q: %v", ErrCorrupt, id, err)
 	}
 	var projects projectsFile
 	if err := decodeFileStrict(filepath.Join(s.root, id, "projects.json"), MaxStoreFileBytes, &projects); err != nil {
-		return Record{}, err
+		return Record{}, fmt.Errorf("%w: load employee projects %q: %v", ErrCorrupt, id, err)
 	}
 	if projects.SchemaVersion != StoreSchemaVersion {
-		return Record{}, errors.New("unsupported employee projects schema")
+		return Record{}, fmt.Errorf("%w: unsupported employee projects schema", ErrCorrupt)
 	}
 	record := Record{Employee: current, ProjectBindings: projects.Bindings}
 	if err := validateRecord(record); err != nil {
-		return Record{}, err
+		return Record{}, fmt.Errorf("%w: employee %q: %v", ErrCorrupt, id, err)
 	}
 	if summarize(record) != index.Employees[position] {
-		return Record{}, errors.New("employee index and record disagree")
+		return Record{}, fmt.Errorf("%w: employee index and record disagree", ErrCorrupt)
 	}
 	return record, nil
 }
@@ -327,6 +328,9 @@ func (s *Store) List(options ListOptions) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
+	if err := s.validateIndexedRecords(index); err != nil {
+		return Page{}, err
+	}
 	limit, err := normalizedLimit(options.Limit)
 	if err != nil {
 		return Page{}, err
@@ -334,6 +338,11 @@ func (s *Store) List(options ListOptions) (Page, error) {
 	after, err := decodeCursor(options.Cursor)
 	if err != nil {
 		return Page{}, err
+	}
+	if after != "" {
+		if err := validateStoreID(after); err != nil {
+			return Page{}, errors.New("invalid employee pagination cursor")
+		}
 	}
 	if options.State != "" && options.State != employee.StateActive && options.State != employee.StateDisabled && options.State != employee.StateArchived {
 		return Page{}, errors.New("invalid employee state filter")
@@ -358,11 +367,30 @@ func (s *Store) List(options ListOptions) (Page, error) {
 func (s *Store) LoadRevision(id string, revision int) (employee.RevisionSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := s.loadIndex(); err != nil {
+	if err := validateStoreID(id); err != nil {
 		return employee.RevisionSnapshot{}, err
+	}
+	if revision < 1 {
+		return employee.RevisionSnapshot{}, errors.New("employee revision must be positive")
+	}
+	index, err := s.loadIndex()
+	if err != nil {
+		return employee.RevisionSnapshot{}, err
+	}
+	if findSummary(index.Employees, id) < 0 {
+		return employee.RevisionSnapshot{}, ErrNotFound
 	}
 	var snapshot employee.RevisionSnapshot
 	path := filepath.Join(s.root, id, "revisions", strconv.Itoa(revision)+".json")
+	if err := ensureContained(s.root, path); err != nil {
+		return employee.RevisionSnapshot{}, err
+	}
+	if err := ensureResolvedContained(s.root, path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return employee.RevisionSnapshot{}, ErrNotFound
+		}
+		return employee.RevisionSnapshot{}, err
+	}
 	if err := decodeFileStrict(path, employee.MaxSnapshotBytes, &snapshot); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return employee.RevisionSnapshot{}, ErrNotFound
@@ -371,6 +399,9 @@ func (s *Store) LoadRevision(id string, revision int) (employee.RevisionSnapshot
 	}
 	if err := employee.ValidateRevisionSnapshot(snapshot); err != nil {
 		return employee.RevisionSnapshot{}, err
+	}
+	if snapshot.EmployeeID != id || snapshot.Revision != revision {
+		return employee.RevisionSnapshot{}, errors.New("employee snapshot does not match requested identity")
 	}
 	return snapshot, nil
 }
@@ -393,6 +424,9 @@ func (s *Store) Activity(id string, options ListOptions) (ActivityPage, error) {
 	if err != nil {
 		return ActivityPage{}, err
 	}
+	if after != "" && !validActivityID(after) {
+		return ActivityPage{}, errors.New("invalid employee activity cursor")
+	}
 	filtered := make([]ActivityEvent, 0, len(events))
 	for _, event := range events {
 		if event.ID > after {
@@ -412,6 +446,9 @@ func (s *Store) Activity(id string, options ListOptions) (ActivityPage, error) {
 func (s *Store) RecordActivity(event ActivityEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if event.ID != "" {
+		return errors.New("employee activity id is store-assigned")
+	}
 	if _, err := s.getLockedWithoutMutex(event.EmployeeID); err != nil {
 		return err
 	}
@@ -452,26 +489,50 @@ func (s *Store) loadIndex() (indexFile, error) {
 		return indexFile{SchemaVersion: StoreSchemaVersion, Employees: []Summary{}}, nil
 	}
 	if err != nil {
-		return indexFile{}, fmt.Errorf("load employee index: %w", err)
+		return indexFile{}, fmt.Errorf("%w: load employee index: %v", ErrCorrupt, err)
 	}
 	if index.SchemaVersion != StoreSchemaVersion {
-		return indexFile{}, fmt.Errorf("unsupported employee index schema version %d", index.SchemaVersion)
+		return indexFile{}, fmt.Errorf("%w: unsupported employee index schema version %d", ErrCorrupt, index.SchemaVersion)
 	}
 	if len(index.Employees) > MaxEmployees {
-		return indexFile{}, errors.New("employee index exceeds record limit")
+		return indexFile{}, fmt.Errorf("%w: employee index exceeds record limit", ErrCorrupt)
 	}
 	for i, summary := range index.Employees {
 		if summary.ID == "" || summary.Revision < 1 || summary.Name == "" || summary.UpdatedAt.IsZero() {
-			return indexFile{}, errors.New("employee index contains invalid summary")
+			return indexFile{}, fmt.Errorf("%w: employee index contains invalid summary", ErrCorrupt)
 		}
 		if i > 0 && index.Employees[i-1].ID >= summary.ID {
-			return indexFile{}, errors.New("employee index is not strictly sorted")
+			return indexFile{}, fmt.Errorf("%w: employee index is not strictly sorted", ErrCorrupt)
 		}
 	}
 	if index.Employees == nil {
 		index.Employees = []Summary{}
 	}
 	return index, nil
+}
+
+func (s *Store) validateIndexedRecords(index indexFile) error {
+	for _, expected := range index.Employees {
+		var current employee.Employee
+		if err := decodeFileStrict(filepath.Join(s.root, expected.ID, "employee.json"), MaxStoreFileBytes, &current); err != nil {
+			return fmt.Errorf("%w: load employee %q: %v", ErrCorrupt, expected.ID, err)
+		}
+		var projects projectsFile
+		if err := decodeFileStrict(filepath.Join(s.root, expected.ID, "projects.json"), MaxStoreFileBytes, &projects); err != nil {
+			return fmt.Errorf("%w: load employee projects %q: %v", ErrCorrupt, expected.ID, err)
+		}
+		if projects.SchemaVersion != StoreSchemaVersion {
+			return fmt.Errorf("%w: unsupported employee projects schema version %d", ErrCorrupt, projects.SchemaVersion)
+		}
+		record := Record{Employee: current, ProjectBindings: projects.Bindings}
+		if err := validateRecord(record); err != nil {
+			return fmt.Errorf("%w: employee %q: %v", ErrCorrupt, expected.ID, err)
+		}
+		if summarize(record) != expected {
+			return fmt.Errorf("%w: employee index and record disagree", ErrCorrupt)
+		}
+	}
+	return nil
 }
 
 func (s *Store) saveIndex(index indexFile) error {
@@ -497,6 +558,7 @@ func (s *Store) loadActivity(id string) ([]ActivityEvent, error) {
 		return nil, errors.New("employee activity exceeds event limit")
 	}
 	events := make([]ActivityEvent, 0, len(lines))
+	lastID := ""
 	for _, line := range lines {
 		var event ActivityEvent
 		if err := decodeStrict(line, &event); err != nil {
@@ -508,7 +570,14 @@ func (s *Store) loadActivity(id string) ([]ActivityEvent, error) {
 		if event.EmployeeID != id {
 			return nil, errors.New("employee activity identity mismatch")
 		}
+		if !validActivityID(event.ID) {
+			return nil, errors.New("employee activity id is invalid")
+		}
+		if lastID != "" && event.ID <= lastID {
+			return nil, errors.New("employee activity ids are not strictly increasing")
+		}
 		events = append(events, event)
+		lastID = event.ID
 	}
 	return events, nil
 }
@@ -517,11 +586,23 @@ func (s *Store) appendActivity(id string, event ActivityEvent) error {
 	if event.SchemaVersion == 0 {
 		event.SchemaVersion = ActivitySchemaVersion
 	}
-	if event.ID == "" {
-		event.ID = newID()
-	}
 	if event.Time.IsZero() {
 		event.Time = time.Now().UTC()
+	}
+	events, err := s.loadActivity(id)
+	if err != nil {
+		return err
+	}
+	lastID := ""
+	if len(events) > 0 {
+		lastID = events[len(events)-1].ID
+	}
+	if event.ID != "" {
+		return errors.New("employee activity id is store-assigned")
+	}
+	event.ID, err = newActivityID(lastID)
+	if err != nil {
+		return err
 	}
 	if err := validateActivity(event); err != nil {
 		return err
@@ -529,9 +610,8 @@ func (s *Store) appendActivity(id string, event ActivityEvent) error {
 	if event.EmployeeID != id {
 		return errors.New("employee activity identity mismatch")
 	}
-	events, err := s.loadActivity(id)
-	if err != nil {
-		return err
+	if lastID != "" && event.ID <= lastID {
+		return errors.New("employee activity id is not strictly increasing")
 	}
 	events = append(events, event)
 	if len(events) > MaxActivityEvents {
@@ -626,7 +706,7 @@ func bindingIDs(bindings []employee.ProjectBinding) []string {
 }
 
 func lifecycleEvent(value employee.Employee, kind ActivityType) ActivityEvent {
-	return ActivityEvent{SchemaVersion: ActivitySchemaVersion, ID: newID(), EmployeeID: value.ID, Type: kind, Time: value.UpdatedAt, EmployeeRevision: value.Revision}
+	return ActivityEvent{SchemaVersion: ActivitySchemaVersion, EmployeeID: value.ID, Type: kind, Time: value.UpdatedAt, EmployeeRevision: value.Revision}
 }
 
 func summarize(record Record) Summary {
@@ -717,8 +797,80 @@ func decodeStrict(raw []byte, target any) error {
 	return nil
 }
 
-func newID() string {
+var activityRandomRead = rand.Read
+
+func newActivityID(after string) (string, error) {
+	nanos := time.Now().UTC().UnixNano()
+	if after != "" {
+		if !validActivityID(after) {
+			return "", errors.New("previous employee activity id is invalid")
+		}
+		previous, err := strconv.ParseInt(after[:20], 10, 64)
+		if err != nil {
+			return "", errors.New("previous employee activity timestamp is invalid")
+		}
+		if nanos <= previous {
+			if previous == int64(^uint64(0)>>1) {
+				return "", errors.New("employee activity id space exhausted")
+			}
+			nanos = previous + 1
+		}
+	}
 	var random [8]byte
-	_, _ = rand.Read(random[:])
-	return fmt.Sprintf("%020d-%s", time.Now().UTC().UnixNano(), hex.EncodeToString(random[:]))
+	if _, err := activityRandomRead(random[:]); err != nil {
+		return "", fmt.Errorf("generate employee activity id: %w", err)
+	}
+	id := fmt.Sprintf("%020d-%s", nanos, hex.EncodeToString(random[:]))
+	if after != "" && id <= after {
+		return "", errors.New("generated employee activity id is not strictly increasing")
+	}
+	return id, nil
+}
+
+func validActivityID(id string) bool {
+	if len(id) != 37 || id[20] != '-' {
+		return false
+	}
+	for _, char := range id[:20] {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	_, err := hex.DecodeString(id[21:])
+	return err == nil
+}
+
+func validateStoreID(id string) error {
+	if id == "" || len(id) > employee.MaxIDBytes || filepath.IsAbs(id) ||
+		filepath.Clean(id) != id || filepath.Base(id) != id || id == "." || id == ".." {
+		return errors.New("employee id is invalid")
+	}
+	for _, char := range id {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+			char >= '0' && char <= '9' || strings.ContainsRune("_-.", char) {
+			continue
+		}
+		return errors.New("employee id contains an unsupported character")
+	}
+	return nil
+}
+
+func ensureContained(root, path string) error {
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return errors.New("employee store path escapes root")
+	}
+	return nil
+}
+
+func ensureResolvedContained(root, path string) error {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	return ensureContained(resolvedRoot, resolvedPath)
 }
