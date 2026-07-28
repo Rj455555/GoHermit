@@ -126,6 +126,75 @@ func TestBuildEmployeeRunRejectsProjectSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestEmployeeKnowledgeAndMemoryLayersAreOrderedAndIndependentlyBounded(t *testing.T) {
+	manager, _ := New(Config{MaxTokens: 200000, CompressionThreshold: .8, HardLimitThreshold: .95, ReserveOutputTokens: 512})
+	context := validEmployeeContext()
+	context.PinnedSkills = []SkillContext{{SkillID: "skill", Version: "1", Digest: strings.Repeat("a", 64), Instructions: "Skill"}}
+	for index := 0; index < 20; index++ {
+		context.Knowledge = append(context.Knowledge, KnowledgeContext{
+			CitationID: "cite-" + string(rune('a'+index)), SourceID: "source-a", Digest: strings.Repeat("b", 64),
+			Title: "Reference", Excerpt: strings.Repeat("knowledge ", 1000),
+		})
+		context.Memory = append(context.Memory, MemoryContext{
+			ID: "memory-" + string(rune('a'+index)), Digest: strings.Repeat("c", 64), Category: "preference",
+			Value: strings.Repeat("memory ", 900), Provenance: "owner-confirmed",
+		})
+	}
+	messages, _, err := manager.BuildEmployeeRun(t.TempDir(), context, "Goal", "", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillAt, knowledgeAt, memoryAt, goalAt := -1, -1, -1, -1
+	knowledgeBytes, memoryBytes := 0, 0
+	for index, message := range messages {
+		switch {
+		case strings.HasPrefix(message.Content, "[source:skill:"):
+			skillAt = index
+		case strings.HasPrefix(message.Content, "[source:knowledge:"):
+			if knowledgeAt < 0 {
+				knowledgeAt = index
+			}
+			knowledgeBytes += len(message.Content)
+		case strings.HasPrefix(message.Content, "[source:employee-memory:"):
+			if memoryAt < 0 {
+				memoryAt = index
+			}
+			memoryBytes += len(message.Content)
+		case message.Content == "Goal":
+			goalAt = index
+		}
+	}
+	if !(skillAt < knowledgeAt && knowledgeAt < memoryAt && memoryAt < goalAt) {
+		t.Fatalf("context order skill=%d Knowledge=%d Memory=%d goal=%d", skillAt, knowledgeAt, memoryAt, goalAt)
+	}
+	if knowledgeBytes > maxKnowledgeContextBytes || memoryBytes > maxMemoryContextBytes {
+		t.Fatalf("independent bounds Knowledge=%d Memory=%d", knowledgeBytes, memoryBytes)
+	}
+}
+
+func TestEmployeeKnowledgeAndMemoryRejectSecretsAndInvalidDigests(t *testing.T) {
+	manager, _ := New(Config{MaxTokens: 8192, CompressionThreshold: .8, HardLimitThreshold: .95, ReserveOutputTokens: 512})
+	for name, mutate := range map[string]func(*EmployeeContext){
+		"Knowledge secret": func(value *EmployeeContext) {
+			value.Knowledge = []KnowledgeContext{{CitationID: "cite-a", SourceID: "source-a", Digest: strings.Repeat("a", 64), Title: "Title", Excerpt: "authorization: bearer hidden-value"}}
+		},
+		"Memory secret": func(value *EmployeeContext) {
+			value.Memory = []MemoryContext{{ID: "memory-a", Digest: strings.Repeat("a", 64), Category: "fact", Value: "api_key=abcdefghijklmnopqrstuvwxyz123456", Provenance: "owner"}}
+		},
+		"noncanonical digest": func(value *EmployeeContext) {
+			value.Memory = []MemoryContext{{ID: "memory-a", Digest: strings.Repeat("A", 64), Category: "fact", Value: "bounded", Provenance: "owner"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			context := validEmployeeContext()
+			mutate(&context)
+			if _, _, err := manager.BuildEmployeeRun(t.TempDir(), context, "Goal", "", nil, ""); err == nil {
+				t.Fatal("unsafe Phase 4 context accepted")
+			}
+		})
+	}
+}
+
 func TestLegacyBuildRunContractIsUnchanged(t *testing.T) {
 	manager, _ := New(Config{
 		MaxTokens: 4096, CompressionThreshold: .8, HardLimitThreshold: .95,
