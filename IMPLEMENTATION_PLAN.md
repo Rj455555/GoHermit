@@ -5,10 +5,11 @@
 ### Current approval status
 
 - Revised plan: Owner-approved on 2026-07-28.
-- Phase 1: implemented and verified; waiting for Owner acceptance.
-- Phase 2 and every later product-code change remain blocked.
+- Phase 1: Owner-approved on 2026-07-28.
+- Phase 2: implemented and verified; waiting for Owner acceptance.
+- Phase 3 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_1_APPROVAL`.
+  `WAITING_FOR_PHASE_2_APPROVAL`.
 
 ### Fixed invariants
 
@@ -51,8 +52,8 @@
 
 | Phase | Scope | Gate state |
 |---|---|---|
-| 1 | Employee Domain and ADR | `COMPLETE_WAITING_FOR_OWNER` |
-| 2 | Employee Store, Control Plane, and CRUD API | `BLOCKED_BY_GATE` |
+| 1 | Employee Domain and ADR | `OWNER_APPROVED` |
+| 2 | Employee Store, Control Plane, and CRUD API | `COMPLETE_WAITING_FOR_OWNER` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `BLOCKED_BY_GATE` |
 | 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` |
@@ -64,19 +65,20 @@
 
 ### Current phase scope
 
-- Phase 1 is closed to further implementation after its scoped commit.
-- Review the Employee domain, state transitions, Revision Snapshot,
-  ProjectBinding, ADR 0013, tests, and recorded evidence.
-- Keep Phase 2 and all later phases blocked until the next explicit Owner Gate.
+- Phase 1 is Owner-approved and closed to further implementation.
+- Review the Phase 2 owner-scoped Employee Store, immutable revision
+  persistence, bounded Activity, Control Plane, Dry Run, current-Workspace
+  Projects endpoint, CRUD API, tests, and recorded evidence.
+- Keep Phase 3 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No Store, Control Plane, Web API, Session schema v6, Skill Catalog,
-  Knowledge, Memory, Task Runtime, UI, Team Role Mapping, Docker, version, or
-  release change.
-- No Phase 2 implementation.
+- No Skill Catalog or execution, SKILL.md Adapter, Knowledge, Memory,
+  EmployeeTask, Session schema v6, Task Runtime, UI, Team Role Mapping,
+  version, or release change.
+- No Phase 3 implementation.
 - No commit, push, Draft PR mutation, deployment, model call, or generated
-  repository artifact.
+  repository artifact after the Phase 2 closeout is pushed.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -85,29 +87,33 @@
 ```bash
 git branch --show-current
 git status --short
-git diff --no-index --check /dev/null IMPLEMENTATION_PLAN.md
-# structural checker: required headings/models/APIs, 10 phases, balanced fences,
-# no CR/trailing whitespace, final reapproval status
+go test ./internal/employee ./internal/employeestore ./internal/controlplane ./internal/web -count=1
+go test ./... -count=1
+go test -race ./... -count=1
+go vet ./...
+go build ./cmd/hermit
+go build ./cmd/hermit-web
+git diff --check
 ```
 
 ### Next Gate
 
-Phase 2 may start only after the Owner explicitly accepts Phase 1,
+Phase 3 may start only after the Owner explicitly accepts Phase 2,
 for example:
 
 ```text
-批准 Phase 1，开始 Phase 2
+批准 Phase 2，开始 Phase 3
 ```
 
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_1_APPROVAL
+STATUS: WAITING_FOR_PHASE_2_APPROVAL
 ```
 
 ---
 
-Plan status: `WAITING_FOR_PHASE_1_APPROVAL`
+Plan status: `WAITING_FOR_PHASE_2_APPROVAL`
 Baseline: `origin/main@b2a187fbcb6c79faaa368977fef40d6ec1786e6c`
 Feature branch: `agent/electronic-employees-v0.7`
 Last audited: 2026-07-28
@@ -115,8 +121,9 @@ Last audited: 2026-07-28
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phase 1 is
-complete; Phase 2 must not start until the Owner explicitly accepts the Phase 1
-gate. Each Owner approval authorizes exactly one phase.
+Owner-approved and Phase 2 is complete; Phase 3 must not start until the Owner
+explicitly accepts the Phase 2 gate. Each Owner approval authorizes exactly one
+phase.
 
 ## 1. Current-state evidence
 
@@ -1235,6 +1242,71 @@ Skill/Knowledge binding changes, Memory accept/edit/forget, and Task-to-
 Session/Run references; Run/SSE/tool events are rejected and Activity cannot
 drive recovery or Task status.
 
+Phase 2 execution record (2026-07-28):
+
+- Status: `COMPLETE_WAITING_FOR_OWNER`; Phase 1 is `OWNER_APPROVED`.
+- Implementation commit:
+  `2f309c8b14af05a564604cf3d377981bb86e6bab`
+  (`feat(employees): add owner-scoped employee control plane`).
+- Actual files:
+  `compose.yaml`, `internal/employeestore/store.go`,
+  `internal/employeestore/store_test.go`,
+  `internal/controlplane/employees.go`,
+  `internal/controlplane/employees_test.go`,
+  `internal/controlplane/service.go`, `internal/web/employees.go`,
+  `internal/web/employees_test.go`, `internal/web/server.go`, and this plan.
+- Store layout:
+  `<owner-store>/index.json`,
+  `<owner-store>/<employee-id>/employee.json`,
+  `<owner-store>/<employee-id>/projects.json`,
+  `<owner-store>/<employee-id>/revisions/<revision>.json`, and
+  `<owner-store>/<employee-id>/activity/events.jsonl`.
+  Store/index/projects/activity schemas are version 1. Current records and
+  immutable revision snapshots are each bounded to 256 KiB; activity is
+  bounded to 1 MiB, 1,024 events, and 4 KiB per event; the store holds at most
+  256 Employees and returns at most 100 records per stable ID cursor page.
+- Persistence: every JSON/JSONL file uses same-directory temp-file write,
+  permission `0600`, fsync, and rename through `storage.AtomicWrite`.
+  A process-wide Store mutex serializes create/update/lifecycle/index/activity
+  mutations. Revision files are create-once and a pre-existing revision fails
+  closed. Missing store/index/activity is empty; corrupt, oversized,
+  unknown-field, unknown-schema, digest mismatch, and index/current mismatch
+  inputs fail closed.
+- Control Plane and Web API: create/list/get/update/dry-run/disable/enable/
+  archive/activity are exposed under `/api/employees`; `GET /api/projects`
+  returns exactly the startup Service Workspace. Mutations are strict JSON,
+  bounded, same-origin, and revision-conditional.
+- Dry Run checks active Employee state, AgentProfile, static provider/access/
+  model selection, credential readiness, ProjectBinding validity, exact
+  current-Service Workspace equality, and Employee policy/config validity. It
+  does not build a runtime, create Session/Run state, call a model, execute a
+  Skill, refresh Knowledge, write Memory, or mutate a Workspace.
+- Activity is a bounded lifecycle/binding/memory/reference audit file only. It
+  has no status/payload field and rejects Run status, Session SSE, tool,
+  approval, verification, recovery, and Task-state events. It is never read by
+  Session/Run/Task recovery or status projection.
+- Verification:
+  - scoped Phase 2 package tests: pass;
+  - owner/team-template/loop-store regression tests: pass;
+  - `go test ./... -count=1`: pass;
+  - `go test -race ./... -count=1`: pass;
+  - `go vet ./...`: pass;
+  - `go build ./cmd/hermit`: pass;
+  - `go build ./cmd/hermit-web`: pass;
+  - `gofmt`, `git diff --check`, and staged private-key/access-key pattern
+    scan: pass.
+- Plan deviation: the Phase 2 product implementation is one scoped commit and
+  this evidence update is a separate plan-closeout commit so the plan can
+  record the immutable implementation SHA. No expected product file or
+  behavior was added outside Phase 2.
+- Remaining risks: atomicity is per file, not a cross-file transaction.
+  Interrupted multi-file mutation therefore fails closed on index/current
+  mismatch and requires owner repair; adding a recovery journal here would
+  violate the prohibition on a second recovery state machine. Store locking is
+  intentionally in-process; owner-scoped sharing and cross-process lock
+  semantics remain a later explicit design decision. No Phase 3 subsystem is
+  present.
+
 ### Phase 3: Skill Catalog, SKILL.md Adapter, policy intersection, and context contract
 
 Independent value:
@@ -1694,11 +1766,11 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-The Phase 1 gate ends here. No Phase 2 implementation is authorized until the
-Owner explicitly accepts Phase 1, for example:
+The Phase 2 gate ends here. No Phase 3 implementation is authorized until the
+Owner explicitly accepts Phase 2, for example:
 
 ```text
-批准 Phase 1，开始 Phase 2
+批准 Phase 2，开始 Phase 3
 ```
 
-STATUS: WAITING_FOR_PHASE_1_APPROVAL
+STATUS: WAITING_FOR_PHASE_2_APPROVAL
