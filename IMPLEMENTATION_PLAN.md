@@ -10,11 +10,13 @@
 - Phase 3: `OWNER_APPROVED`; squash-merged through PR #36.
 - Phase 4: `OWNER_APPROVED`; externally squash-merged through PR #37 into
   `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`.
-- Phase 5: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
-  `agent/electronic-employees-v0.7-phase5`.
-- Phase 6 and every later product-code change remain blocked.
+- Phase 5: `OWNER_APPROVED`; squash-merged through PR #38 into
+  `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`.
+- Phase 6: `IN_PROGRESS` on clean branch
+  `agent/electronic-employees-v0.7-phase6`.
+- Phase 7 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_5_REAPPROVAL`.
+  `WAITING_FOR_PHASE_6_APPROVAL`.
 
 ### Fixed invariants
 
@@ -61,8 +63,8 @@
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `OWNER_APPROVED` |
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` |
-| 5 | Employee Task Inbox persistence and API | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 6 | Runtime Preparation | `BLOCKED_BY_GATE` |
+| 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` |
+| 6 | Runtime Preparation | `IN_PROGRESS` |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` |
@@ -70,20 +72,20 @@
 
 ### Current phase scope
 
-- Phases 1 through 4 are Owner-approved and closed to further implementation.
-- Revise only the Phase 5 immutable Task Snapshot Digest boundary. The digest
-  covers immutable Task business content and excludes lifecycle state,
-  timestamps, and future Session/Run execution bindings.
-- Keep Phase 6 and all later phases blocked until the next explicit Owner Gate.
+- Phases 1 through 5 are Owner-approved and closed to further implementation.
+- Implement only Runtime Preparation: readiness revalidation, bounded compact
+  context snapshot, Session schema v6, stable Session ID, bounded dispatch
+  journal, and idempotent prepared-state reconciliation with zero execution.
+- Keep Phase 7 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No prepared/running/completed Task state, Session schema v6, Task Runtime,
-  model/provider/tool call, workspace lease, UI, Team Role Mapping, version,
-  or release change.
-- No Phase 6 implementation.
-- Keep Draft PR #38 Open and Draft. No merge, auto-merge, force push, or
-  replacement PR.
+- No Run creation/start, model/provider inference, Tool execution, execution
+  Workspace lease, Workspace mutation, Knowledge refresh, Memory Candidate,
+  automatic start, Phase 7 lifecycle, UI, Team Role Mapping, version, or
+  release change.
+- No Phase 7 implementation.
+- No merge, auto-merge, force push, or automatic Workspace submission.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -104,24 +106,24 @@ git diff --check
 
 ### Next Gate
 
-Phase 6 may start only after the Owner explicitly reapproves the Phase 5 Gate,
+Phase 7 may start only after the Owner explicitly approves Phase 6,
 for example:
 
 ```text
-批准 Phase 5，开始 Phase 6
+批准 Phase 6，开始 Phase 7
 ```
 
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_5_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_6_APPROVAL
 ```
 
 ---
 
-Plan status: `WAITING_FOR_PHASE_5_REAPPROVAL`
-Baseline: `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`
-Feature branch: `agent/electronic-employees-v0.7-phase5`
+Plan status: `PHASE_6_IN_PROGRESS`
+Baseline: `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`
+Feature branch: `agent/electronic-employees-v0.7-phase6`
 Last audited: 2026-07-28
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
@@ -1142,8 +1144,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
-| 5 | Employee Task Inbox persistence and API | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Gate `6fa05473`; evidence `9473c7c2`; Draft PR #38 |
-| 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
+| 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` | PR #38 squash-merged as `ad31d633`; full Phase 5 is in `origin/main` |
+| 6 | Runtime Preparation | `IN_PROGRESS` | Clean branch `agent/electronic-employees-v0.7-phase6` from `origin/main@ad31d633` |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` | Not started |
