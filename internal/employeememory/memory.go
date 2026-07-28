@@ -70,6 +70,7 @@ func NewCandidate(value Candidate, now time.Time) (Candidate, error) {
 	value.CreatedAt = now.UTC()
 	value.Category = strings.TrimSpace(value.Category)
 	value.Value = strings.TrimSpace(value.Value)
+	value.Provenance = canonicalProvenance(value.Provenance)
 	value.Digest = CandidateDigest(value)
 	if err := ValidateCandidate(value); err != nil {
 		return Candidate{}, err
@@ -84,7 +85,7 @@ func Promote(candidate Candidate, now time.Time) (Fact, error) {
 	fact := Fact{
 		SchemaVersion: SchemaVersion, ID: "mem-" + candidate.Digest[:24], CandidateID: candidate.ID,
 		EmployeeID: candidate.EmployeeID, Category: candidate.Category, Value: candidate.Value,
-		Provenance: cloneProvenance(candidate.Provenance), CreatedAt: now.UTC(), UpdatedAt: now.UTC(),
+		Provenance: canonicalProvenance(candidate.Provenance), CreatedAt: now.UTC(), UpdatedAt: now.UTC(),
 	}
 	fact.Digest = FactDigest(fact)
 	return fact, ValidateFact(fact)
@@ -107,10 +108,8 @@ func ValidateCandidate(value Candidate) error {
 		len(value.Provenance) > MaxSources || !validValue(value.Value) {
 		return fmt.Errorf("%w: candidate identity, value, or provenance", ErrInvalid)
 	}
-	for _, source := range value.Provenance {
-		if err := validateProvenance(source); err != nil {
-			return err
-		}
+	if err := validateProvenanceSet(value.Provenance); err != nil {
+		return err
 	}
 	if value.Digest != CandidateDigest(value) {
 		return fmt.Errorf("%w: candidate digest mismatch", ErrCorrupt)
@@ -125,10 +124,8 @@ func ValidateFact(value Fact) error {
 		len(value.Provenance) == 0 || len(value.Provenance) > MaxSources {
 		return fmt.Errorf("%w: fact identity, value, or provenance", ErrInvalid)
 	}
-	for _, source := range value.Provenance {
-		if err := validateProvenance(source); err != nil {
-			return err
-		}
+	if err := validateProvenanceSet(value.Provenance); err != nil {
+		return err
 	}
 	if value.Digest != FactDigest(value) {
 		return fmt.Errorf("%w: fact digest mismatch", ErrCorrupt)
@@ -181,7 +178,10 @@ func validValue(value string) bool {
 		return false
 	}
 	lower := strings.ToLower(value)
-	for _, forbidden := range []string{"private reasoning:", "chain of thought:", "raw tool arguments:", "raw_tool_arguments", "hidden system prompt:"} {
+	for _, forbidden := range []string{
+		"private reasoning:", "chain of thought:", "raw tool arguments:", "raw_tool_arguments",
+		"hidden system prompt:", "full system prompt:",
+	} {
 		if strings.Contains(lower, forbidden) {
 			return false
 		}
@@ -208,17 +208,44 @@ func validID(value string) bool {
 }
 
 func provenanceParts(values []Provenance) []string {
-	copyValues := cloneProvenance(values)
-	sort.Slice(copyValues, func(i, j int) bool {
-		left := copyValues[i].SourceType + "\x00" + copyValues[i].SourceID
-		right := copyValues[j].SourceType + "\x00" + copyValues[j].SourceID
-		return left < right
-	})
+	copyValues := canonicalProvenance(values)
 	result := make([]string, 0, len(copyValues)*6)
 	for _, value := range copyValues {
 		result = append(result, value.SourceType, value.SourceID, value.SourceTaskID, value.SourceSessionID, value.SourceRunID, value.VerifiedAt.UTC().Format(time.RFC3339Nano))
 	}
 	return result
+}
+
+func validateProvenanceSet(values []Provenance) error {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if err := validateProvenance(value); err != nil {
+			return err
+		}
+		key := provenanceTuple(value)
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("%w: duplicate provenance", ErrInvalid)
+		}
+		seen[key] = struct{}{}
+	}
+	// The same SourceType/SourceID may identify different verified Runs. The
+	// complete tuple, including Task/Session/Run and VerifiedAt, is the identity.
+	return nil
+}
+
+func canonicalProvenance(values []Provenance) []Provenance {
+	copyValues := cloneProvenance(values)
+	sort.Slice(copyValues, func(i, j int) bool {
+		return provenanceTuple(copyValues[i]) < provenanceTuple(copyValues[j])
+	})
+	return copyValues
+}
+
+func provenanceTuple(value Provenance) string {
+	return strings.Join([]string{
+		value.SourceType, value.SourceID, value.SourceTaskID, value.SourceSessionID,
+		value.SourceRunID, value.VerifiedAt.UTC().Format(time.RFC3339Nano),
+	}, "\x00")
 }
 
 func cloneProvenance(values []Provenance) []Provenance {

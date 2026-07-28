@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Rj455555/GoHermit/internal/employeememory"
 	"github.com/Rj455555/GoHermit/internal/knowledge"
@@ -139,10 +140,10 @@ func (s *Store) DeleteKnowledge(id, sourceID string) error {
 func (s *Store) loadKnowledge(id string) (KnowledgeState, error) {
 	sources := knowledgeSourcesFile{SchemaVersion: knowledge.SchemaVersion, EmployeeID: id, Sources: []knowledge.Source{}}
 	indexes := knowledgeIndexFile{SchemaVersion: knowledge.SchemaVersion, EmployeeID: id, Indexes: []knowledge.Index{}}
-	if err := s.decodeFileStrict(knowledge.MaxIndexBytes, &sources, id, "knowledge", "sources.json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := s.decodeKnowledgeFileStrict(knowledge.MaxIndexBytes, &sources, id, "knowledge", "sources.json"); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return KnowledgeState{}, fmt.Errorf("%w: load Knowledge sources: %v", ErrCorrupt, err)
 	}
-	if err := s.decodeFileStrict(knowledge.MaxIndexBytes, &indexes, id, "knowledge", "index.json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := s.decodeKnowledgeFileStrict(knowledge.MaxIndexBytes, &indexes, id, "knowledge", "index.json"); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return KnowledgeState{}, fmt.Errorf("%w: load Knowledge index: %v", ErrCorrupt, err)
 	}
 	if sources.SchemaVersion != knowledge.SchemaVersion || indexes.SchemaVersion != knowledge.SchemaVersion ||
@@ -173,6 +174,17 @@ func (s *Store) loadKnowledge(id string) (KnowledgeState, error) {
 	sort.Slice(sources.Sources, func(i, j int) bool { return sources.Sources[i].ID < sources.Sources[j].ID })
 	sort.Slice(indexes.Indexes, func(i, j int) bool { return indexes.Indexes[i].SourceID < indexes.Indexes[j].SourceID })
 	return KnowledgeState{Sources: sources.Sources, Indexes: indexes.Indexes}, nil
+}
+
+func (s *Store) decodeKnowledgeFileStrict(maximum int64, target any, parts ...string) error {
+	raw, err := s.readBounded(maximum, parts...)
+	if err != nil {
+		return err
+	}
+	if !utf8.Valid(raw) {
+		return errors.New("Knowledge store file is invalid UTF-8")
+	}
+	return decodeStrict(raw, target)
 }
 
 func (s *Store) writeKnowledge(id string, state KnowledgeState) error {

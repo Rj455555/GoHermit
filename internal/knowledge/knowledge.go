@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -20,19 +21,21 @@ import (
 )
 
 const (
-	SchemaVersion      = 1
-	MaxSources         = 128
-	MaxSourceBytes     = 256 << 10
-	MaxManualTextBytes = 64 << 10
-	MaxAggregateBytes  = 8 << 20
-	MaxIndexBytes      = 2 << 20
-	MaxFilesPerSource  = 256
-	MaxCitations       = 1024
-	MaxCitationBytes   = 16 << 10
-	MaxSearchResults   = 32
-	MaxSearchBytes     = 128 << 10
-	MaxPathBytes       = 4 << 10
-	maxDirectoryDepth  = 8
+	SchemaVersion       = 1
+	MaxSources          = 128
+	MaxSourceBytes      = 256 << 10
+	MaxManualTextBytes  = 64 << 10
+	MaxAggregateBytes   = 8 << 20
+	MaxIndexBytes       = 2 << 20
+	MaxFilesPerSource   = 256
+	MaxCitations        = 1024
+	MaxCitationBytes    = 16 << 10
+	MaxSearchResults    = 32
+	MaxSearchBytes      = 128 << 10
+	MaxPathBytes        = 4 << 10
+	MaxHeadingBytes     = 512
+	MaxTermsPerDocument = 4096
+	maxDirectoryDepth   = 8
 )
 
 var (
@@ -138,6 +141,9 @@ func (c *Catalog) Index(source Source) (Source, Index, error) {
 	source.SchemaVersion = SchemaVersion
 	source.Status = StatusReady
 	source.Error = ""
+	if source.Kind == KindManualText {
+		source.ManualText = canonicalKnowledgeContent(source.ManualText)
+	}
 	if err := ValidateSource(source, false); err != nil {
 		return Source{}, Index{}, err
 	}
@@ -156,16 +162,10 @@ func (c *Catalog) Index(source Source) (Source, Index, error) {
 	if err != nil {
 		return Source{}, Index{}, err
 	}
-	digestHash := sha256.New()
-	for _, document := range documents {
-		_, _ = digestHash.Write([]byte(document.Path))
-		_, _ = digestHash.Write([]byte{0})
-		_, _ = digestHash.Write([]byte(document.Digest))
-	}
-	source.Digest = hex.EncodeToString(digestHash.Sum(nil))
+	source.Digest = sourceIndexDigest(source, documents)
 	index := Index{SchemaVersion: SchemaVersion, EmployeeID: source.EmployeeID, SourceID: source.ID, SourceDigest: source.Digest, Documents: documents}
 	if err := ValidateIndex(index, source); err != nil {
-		return Source{}, Index{}, err
+		return Source{}, Index{}, fmt.Errorf("%w: generated Knowledge Index: %v", ErrInvalid, err)
 	}
 	raw, err := json.Marshal(index)
 	if err != nil || len(raw) > MaxIndexBytes {
@@ -243,22 +243,10 @@ func (c *Catalog) readAndIndex(source Source, directory bool) ([]Document, error
 }
 
 func (c *Catalog) safePath(relative string) (string, error) {
-	if relative == "" || len(relative) > MaxPathBytes || strings.Contains(relative, "%") ||
-		strings.ContainsAny(relative, "\\\r\n") || filepath.IsAbs(relative) {
-		return "", fmt.Errorf("%w: Knowledge path is invalid", ErrInvalid)
-	}
-	if parsed, err := url.Parse(relative); err != nil || parsed.Scheme != "" || parsed.Host != "" {
-		return "", fmt.Errorf("%w: remote or ambiguous Knowledge path", ErrInvalid)
+	if err := validateRelativePath(relative); err != nil {
+		return "", err
 	}
 	clean := filepath.Clean(filepath.FromSlash(relative))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%w: Knowledge path escapes root", ErrInvalid)
-	}
-	for _, part := range strings.Split(filepath.ToSlash(relative), "/") {
-		if part == "" || part == "." || part == ".." || forbiddenPathComponent(part) {
-			return "", fmt.Errorf("%w: forbidden Knowledge path", ErrInvalid)
-		}
-	}
 	path := filepath.Join(c.root, clean)
 	rel, err := filepath.Rel(c.root, path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
@@ -331,6 +319,7 @@ func indexDocuments(source Source, raw []rawDocument) ([]Document, error) {
 	citationCount := 0
 	documents := make([]Document, 0, len(raw))
 	for _, item := range raw {
+		item.content = canonicalKnowledgeContent(item.content)
 		total += len(item.content)
 		if total > MaxAggregateBytes {
 			return nil, fmt.Errorf("%w: Knowledge source aggregate exceeds limit", ErrInvalid)
@@ -377,9 +366,8 @@ func makeCitations(source Source, path, content, digest string) []Citation {
 				break
 			}
 		}
-		identity := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%s", source.ID, path, start+1, end, digest)
 		result = append(result, Citation{
-			SchemaVersion: SchemaVersion, ID: "cite-" + digestText(identity)[:24],
+			SchemaVersion: SchemaVersion, ID: citationID(source.ID, path, start+1, end, digest),
 			EmployeeID: source.EmployeeID, SourceID: source.ID, Path: path, Heading: heading,
 			StartLine: start + 1, EndLine: end, Digest: digest, Snippet: snippet,
 		})
@@ -441,24 +429,37 @@ func Search(sources []Source, indexes []Index, query string, limit int) ([]Resul
 }
 
 func ValidateSource(source Source, persisted bool) error {
-	if source.SchemaVersion != SchemaVersion || !validID(source.ID) || !validID(source.EmployeeID) ||
-		strings.TrimSpace(source.Title) == "" || len(source.Title) > 256 {
+	if source.SchemaVersion != SchemaVersion || !validID(source.ID) || !validID(source.EmployeeID) {
 		return fmt.Errorf("%w: source identity", ErrInvalid)
 	}
-	if owner.LooksSecret(source.Title + "\n" + source.ManualText + "\n" + source.RelativePath) {
-		return fmt.Errorf("%w: source contains secret-like data", ErrInvalid)
+	if err := validateKnowledgeText("source title", source.Title, 256, false); err != nil {
+		return err
 	}
-	if containsPrivateRuntimeContext(source.ManualText) {
-		return fmt.Errorf("%w: source contains private runtime data", ErrInvalid)
+	if strings.ContainsAny(source.Title, "\r\n") || strings.TrimSpace(source.Title) != source.Title {
+		return fmt.Errorf("%w: source title is not canonical", ErrInvalid)
+	}
+	if source.Error != "" {
+		if err := validateKnowledgeText("source error", source.Error, 1<<10, true); err != nil {
+			return err
+		}
 	}
 	switch source.Kind {
 	case KindManualText:
-		if source.RelativePath != "" || source.ManualText == "" || len(source.ManualText) > MaxManualTextBytes || !utf8.ValidString(source.ManualText) {
+		if source.RelativePath != "" {
 			return fmt.Errorf("%w: manual source", ErrInvalid)
+		}
+		if err := validateKnowledgeText("manual source", source.ManualText, MaxManualTextBytes, false); err != nil {
+			return err
+		}
+		if persisted && strings.ContainsRune(source.ManualText, '\r') {
+			return fmt.Errorf("%w: persisted manual source is not canonical", ErrCorrupt)
 		}
 	case KindFile, KindDirectory, KindProjectDoc:
 		if source.ManualText != "" || source.RelativePath == "" {
 			return fmt.Errorf("%w: local source", ErrInvalid)
+		}
+		if err := validateRelativePath(source.RelativePath); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("%w: source kind", ErrInvalid)
@@ -476,21 +477,176 @@ func ValidateIndex(index Index, source Source) error {
 		index.SourceDigest != source.Digest || !validDigest(index.SourceDigest) {
 		return fmt.Errorf("%w: index identity", ErrCorrupt)
 	}
-	for _, document := range index.Documents {
-		if document.Path == "" || !validDigest(document.Digest) {
+	if len(index.Documents) == 0 || len(index.Documents) > MaxFilesPerSource {
+		return fmt.Errorf("%w: document count", ErrCorrupt)
+	}
+	seenDocuments := make(map[string]struct{}, len(index.Documents))
+	seenCitations := make(map[string]struct{})
+	totalCitations := 0
+	previousDocument := ""
+	for documentIndex, document := range index.Documents {
+		if err := validateRelativePath(document.Path); err != nil || !validDigest(document.Digest) {
 			return fmt.Errorf("%w: document identity", ErrCorrupt)
 		}
-		for _, citation := range document.Citations {
+		if documentIndex > 0 && document.Path <= previousDocument {
+			return fmt.Errorf("%w: documents are not strictly sorted", ErrCorrupt)
+		}
+		previousDocument = document.Path
+		if _, duplicate := seenDocuments[document.Path]; duplicate {
+			return fmt.Errorf("%w: duplicate document", ErrCorrupt)
+		}
+		seenDocuments[document.Path] = struct{}{}
+		if len(document.Terms) > MaxTermsPerDocument {
+			return fmt.Errorf("%w: document terms exceed limit", ErrCorrupt)
+		}
+		previousTerm := ""
+		for termIndex, term := range document.Terms {
+			if !validTerm(term) || termIndex > 0 && term <= previousTerm {
+				return fmt.Errorf("%w: document terms are not canonical", ErrCorrupt)
+			}
+			previousTerm = term
+		}
+		if len(document.Citations) == 0 {
+			return fmt.Errorf("%w: document has no citations", ErrCorrupt)
+		}
+		totalCitations += len(document.Citations)
+		if totalCitations > MaxCitations {
+			return fmt.Errorf("%w: citations exceed limit", ErrCorrupt)
+		}
+		previousCitation := ""
+		for citationIndex, citation := range document.Citations {
 			if citation.SchemaVersion != SchemaVersion || !validID(citation.ID) ||
 				citation.EmployeeID != source.EmployeeID || citation.SourceID != source.ID ||
 				citation.Path != document.Path || citation.Digest != document.Digest ||
 				citation.StartLine < 1 || citation.EndLine < citation.StartLine ||
-				citation.Snippet == "" || len(citation.Snippet) > MaxCitationBytes {
+				citation.ID != citationID(source.ID, document.Path, citation.StartLine, citation.EndLine, document.Digest) {
 				return fmt.Errorf("%w: citation identity", ErrCorrupt)
 			}
+			if err := validateKnowledgeText("citation heading", citation.Heading, MaxHeadingBytes, true); err != nil {
+				return fmt.Errorf("%w: %v", ErrCorrupt, err)
+			}
+			if err := validateKnowledgeText("citation snippet", citation.Snippet, MaxCitationBytes, false); err != nil {
+				return fmt.Errorf("%w: %v", ErrCorrupt, err)
+			}
+			if strings.ContainsAny(citation.Heading, "\r\n") || strings.TrimSpace(citation.Heading) != citation.Heading ||
+				strings.ContainsRune(citation.Snippet, '\r') || strings.TrimSpace(citation.Snippet) != citation.Snippet {
+				return fmt.Errorf("%w: citation text is not canonical", ErrCorrupt)
+			}
+			if _, duplicate := seenCitations[citation.ID]; duplicate {
+				return fmt.Errorf("%w: duplicate citation", ErrCorrupt)
+			}
+			seenCitations[citation.ID] = struct{}{}
+			order := citationOrder(citation)
+			if citationIndex > 0 && order <= previousCitation {
+				return fmt.Errorf("%w: citations are not strictly sorted", ErrCorrupt)
+			}
+			previousCitation = order
+		}
+	}
+	if computed := sourceIndexDigest(source, index.Documents); computed != source.Digest || computed != index.SourceDigest {
+		return fmt.Errorf("%w: source or Index digest mismatch", ErrCorrupt)
+	}
+	return nil
+}
+
+func validateRelativePath(relative string) error {
+	if relative == "" || len(relative) > MaxPathBytes || strings.Contains(relative, "%") ||
+		strings.ContainsAny(relative, "\\\r\n") || filepath.IsAbs(relative) || path.IsAbs(relative) {
+		return fmt.Errorf("%w: Knowledge path is invalid", ErrInvalid)
+	}
+	parsed, err := url.Parse(relative)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != relative {
+		return fmt.Errorf("%w: remote or ambiguous Knowledge path", ErrInvalid)
+	}
+	if path.Clean(relative) != relative {
+		return fmt.Errorf("%w: Knowledge path is not canonical", ErrInvalid)
+	}
+	for _, part := range strings.Split(relative, "/") {
+		if part == "" || part == "." || part == ".." || forbiddenPathComponent(part) {
+			return fmt.Errorf("%w: forbidden Knowledge path", ErrInvalid)
 		}
 	}
 	return nil
+}
+
+func validateKnowledgeText(name, value string, maximum int, allowEmpty bool) error {
+	if !allowEmpty && strings.TrimSpace(value) == "" || len(value) > maximum ||
+		!utf8.ValidString(value) || strings.ContainsRune(value, '\x00') {
+		return fmt.Errorf("%w: %s is empty, oversized, contains NUL, or is invalid UTF-8", ErrInvalid, name)
+	}
+	if owner.LooksSecret(value) {
+		return fmt.Errorf("%w: %s contains secret-like data", ErrInvalid, name)
+	}
+	if containsPrivateRuntimeContext(value) {
+		return fmt.Errorf("%w: %s contains private runtime data", ErrInvalid, name)
+	}
+	return nil
+}
+
+func validTerm(value string) bool {
+	if len(value) < 2 || len(value) > 64 || !utf8.ValidString(value) ||
+		value != strings.ToLower(value) || strings.ContainsRune(value, '\x00') {
+		return false
+	}
+	for _, character := range value {
+		if !unicode.IsLetter(character) && !unicode.IsDigit(character) {
+			return false
+		}
+	}
+	return !owner.LooksSecret(value) && !containsPrivateRuntimeContext(value)
+}
+
+func citationID(sourceID, documentPath string, startLine, endLine int, documentDigest string) string {
+	identity := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%s", sourceID, documentPath, startLine, endLine, documentDigest)
+	return "cite-" + digestText(identity)[:24]
+}
+
+func citationOrder(value Citation) string {
+	return fmt.Sprintf("%020d\x00%020d\x00%s", value.StartLine, value.EndLine, value.ID)
+}
+
+func sourceIndexDigest(source Source, documents []Document) string {
+	var canonical strings.Builder
+	writeCanonical := func(value string) {
+		fmt.Fprintf(&canonical, "%d:", len(value))
+		canonical.WriteString(value)
+	}
+	writeCanonical(fmt.Sprintf("%d", source.SchemaVersion))
+	writeCanonical(source.ID)
+	writeCanonical(source.EmployeeID)
+	writeCanonical(string(source.Kind))
+	writeCanonical(source.Title)
+	writeCanonical(source.RelativePath)
+	writeCanonical(source.ManualText)
+	writeCanonical(fmt.Sprintf("%d", len(documents)))
+	for _, document := range documents {
+		writeCanonical(document.Path)
+		writeCanonical(document.Digest)
+		writeCanonical(fmt.Sprintf("%d", len(document.Terms)))
+		for _, term := range document.Terms {
+			writeCanonical(term)
+		}
+		writeCanonical(fmt.Sprintf("%d", len(document.Citations)))
+		for _, citation := range document.Citations {
+			writeCanonical(fmt.Sprintf("%d", citation.SchemaVersion))
+			writeCanonical(citation.ID)
+			writeCanonical(citation.EmployeeID)
+			writeCanonical(citation.SourceID)
+			writeCanonical(citation.Path)
+			writeCanonical(citation.Heading)
+			writeCanonical(fmt.Sprintf("%d", citation.StartLine))
+			writeCanonical(fmt.Sprintf("%d", citation.EndLine))
+			writeCanonical(citation.Digest)
+			writeCanonical(citation.Snippet)
+		}
+	}
+	return digestText(canonical.String())
+}
+
+func canonicalKnowledgeContent(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	return strings.ReplaceAll(value, "\r", "\n")
 }
 
 func validID(value string) bool {

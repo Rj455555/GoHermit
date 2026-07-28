@@ -30,8 +30,7 @@ func (s *Server) acceptEmployeeMemoryCandidate(w http.ResponseWriter, r *http.Re
 	if !requireSameOrigin(w, r) {
 		return
 	}
-	if r.ContentLength > 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Memory acceptance request body must be empty"})
+	if !requirePhase4EmptyBody(w, r, "Memory acceptance") {
 		return
 	}
 	fact, err := s.svc.AcceptEmployeeMemoryCandidate(r.Context(), r.PathValue("id"), r.PathValue("candidateID"))
@@ -44,6 +43,9 @@ func (s *Server) acceptEmployeeMemoryCandidate(w http.ResponseWriter, r *http.Re
 
 func (s *Server) rejectEmployeeMemoryCandidate(w http.ResponseWriter, r *http.Request) {
 	if !requireSameOrigin(w, r) {
+		return
+	}
+	if !requirePhase4EmptyBody(w, r, "Memory Candidate rejection") {
 		return
 	}
 	if err := s.svc.RejectEmployeeMemoryCandidate(r.Context(), r.PathValue("id"), r.PathValue("candidateID")); err != nil {
@@ -71,6 +73,9 @@ func (s *Server) editEmployeeMemory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) forgetEmployeeMemory(w http.ResponseWriter, r *http.Request) {
 	if !requireSameOrigin(w, r) {
+		return
+	}
+	if !requirePhase4EmptyBody(w, r, "Memory Forget") {
 		return
 	}
 	if err := s.svc.ForgetEmployeeMemory(r.Context(), r.PathValue("id"), r.PathValue("factID")); err != nil {

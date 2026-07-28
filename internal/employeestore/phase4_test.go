@@ -1,6 +1,8 @@
 package employeestore
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -177,6 +179,207 @@ func TestPhase4StoreRejectsSymlinkEscapeForReadsAndWrites(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "candidates.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("write created a file outside the Employee Store")
+	}
+}
+
+func TestKnowledgeStoreRejectsPersistedSourcePathCorruption(t *testing.T) {
+	for name, relative := range map[string]string{
+		"traversal": "../outside.md",
+		"URL":       "https://example.test/outside.md",
+		"encoded":   "docs/%2e%2e%2foutside.md",
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, root := seedStoredKnowledge(t, true)
+			path := filepath.Join(root, "employee-a", "knowledge", "sources.json")
+			var file knowledgeSourcesFile
+			readJSONFile(t, path, &file)
+			file.Sources[0].RelativePath = relative
+			writeJSONFile(t, path, file)
+			if _, err := store.Knowledge("employee-a"); !errors.Is(err, ErrCorrupt) {
+				t.Fatalf("corrupt source path error = %v", err)
+			}
+		})
+	}
+}
+
+func TestKnowledgeStoreRejectsInvalidUTF8Text(t *testing.T) {
+	store, root := seedStoredKnowledge(t, false)
+	path := filepath.Join(root, "employee-a", "knowledge", "sources.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte("Handbook"), []byte{'H', 0xff}, 1)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Knowledge("employee-a"); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("invalid UTF-8 source error = %v", err)
+	}
+}
+
+func TestKnowledgeStoreRejectsPersistedIndexCorruption(t *testing.T) {
+	mutations := map[string]func(*knowledgeIndexFile){
+		"snippet": func(file *knowledgeIndexFile) {
+			file.Indexes[0].Documents[0].Citations[0].Snippet += " tampered"
+		},
+		"terms": func(file *knowledgeIndexFile) {
+			file.Indexes[0].Documents[0].Terms = append(file.Indexes[0].Documents[0].Terms, "tampered")
+		},
+		"path": func(file *knowledgeIndexFile) {
+			file.Indexes[0].Documents[0].Path = "changed"
+			file.Indexes[0].Documents[0].Citations[0].Path = "changed"
+		},
+		"digest": func(file *knowledgeIndexFile) {
+			file.Indexes[0].Documents[0].Digest = strings.Repeat("b", 64)
+			file.Indexes[0].Documents[0].Citations[0].Digest = strings.Repeat("b", 64)
+		},
+		"duplicate documents": func(file *knowledgeIndexFile) {
+			file.Indexes[0].Documents = append(file.Indexes[0].Documents, file.Indexes[0].Documents[0])
+		},
+		"empty documents": func(file *knowledgeIndexFile) {
+			file.Indexes[0].Documents = nil
+		},
+		"oversized documents": func(file *knowledgeIndexFile) {
+			document := file.Indexes[0].Documents[0]
+			file.Indexes[0].Documents = make([]knowledge.Document, knowledge.MaxFilesPerSource+1)
+			for index := range file.Indexes[0].Documents {
+				file.Indexes[0].Documents[index] = document
+			}
+		},
+		"duplicate citations": func(file *knowledgeIndexFile) {
+			citations := file.Indexes[0].Documents[0].Citations
+			file.Indexes[0].Documents[0].Citations = append(citations, citations[0])
+		},
+		"empty citations": func(file *knowledgeIndexFile) {
+			file.Indexes[0].Documents[0].Citations = nil
+		},
+		"oversized citations": func(file *knowledgeIndexFile) {
+			citation := file.Indexes[0].Documents[0].Citations[0]
+			file.Indexes[0].Documents[0].Citations = make([]knowledge.Citation, knowledge.MaxCitations+1)
+			for index := range file.Indexes[0].Documents[0].Citations {
+				file.Indexes[0].Documents[0].Citations[index] = citation
+			}
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			store, root := seedStoredKnowledge(t, false)
+			path := filepath.Join(root, "employee-a", "knowledge", "index.json")
+			var file knowledgeIndexFile
+			readJSONFile(t, path, &file)
+			mutate(&file)
+			writeJSONFile(t, path, file)
+			if _, err := store.Knowledge("employee-a"); !errors.Is(err, ErrCorrupt) {
+				t.Fatalf("corrupt Index error = %v", err)
+			}
+		})
+	}
+}
+
+func TestKnowledgeStoreReopenPreservesStableSearch(t *testing.T) {
+	store, root := seedStoredKnowledge(t, false)
+	before, err := store.Knowledge("employee-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeResults, err := knowledge.Search(before.Sources, before.Indexes, "deterministic", 10)
+	if err != nil || len(beforeResults) == 0 {
+		t.Fatalf("before search = %#v, %v", beforeResults, err)
+	}
+	reopened, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := reopened.Knowledge("employee-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterResults, err := knowledge.Search(after.Sources, after.Indexes, "deterministic", 10)
+	if err != nil || len(afterResults) != len(beforeResults) ||
+		afterResults[0].Citation.ID != beforeResults[0].Citation.ID {
+		t.Fatalf("reopened search = %#v, %v", afterResults, err)
+	}
+}
+
+func TestMemoryCandidateCanonicalProvenanceSurvivesStoreReopen(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "employees")
+	store, _ := NewStore(root)
+	createRecord(t, store, "employee-a")
+	now := time.Now().UTC()
+	candidate, err := employeememory.NewCandidate(employeememory.Candidate{
+		ID: "candidate-order", EmployeeID: "employee-a", Category: "fact", Value: "Verified fact.",
+		Provenance: []employeememory.Provenance{
+			{SourceType: "run", SourceID: "verification", SourceTaskID: "task-a", SourceSessionID: "session-a", SourceRunID: "run-b", VerifiedAt: now.Add(time.Second)},
+			{SourceType: "run", SourceID: "verification", SourceTaskID: "task-a", SourceSessionID: "session-a", SourceRunID: "run-a", VerifiedAt: now},
+		},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddMemoryCandidate("employee-a", candidate); err != nil {
+		t.Fatal(err)
+	}
+	reopened, _ := NewStore(root)
+	candidates, err := reopened.MemoryCandidates("employee-a")
+	if err != nil || len(candidates) != 1 || candidates[0].Digest != candidate.Digest {
+		t.Fatalf("reopened Candidate = %#v, %v", candidates, err)
+	}
+}
+
+func seedStoredKnowledge(t *testing.T, local bool) (*Store, string) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "employees")
+	store, _ := NewStore(root)
+	createRecord(t, store, "employee-a")
+	catalogRoot := t.TempDir()
+	catalog, err := knowledge.NewCatalog("")
+	source := knowledge.Source{
+		ID: "handbook", EmployeeID: "employee-a", Kind: knowledge.KindManualText,
+		Title: "Handbook", ManualText: "# Guide\nDeterministic bounded content.",
+	}
+	if local {
+		if err := os.Mkdir(filepath.Join(catalogRoot, "docs"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(catalogRoot, "docs", "guide.md"), []byte(source.ManualText), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		catalog, err = knowledge.NewCatalog(catalogRoot)
+		source.Kind, source.ManualText, source.RelativePath = knowledge.KindFile, "", "docs/guide.md"
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexed, index, err := catalog.Index(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveKnowledge("employee-a", indexed, index); err != nil {
+		t.Fatal(err)
+	}
+	return store, root
+}
+
+func readJSONFile(t *testing.T, path string, target any) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeJSONFile(t *testing.T, path string, value any) {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

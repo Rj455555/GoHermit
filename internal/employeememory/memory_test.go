@@ -39,10 +39,11 @@ func TestMemoryRejectsSensitiveOversizedAndTamperedValues(t *testing.T) {
 		Provenance: []Provenance{{SourceType: "owner", SourceID: "note", VerifiedAt: now}},
 	}
 	for name, value := range map[string]string{
-		"secret":    "api_key=abcdefghijklmnopqrstuvwxyz123456",
-		"reasoning": "private reasoning: hidden deliberation",
-		"oversized": strings.Repeat("x", MaxValueBytes+1),
-		"raw_tools": "raw tool arguments: sensitive input",
+		"secret":      "api_key=abcdefghijklmnopqrstuvwxyz123456",
+		"reasoning":   "private reasoning: hidden deliberation",
+		"oversized":   strings.Repeat("x", MaxValueBytes+1),
+		"raw_tools":   "raw tool arguments: sensitive input",
+		"full_prompt": "full system prompt: hidden input",
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := base
@@ -98,5 +99,47 @@ func TestMemoryRejectsIncompleteRunProvenanceAndFactTampering(t *testing.T) {
 	SortCandidates(candidates)
 	if candidates[0].ID != "a" {
 		t.Fatal("Candidates were not sorted deterministically")
+	}
+}
+
+func TestProvenanceDigestUsesCompleteCanonicalTuple(t *testing.T) {
+	now := time.Now().UTC()
+	first := Provenance{
+		SourceType: "run", SourceID: "verification", SourceTaskID: "task-a",
+		SourceSessionID: "session-a", SourceRunID: "run-a", VerifiedAt: now,
+	}
+	second := Provenance{
+		SourceType: "run", SourceID: "verification", SourceTaskID: "task-a",
+		SourceSessionID: "session-a", SourceRunID: "run-b", VerifiedAt: now.Add(time.Second),
+	}
+	base := Candidate{
+		SchemaVersion: SchemaVersion, ID: "candidate-a", EmployeeID: "employee-a",
+		Category: "fact", Value: "Verified fact.", CreatedAt: now,
+	}
+	forward, reverse := base, base
+	forward.Provenance = []Provenance{first, second}
+	reverse.Provenance = []Provenance{second, first}
+	if CandidateDigest(forward) != CandidateDigest(reverse) {
+		t.Fatal("Candidate Digest depends on Provenance input order")
+	}
+	forward.Digest, reverse.Digest = CandidateDigest(forward), CandidateDigest(reverse)
+	if err := ValidateCandidate(forward); err != nil {
+		t.Fatal(err)
+	}
+	factForward, err := Promote(forward, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	factReverse := factForward
+	factReverse.Provenance = []Provenance{second, first}
+	factReverse.Digest = FactDigest(factReverse)
+	if factForward.Digest != factReverse.Digest {
+		t.Fatal("Fact Digest depends on Provenance input order")
+	}
+	duplicate := base
+	duplicate.Provenance = []Provenance{first, first}
+	duplicate.Digest = CandidateDigest(duplicate)
+	if err := ValidateCandidate(duplicate); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("duplicate Provenance error = %v", err)
 	}
 }

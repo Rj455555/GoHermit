@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,6 +26,15 @@ func TestDeterministicIndexStableCitationAndContentChange(t *testing.T) {
 	}
 	if firstSource.Digest != secondSource.Digest || first.Documents[0].Citations[0].ID != second.Documents[0].Citations[0].ID {
 		t.Fatal("identical content did not produce stable digest and Citation")
+	}
+	crlf := source
+	crlf.ManualText = strings.ReplaceAll(source.ManualText, "\n", "\r\n")
+	crlfSource, crlfIndex, err := catalog.Index(crlf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if crlfSource.Digest != firstSource.Digest || crlfIndex.Documents[0].Digest != first.Documents[0].Digest {
+		t.Fatal("canonical line endings did not produce stable Digests")
 	}
 	source.ManualText += "\nNew content."
 	changedSource, changed, err := catalog.Index(source)
@@ -182,4 +192,196 @@ func TestKnowledgeRejectsSymlinkRootAndUnsupportedKind(t *testing.T) {
 	if _, _, err := catalog.Index(Source{ID: "bad", EmployeeID: "employee-a", Kind: Kind("remote"), Title: "Bad"}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("unsupported kind error = %v", err)
 	}
+}
+
+func TestValidateSourceRejectsUnsafePersistedTextAndStaticPaths(t *testing.T) {
+	valid := Source{
+		SchemaVersion: SchemaVersion, ID: "source", EmployeeID: "employee-a",
+		Kind: KindManualText, Title: "Title", ManualText: "bounded content",
+		Digest: strings.Repeat("a", 64), Status: StatusReady,
+	}
+	textCases := map[string]func(*Source){
+		"title NUL":          func(value *Source) { value.Title = "bad\x00title" },
+		"title invalid UTF8": func(value *Source) { value.Title = string([]byte{0xff}) },
+		"title secret":       func(value *Source) { value.Title = "authorization: bearer hidden-value" },
+		"title private":      func(value *Source) { value.Title = "Hidden system prompt: internal" },
+		"manual NUL":         func(value *Source) { value.ManualText = "bad\x00manual" },
+		"manual invalid UTF8": func(value *Source) {
+			value.ManualText = string([]byte{0xff})
+		},
+		"manual private": func(value *Source) { value.ManualText = "raw tool arguments: hidden" },
+	}
+	for name, mutate := range textCases {
+		t.Run(name, func(t *testing.T) {
+			value := valid
+			mutate(&value)
+			if err := ValidateSource(value, true); err == nil {
+				t.Fatal("unsafe persisted text was accepted")
+			}
+		})
+	}
+
+	local := valid
+	local.Kind, local.ManualText, local.RelativePath = KindFile, "", "docs/guide.md"
+	pathCases := map[string]string{
+		"absolute":        "/tmp/guide.md",
+		"URL":             "https://example.test/guide.md",
+		"network host":    "//example.test/guide.md",
+		"encoded":         "docs/%2e%2e%2fguide.md",
+		"backslash":       `docs\guide.md`,
+		"newline":         "docs/\nguide.md",
+		"traversal":       "../guide.md",
+		"empty component": "docs//guide.md",
+		"dot component":   "docs/./guide.md",
+		"forbidden":       ".git/guide.md",
+		"not clean":       "docs/sub/../guide.md",
+		"oversized":       strings.Repeat("a", MaxPathBytes+1),
+	}
+	for name, path := range pathCases {
+		t.Run(name, func(t *testing.T) {
+			value := local
+			value.RelativePath = path
+			if err := ValidateSource(value, true); err == nil {
+				t.Fatalf("unsafe persisted path %q was accepted", path)
+			}
+		})
+	}
+}
+
+func TestValidateIndexRejectsCanonicalIntegrityTampering(t *testing.T) {
+	catalog, _ := NewCatalog("")
+	source, index, err := catalog.Index(Source{
+		ID: "source", EmployeeID: "employee-a", Kind: KindManualText, Title: "Title",
+		ManualText: "# Heading\n\nDeterministic bounded content.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutations := map[string]func(*Index){
+		"snippet": func(value *Index) {
+			value.Documents[0].Citations[0].Snippet += " tampered"
+		},
+		"terms": func(value *Index) {
+			value.Documents[0].Terms = append(value.Documents[0].Terms, "tampered")
+		},
+		"duplicate terms": func(value *Index) {
+			value.Documents[0].Terms = append(value.Documents[0].Terms, value.Documents[0].Terms[len(value.Documents[0].Terms)-1])
+		},
+		"path": func(value *Index) {
+			value.Documents[0].Path = "changed.md"
+			value.Documents[0].Citations[0].Path = "changed.md"
+		},
+		"document traversal": func(value *Index) {
+			value.Documents[0].Path = "../changed.md"
+			value.Documents[0].Citations[0].Path = "../changed.md"
+		},
+		"document digest": func(value *Index) {
+			value.Documents[0].Digest = strings.Repeat("b", 64)
+			value.Documents[0].Citations[0].Digest = strings.Repeat("b", 64)
+		},
+		"citation metadata": func(value *Index) {
+			value.Documents[0].Citations[0].EndLine++
+		},
+		"duplicate document": func(value *Index) {
+			value.Documents = append(value.Documents, value.Documents[0])
+		},
+		"empty documents": func(value *Index) {
+			value.Documents = nil
+		},
+		"oversized documents": func(value *Index) {
+			document := value.Documents[0]
+			value.Documents = make([]Document, MaxFilesPerSource+1)
+			for i := range value.Documents {
+				value.Documents[i] = document
+				value.Documents[i].Path = fmt.Sprintf("manual-%03d", i)
+				value.Documents[i].Citations[0].Path = value.Documents[i].Path
+			}
+		},
+		"duplicate citation": func(value *Index) {
+			value.Documents[0].Citations = append(value.Documents[0].Citations, value.Documents[0].Citations[0])
+		},
+		"citation order": func(value *Index) {
+			first := value.Documents[0].Citations[0]
+			second := first
+			second.StartLine, second.EndLine = first.EndLine+1, first.EndLine+1
+			second.ID = citationID(source.ID, first.Path, second.StartLine, second.EndLine, first.Digest)
+			value.Documents[0].Citations = []Citation{second, first}
+		},
+		"empty citations": func(value *Index) {
+			value.Documents[0].Citations = nil
+		},
+		"oversized citations": func(value *Index) {
+			citation := value.Documents[0].Citations[0]
+			value.Documents[0].Citations = make([]Citation, MaxCitations+1)
+			for i := range value.Documents[0].Citations {
+				value.Documents[0].Citations[i] = citation
+				value.Documents[0].Citations[i].ID = fmt.Sprintf("cite-%024d", i)
+				value.Documents[0].Citations[i].StartLine = i + 1
+				value.Documents[0].Citations[i].EndLine = i + 1
+			}
+		},
+		"document order": func(value *Index) {
+			second := value.Documents[0]
+			second.Path = "aaa"
+			second.Citations[0].Path = second.Path
+			value.Documents = append(value.Documents, second)
+		},
+		"term order": func(value *Index) {
+			value.Documents[0].Terms = []string{"zeta", "alpha"}
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			value := cloneIndex(t, index)
+			mutate(&value)
+			if err := ValidateIndex(value, source); !errors.Is(err, ErrCorrupt) {
+				t.Fatalf("tampered Index error = %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateIndexRejectsUnsafeCitationTextWithRecomputedDigest(t *testing.T) {
+	catalog, _ := NewCatalog("")
+	source, index, err := catalog.Index(Source{
+		ID: "source", EmployeeID: "employee-a", Kind: KindManualText, Title: "Title",
+		ManualText: "# Heading\n\nDeterministic bounded content.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutations := map[string]func(*Citation){
+		"heading NUL":          func(value *Citation) { value.Heading = "bad\x00heading" },
+		"heading invalid UTF8": func(value *Citation) { value.Heading = string([]byte{0xff}) },
+		"heading secret":       func(value *Citation) { value.Heading = "authorization: bearer hidden-value" },
+		"heading private":      func(value *Citation) { value.Heading = "hidden system prompt: internal" },
+		"snippet NUL":          func(value *Citation) { value.Snippet = "bad\x00snippet" },
+		"snippet invalid UTF8": func(value *Citation) { value.Snippet = string([]byte{0xff}) },
+		"snippet secret":       func(value *Citation) { value.Snippet = "api_key=abcdefghijklmnopqrstuvwxyz123456" },
+		"snippet private":      func(value *Citation) { value.Snippet = "raw tool arguments: hidden" },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			sourceCopy, indexCopy := source, cloneIndex(t, index)
+			mutate(&indexCopy.Documents[0].Citations[0])
+			recomputed := sourceIndexDigest(sourceCopy, indexCopy.Documents)
+			sourceCopy.Digest, indexCopy.SourceDigest = recomputed, recomputed
+			if err := ValidateIndex(indexCopy, sourceCopy); !errors.Is(err, ErrCorrupt) {
+				t.Fatalf("unsafe Citation text error = %v", err)
+			}
+		})
+	}
+}
+
+func cloneIndex(t *testing.T, value Index) Index {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone Index
+	if err := json.Unmarshal(raw, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
 }

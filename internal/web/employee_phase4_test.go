@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,5 +101,102 @@ func TestPhase4APIStrictBoundedSameOriginAndErrorMapping(t *testing.T) {
 	response = requestJSON(t, handler, http.MethodGet, "/api/employees/missing/memory", nil, "")
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("not found status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestPhase4APIRejectsNULManualTextAndOversizedQuery(t *testing.T) {
+	server, _, _ := newEmployeeTestServer(t)
+	handler := server.Handler()
+	create := controlplane.EmployeeInput{Employee: webEmployeeDraft("employee-phase4")}
+	_ = requestJSON(t, handler, http.MethodPost, "/api/employees", create, "")
+	response := requestJSON(t, handler, http.MethodPost, "/api/employees/employee-phase4/knowledge",
+		knowledge.Source{ID: "nul", Kind: knowledge.KindManualText, Title: "NUL", ManualText: "bad\x00text"}, "")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("NUL ManualText status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = requestJSON(t, handler, http.MethodGet,
+		"/api/employees/employee-phase4/knowledge?query="+strings.Repeat("x", maxKnowledgeQueryBytes+1), nil, "")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("oversized query status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestPhase4EmptyBodyMutationsRejectChunkedPayloads(t *testing.T) {
+	server, _, _ := newEmployeeTestServer(t)
+	handler := server.Handler()
+	create := controlplane.EmployeeInput{Employee: webEmployeeDraft("employee-phase4")}
+	_ = requestJSON(t, handler, http.MethodPost, "/api/employees", create, "")
+	endpoints := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/employees/employee-phase4/knowledge/missing/refresh"},
+		{http.MethodDelete, "/api/employees/employee-phase4/knowledge/missing"},
+		{http.MethodPost, "/api/employees/employee-phase4/memory-candidates/missing/accept"},
+		{http.MethodDelete, "/api/employees/employee-phase4/memory-candidates/missing"},
+		{http.MethodDelete, "/api/employees/employee-phase4/memory/missing"},
+	}
+	for _, endpoint := range endpoints {
+		t.Run(endpoint.method+" "+endpoint.path, func(t *testing.T) {
+			request := httptest.NewRequest(endpoint.method, endpoint.path, bytes.NewBufferString(`{}`))
+			request.Host = "gohermit.test"
+			request.ContentLength = -1
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("chunked payload status=%d body=%s", response.Code, response.Body.String())
+			}
+
+			request = httptest.NewRequest(endpoint.method, endpoint.path,
+				bytes.NewReader(bytes.Repeat([]byte("x"), maxPhase4EmptyBodyBytes+1)))
+			request.Host = "gohermit.test"
+			request.ContentLength = -1
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("oversized chunked payload status=%d body=%s", response.Code, response.Body.String())
+			}
+
+			request = httptest.NewRequest(endpoint.method, endpoint.path, http.NoBody)
+			request.Host = "gohermit.test"
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code == http.StatusBadRequest {
+				t.Fatalf("truly empty body rejected: %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestEmployeeKnowledgeAPICorruptPersistedSourceReturnsInternalError(t *testing.T) {
+	server, _, state := newEmployeeTestServer(t)
+	handler := server.Handler()
+	create := controlplane.EmployeeInput{Employee: webEmployeeDraft("employee-phase4")}
+	_ = requestJSON(t, handler, http.MethodPost, "/api/employees", create, "")
+	source := knowledge.Source{ID: "guide", Kind: knowledge.KindManualText, Title: "Guide", ManualText: "bounded"}
+	if response := requestJSON(t, handler, http.MethodPost, "/api/employees/employee-phase4/knowledge", source, ""); response.Code != http.StatusCreated {
+		t.Fatalf("add status=%d body=%s", response.Code, response.Body.String())
+	}
+	path := filepath.Join(state, "employees", "employee-phase4", "knowledge", "sources.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file map[string]any
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	sources := file["sources"].([]any)
+	stored := sources[0].(map[string]any)
+	stored["kind"] = string(knowledge.KindFile)
+	stored["relative_path"] = "../outside.md"
+	delete(stored, "manual_text")
+	raw, _ = json.Marshal(file)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	response := requestJSON(t, handler, http.MethodGet, "/api/employees/employee-phase4/knowledge", nil, "")
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("corrupt Store status=%d body=%s", response.Code, response.Body.String())
 	}
 }
