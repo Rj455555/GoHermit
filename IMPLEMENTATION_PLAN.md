@@ -1666,6 +1666,9 @@ EXPECTED SKIP live-smoke jobs
 - Implementation commit:
   `c7c7c25c66f9d357c88eff730f5912828a718614`
   (`fix(employees): reject invalid unicode in phase 4 JSON`).
+- Gate evidence commit:
+  `ec308d19c786033101eeb217f3916b093ea13c80`
+  (`docs(plan): record phase 4 utf8 gate revision`).
 - Employee Store `decodeStrict` now calls `utf8.Valid(raw)` before any JSON
   Decode. Unknown-field rejection, the single-value rule, bounded file reads,
   and corrupt-store error mapping remain unchanged.
@@ -1702,7 +1705,11 @@ PASS CLI and Web builds to /tmp
 PASS gofmt on every changed Go file
 PASS git diff --check
 PASS credential-shaped secret-pattern scan
-PENDING GitHub CI for the final UTF-8 Gate head
+PASS GitHub CI runs 30350404454 and 30350408674
+PASS CI go jobs (gofmt, full tests, race, vet, builds, cross-platform checks)
+PASS CI docker jobs (Compose configuration and Docker build)
+PASS CI web-e2e jobs
+EXPECTED SKIP live-smoke jobs
 ```
 
 - Persistence retains the accepted single-file atomic/no-cross-file-transaction
