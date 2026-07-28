@@ -1781,7 +1781,7 @@ Session/Run/model side effects.
 - Implementation commit:
   `ac01dce4c7bc49b2a196869b419230d9022fb500`
   (`feat-phase5-employee-task-inbox`).
-- Evidence commit: `PHASE5_EVIDENCE_COMMIT_PENDING`.
+- Evidence commit: `eac7ca13b622ad0311cbb77ee20cc5c883d5897d`.
 - Review target:
   Draft PR [#38](https://github.com/Rj455555/GoHermit/pull/38), base `main`,
   head `agent/electronic-employees-v0.7-phase5`. Creation is deliberately the
