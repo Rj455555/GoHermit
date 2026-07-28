@@ -18,7 +18,7 @@
   `origin/main@d8194df88c474d43d0576e26d61d304df74ecefb`.
 - Phase 8: `OWNER_APPROVED`; squash-merged through PR #41 into
   `origin/main@01cfe8c26324708b806d7cd1f946adbbea0306f2`.
-- Phase 9: `IN_PROGRESS` on clean branch
+- Phase 9: `COMPLETE_WAITING_FOR_OWNER` on clean branch
   `agent/electronic-employees-v0.7-phase9`.
 - Phase 10 and every later product-code change remain blocked.
 - Required terminal status:
@@ -73,7 +73,7 @@
 | 6 | Runtime Preparation | `OWNER_APPROVED` |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` |
-| 9 | Team Role to Employee mapping | `IN_PROGRESS` |
+| 9 | Team Role to Employee mapping | `COMPLETE_WAITING_FOR_OWNER` |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
 
 ### Current phase scope
@@ -124,7 +124,7 @@ STATUS: WAITING_FOR_PHASE_9_APPROVAL
 
 ---
 
-Plan status: `PHASE_9_IN_PROGRESS`
+Plan status: `PHASE_9_COMPLETE_WAITING_FOR_OWNER`
 Baseline: `origin/main@01cfe8c26324708b806d7cd1f946adbbea0306f2`
 Feature branch: `agent/electronic-employees-v0.7-phase9`
 Last audited: 2026-07-29
@@ -1151,7 +1151,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` | Recovery Gate approved and PR #40 squash-merged as `d8194df`; full Phase 7 is in `origin/main` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` | Gate implementation `47d413b`; evidence `00d724a`; PR #41 squash-merged as `01cfe8c26324708b806d7cd1f946adbbea0306f2` |
-| 9 | Team Role to Employee mapping | `IN_PROGRESS` | Clean branch `agent/electronic-employees-v0.7-phase9` from `01cfe8c26324708b806d7cd1f946adbbea0306f2` |
+| 9 | Team Role to Employee mapping | `COMPLETE_WAITING_FOR_OWNER` | Implementation `9bb56fc`; Draft PR #42; implementation-Head Push/PR CI green |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
 
 ### Phase 1: Employee Domain and ADR
@@ -2717,7 +2717,7 @@ Phase 8 Web UI Gate revision evidence (2026-07-29):
 
 ### Phase 9: Team Role to Employee mapping
 
-Status: `IN_PROGRESS`. Phase 10 remains `BLOCKED_BY_GATE`.
+Status: `COMPLETE_WAITING_FOR_OWNER`. Phase 10 remains `BLOCKED_BY_GATE`.
 
 Independent value:
 
@@ -2758,6 +2758,120 @@ Exit: TeamTemplate v1 migration, optional assignment, model precedence,
 16 KiB per-assignment/64 KiB parent aggregate limits, 64 KiB hidden Worker
 compact snapshot/recovery, per-Worker context, cross-Employee isolation, and
 old TeamTemplate regression tests pass.
+
+Phase 9 implementation evidence (2026-07-29):
+
+- Clean baseline and review:
+  - Phase 8 PR #41 was changed from Draft to Ready and squash-merged only after
+    its expected Head and both required CI runs were revalidated;
+  - Phase 8 entered `origin/main` as
+    `01cfe8c26324708b806d7cd1f946adbbea0306f2`;
+  - branch `agent/electronic-employees-v0.7-phase9` was created from that exact
+    baseline; Draft PR
+    [#42](https://github.com/Rj455555/GoHermit/pull/42) remains Open, Draft,
+    unmerged, and without auto-merge;
+  - implementation commit:
+    `9bb56fc36168719e823070de531bced59f571049`.
+- Actual product and test files:
+  - `internal/teamtemplate/template.go`,
+    `internal/teamtemplate/template_test.go`;
+  - `internal/team/team.go`, `internal/team/team_test.go`,
+    `internal/team/coordinator.go`;
+  - `internal/app/team_worker.go`, `internal/app/team_worker_test.go`;
+  - `internal/controlplane/team.go`, `internal/controlplane/team_employees.go`,
+    `internal/controlplane/team_employees_test.go`,
+    `internal/controlplane/runs.go`, `internal/controlplane/loops.go`,
+    `internal/controlplane/service.go`, `internal/controlplane/server_test.go`;
+  - `internal/session/session.go`, `internal/session/session_test.go`;
+  - `internal/loop/dryrun.go`, `internal/web/assets/loops.js`,
+    `tests/e2e/loops-workbench.spec.ts`.
+- Schema and model precedence:
+  - TeamTemplate schema v2 adds optional `employee_id`; strict v1 decoding
+    migrates to v2 without inventing an Employee assignment, and empty
+    `employee_id` preserves the legacy provider/model/budget path;
+  - a non-empty Employee selection uses an all-or-nothing explicit
+    company/access/model Mission override when present, otherwise the exact
+    pinned Employee default; no provider or model fallback is introduced;
+  - illegal, absolute, traversal, encoded, slash-containing, overlong, or
+    secret-like Employee IDs and unknown/corrupt schemas fail closed.
+- Preflight and immutable assignment:
+  - before a new Session or Run is created, the Control Plane verifies the
+    Employee is active and its current record exactly matches its immutable
+    revision, ProjectBinding and canonical Service Workspace;
+  - provider credential/live-model readiness, Skill ID/version/digest/config,
+    ready Knowledge index/citations, accepted Memory Facts, and the
+    `Global ∩ AgentProfile ∩ Employee ∩ Project ∩ Task ∩ Skills` effective
+    capability intersection are resolved before execution side effects;
+  - every assigned WorkItem receives a sealed `TeamEmployeeAssignment`
+    containing only public identity/revision/model/policy/context digests;
+    each assignment is at most 16 KiB and the parent Mission aggregate is at
+    most 64 KiB;
+  - the full Employee revision is never copied to Mission or Session. The
+    hidden Worker Session stores only the sealed compact context (at most
+    64 KiB) and reuses the existing Session/Run/Plan/Approval/Verification/
+    Event/recovery kernel.
+- Isolation and recovery:
+  - WorkItem runtimes receive only their assigned Employee context; hidden
+    compact context is removed from the public Session API projection;
+  - Employee Memory is absent from public Assignment metadata, other Employee
+    contexts, parent Mission state and normal Handoffs. A provider echo of an
+    exact private Memory value fails closed before the Handoff can be
+    persisted;
+  - resumed and dynamically added WorkItems restore the original hidden
+    assignment/context snapshot and do not reread a mutable Employee record or
+    replace its revision;
+  - no second Worker, Run, Session, Event, Approval, Verification, or recovery
+    state machine was added.
+- UI:
+  - the existing Loops Team Role cards can select an active Employee and show
+    its revision/state;
+  - the Owner explicitly chooses Employee default selection or a complete
+    Mission model override, and Dry Run displays the resolved Employee,
+    revision, model, and server readiness;
+  - unassigned Roles continue to submit the legacy selection shape.
+- Tests added or extended:
+  - v1-to-v2 migration, strict schema/ID and atomic override validation;
+  - Assignment digest/tamper, 16 KiB item and 64 KiB aggregate limits;
+  - active/default/override resolution, disabled/archived/missing Employee
+    zero-side-effect failures, stale Skill failure, immutable recovery and
+    dynamic WorkItem inheritance;
+  - 64 KiB hidden Session snapshot validation and corruption rejection;
+  - per-Employee model-context isolation, public API redaction, Memory Forget
+    recovery, public-Handoff exclusion, and provider-echo fail-closed;
+  - Playwright Role mapping, exact revision, explicit override, and Employee
+    default-model paths while all existing Web E2E remains green.
+- Local validation:
+  - `gofmt` and `git diff --check`: PASS;
+  - Phase 9 scoped Go tests: PASS;
+  - `go test ./... -count=1`: PASS;
+  - `go test -race ./... -count=1`: PASS;
+  - `go vet ./...`: PASS;
+  - `go build ./cmd/hermit` and `go build ./cmd/hermit-web`: PASS;
+  - JavaScript syntax checks for `app.js`, `loops.js`, `employees.js`, and
+    `tasks.js`: PASS;
+  - `pnpm test:e2e`: PASS, 13 tests;
+  - credential-shaped added-line scan: PASS;
+  - local Compose YAML structure parse: PASS. The local host has no Docker
+    CLI, so actual `docker compose config` and image build are proven by CI.
+- Implementation-Head CI:
+  - Push CI
+    [30394238601](https://github.com/Rj455555/GoHermit/actions/runs/30394238601)
+    and PR CI
+    [30394242319](https://github.com/Rj455555/GoHermit/actions/runs/30394242319)
+    both PASS: Go normal/race/vet/build/cross-platform, Docker Compose/image
+    build, and all 13 Web E2E are green; `live-smoke` is skipped by workflow
+    design.
+- Deviations and remaining bounded risk:
+  - Session schema remains v6 because the hidden Worker fields are additive
+    and use the existing strict v6 checkpoint validator; TeamTemplate alone
+    performs the required explicit v1-to-v2 migration;
+  - exact private-Memory echo detection is deliberately conservative and can
+    reject a public Handoff when a short Memory value occurs verbatim;
+  - paid-provider inference is outside default deterministic CI;
+  - this evidence-only commit SHA and its final Push/PR CI are recorded in PR
+    #42 rather than creating a self-referential evidence commit chain;
+  - protected untracked user files were not modified, moved, staged, or
+    cleaned, and Phase 10 is completely unstarted.
 
 ### Phase 10: Evals, Docker, docs, and v0.7 release closeout
 
