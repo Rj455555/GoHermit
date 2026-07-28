@@ -131,6 +131,7 @@ type ToolRecord struct {
 	RunID       string     `json:"run_id,omitempty"`
 	CallID      string     `json:"call_id"`
 	Name        string     `json:"name"`
+	ArgsDigest  string     `json:"args_digest,omitempty"`
 	Summary     string     `json:"summary"`
 	IsError     bool       `json:"is_error"`
 	Status      string     `json:"status,omitempty"`
@@ -272,6 +273,36 @@ func (s *Session) NewRun(message string) (*Run, error) {
 	id, err := newID()
 	if err != nil {
 		return nil, err
+	}
+	return s.newRunWithID(id, message)
+}
+
+// NewRunWithID persists a caller-stable Run identity for EmployeeTask
+// dispatch reconciliation. It uses the same Run lifecycle as NewRun.
+func (s *Session) NewRunWithID(id, message string) (*Run, error) {
+	if _, err := sessionIDPath(id); err != nil {
+		return nil, fmt.Errorf("invalid run ID: %w", err)
+	}
+	for i := range s.Runs {
+		if s.Runs[i].ID == id {
+			if s.Runs[i].Message != strings.TrimSpace(message) {
+				return nil, errors.New("stable run ID already belongs to different input")
+			}
+			if s.ActiveRunID != id {
+				return nil, errors.New("stable run ID is not the active run")
+			}
+			return &s.Runs[i], nil
+		}
+	}
+	return s.newRunWithID(id, message)
+}
+
+func (s *Session) newRunWithID(id, message string) (*Run, error) {
+	if s.Status == Archived {
+		return nil, errors.New("session is archived")
+	}
+	if s.ActiveRunID != "" {
+		return nil, errors.New("session already has an active run")
 	}
 	now := time.Now().UTC()
 	mode, err := NormalizePlanMode(string(s.PlanMode))

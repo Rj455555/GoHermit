@@ -2,7 +2,10 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,6 +45,10 @@ type Runner struct {
 	// keeps the pre-C3 behavior exactly: the denial data goes straight to the
 	// model and no approval request is ever created (fail closed).
 	Approvals ApprovalDecisions
+	// EmployeeContext is reconstructed from the immutable schema-v6 compact
+	// snapshot. When set, every model turn uses the Employee context contract
+	// without consulting mutable Employee/Skill/Knowledge/Memory stores.
+	EmployeeContext *contextmgr.EmployeeContext
 }
 
 func (r *Runner) Run(ctx context.Context, s *session.Session) error {
@@ -71,6 +78,7 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 	if active.PlanMode == session.PlanReview && !active.PlanApproved {
 		return errors.New("review plan must be approved before execution")
 	}
+	completedBeforeStart := completedToolCalls(s.ToolCalls, active.ID)
 	planCreated := false
 	if active.Plan == nil {
 		plan, err := taskplan.ForGoal(active.ID, active.Message, s.Selection.Agent)
@@ -131,11 +139,17 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			return err
 		}
 		runState := r.runState(s, active)
-		assembled, compressed := r.Context.BuildRun(s.Workspace, active.Message, s.Summary, messages, runState)
+		assembled, compressed, err := r.buildRunContext(s, active, messages, runState)
+		if err != nil {
+			return r.fail(runCtx, s, "employee context assembly failed", err)
+		}
 		if compressed {
 			r.compress(runCtx, s, active, messages)
 			messages = boundedMessages(messages)
-			assembled, _ = r.Context.BuildRun(s.Workspace, active.Message, s.Summary, messages, runState)
+			assembled, _, err = r.buildRunContext(s, active, messages, runState)
+			if err != nil {
+				return r.fail(runCtx, s, "employee context assembly failed", err)
+			}
 		}
 		e = event.New(event.ModelStarted, s.ID)
 		e.RunID = active.ID
@@ -213,6 +227,16 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			return err
 		}
 		for _, call := range response.Message.ToolCalls {
+			if consumeCompletedTool(completedBeforeStart, call) {
+				messages = append(messages, model.Message{
+					Role: model.RoleTool, ToolCallID: call.ID,
+					Content: tool.MarshalResult(tool.Result{
+						CallID: call.ID, Name: call.Name,
+						Output: "This tool call completed before recovery and was not replayed.",
+					}),
+				})
+				continue
+			}
 			e = event.New(event.ToolStarted, s.ID)
 			e.RunID = active.ID
 			e.Turn = turn
@@ -222,7 +246,11 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 				return err
 			}
 			startedAt := time.Now().UTC()
-			s.ToolCalls = appendBoundedTool(s.ToolCalls, session.ToolRecord{Time: startedAt, StartedAt: startedAt, RunID: active.ID, CallID: call.ID, Name: call.Name, Status: "started"}, 500)
+			s.ToolCalls = appendBoundedTool(s.ToolCalls, session.ToolRecord{
+				Time: startedAt, StartedAt: startedAt, RunID: active.ID,
+				CallID: call.ID, Name: call.Name, ArgsDigest: toolCallDigest(call),
+				Status: "started",
+			}, 500)
 			if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
 				return err
 			}
@@ -304,12 +332,59 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 	return r.fail(runCtx, s, "maximum turns reached", errors.New(s.LastError))
 }
 
+func (r *Runner) buildRunContext(s *session.Session, run *session.Run, messages []model.Message, runState string) ([]model.Message, bool, error) {
+	if r.EmployeeContext != nil {
+		return r.Context.BuildEmployeeRun(s.Workspace, *r.EmployeeContext, run.Message, s.Summary, messages, runState)
+	}
+	assembled, compressed := r.Context.BuildRun(s.Workspace, run.Message, s.Summary, messages, runState)
+	return assembled, compressed, nil
+}
+
 func appendBoundedTool(records []session.ToolRecord, r session.ToolRecord, max int) []session.ToolRecord {
 	records = append(records, r)
 	if len(records) > max {
 		return records[len(records)-max:]
 	}
 	return records
+}
+
+func completedToolCalls(records []session.ToolRecord, runID string) map[string]int {
+	result := make(map[string]int)
+	for _, record := range records {
+		if record.RunID != runID || record.Status != "completed" {
+			continue
+		}
+		key := record.Name + "\x00" + record.ArgsDigest
+		if record.ArgsDigest == "" {
+			key = record.Name + "\x00call:" + record.CallID
+		}
+		result[key]++
+	}
+	return result
+}
+
+func consumeCompletedTool(completed map[string]int, call model.ToolCall) bool {
+	digestKey := call.Name + "\x00" + toolCallDigest(call)
+	if completed[digestKey] > 0 {
+		completed[digestKey]--
+		return true
+	}
+	callKey := call.Name + "\x00call:" + call.ID
+	if completed[callKey] > 0 {
+		completed[callKey]--
+		return true
+	}
+	return false
+}
+
+func toolCallDigest(call model.ToolCall) string {
+	raw := append([]byte(nil), call.Arguments...)
+	var compact bytes.Buffer
+	if json.Compact(&compact, raw) == nil {
+		raw = compact.Bytes()
+	}
+	sum := sha256.Sum256(append([]byte(call.Name+"\x00"), raw...))
+	return hex.EncodeToString(sum[:])
 }
 
 // modelAttempts reports how many provider attempts a failed Generate made;

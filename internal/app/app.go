@@ -17,6 +17,7 @@ import (
 	modelauth "github.com/Rj455555/GoHermit/internal/auth"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/plugin"
@@ -56,6 +57,9 @@ type RuntimeOptions struct {
 	// until the owner decides (ADR 0011). Nil keeps deny-by-default: no
 	// approval request is ever created.
 	Approvals agent.ApprovalDecisions
+	// EffectivePolicy is an already intersected EmployeeTask ceiling. It only
+	// narrows global/profile registration and network access.
+	EffectivePolicy *employee.EffectivePolicy
 }
 
 func (r *Runtime) Close() {
@@ -323,6 +327,9 @@ func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, 
 	if conf.Model.Name == "" {
 		return nil, errors.New("model.model must be configured")
 	}
+	if options.EffectivePolicy != nil {
+		conf.Permissions.AllowNetwork = conf.Permissions.AllowNetwork && options.EffectivePolicy.NetworkAllowed
+	}
 	var provider model.Provider
 	if newProvider != nil {
 		provider, err = newProvider(conf)
@@ -379,6 +386,9 @@ func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, 
 				return nil, fmt.Errorf("register plugin %s: %w", process.Name, startErr)
 			}
 		}
+	}
+	if options.EffectivePolicy != nil {
+		registry.RestrictCapabilities(options.EffectivePolicy.AllowedCapabilities)
 	}
 	store, err := session.NewStore(workspace, conf.Storage.Directory)
 	if err != nil {

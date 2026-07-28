@@ -38,6 +38,7 @@ var (
 	ErrNotFound = errors.New("employee not found")
 	ErrConflict = errors.New("employee revision conflict")
 	ErrCorrupt  = errors.New("employee store is corrupt")
+	ErrCapacity = errors.New("employee store capacity limit")
 )
 
 type Store struct {
@@ -693,8 +694,14 @@ func validateActivity(event ActivityEvent) error {
 			return errors.New("invalid employee binding or memory activity")
 		}
 	case ActivityExecutionRef:
-		if event.TaskID == "" {
-			return errors.New("employee execution reference requires task_id")
+		if event.EmployeeRevision < 1 || event.TaskID == "" || event.SessionID == "" ||
+			event.RunID == "" || event.SubjectID != "" {
+			return errors.New("employee execution reference requires only Task, Session, Run, and revision")
+		}
+		for _, id := range []string{event.TaskID, event.SessionID, event.RunID} {
+			if err := validateStoreID(id); err != nil {
+				return errors.New("employee execution reference contains an invalid identifier")
+			}
 		}
 	case ActivityTaskCreated, ActivityTaskCancelled:
 		if event.EmployeeRevision < 1 || event.TaskID == "" || event.SubjectID != "" || event.SessionID != "" || event.RunID != "" {
@@ -860,6 +867,22 @@ func (s *Store) safeFileInfoPath(parts ...string) (string, os.FileInfo, error) {
 		return "", nil, errors.New("employee store file is not regular")
 	}
 	return path, info, nil
+}
+
+func (s *Store) removeRegularFile(parts ...string) error {
+	path, _, err := s.safeFileInfoPath(parts...)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	parent, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return parent.Sync()
 }
 
 func (s *Store) requireDirectory(parts ...string) error {

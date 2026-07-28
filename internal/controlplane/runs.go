@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rj455555/GoHermit/internal/app"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/runcontrol"
@@ -193,6 +194,10 @@ func (s *Service) CancelRun(ctx context.Context, sessionID, runID string) (activ
 }
 
 func (s *Service) launchSessionRun(sess *session.Session, message string) (string, error) {
+	return s.launchSessionRunConfigured(sess, message, nil)
+}
+
+func (s *Service) launchSessionRunConfigured(sess *session.Session, message string, employeeLaunch *employeeRunLaunch) (string, error) {
 	selection := config.RuntimeSelection{Company: sess.Selection.Company, Access: sess.Selection.Access, Model: sess.Selection.Model, Agent: sess.Selection.Agent}
 	liveModels, err := s.validateSelection(context.Background(), selection)
 	if err != nil {
@@ -323,7 +328,19 @@ func (s *Service) launchSessionRun(sess *session.Session, message string) (strin
 			s.runTeam(runCtx, sess, runID, selection, apiKey, liveModels)
 			return
 		}
-		runtime, buildErr := s.build(runCtx, s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
+		var runtime *app.Runtime
+		var buildErr error
+		if employeeLaunch != nil && s.buildEmployee != nil {
+			runtime, buildErr = s.buildEmployee(
+				runCtx, s.Workspace, s.ConfigPath, selection, apiKey, liveModels,
+				employeeLaunch.Context.EffectivePolicy,
+			)
+		} else {
+			runtime, buildErr = s.build(runCtx, s.Workspace, s.ConfigPath, selection, apiKey, liveModels)
+			if buildErr == nil && employeeLaunch != nil {
+				runtime.Runner.Executor.Registry.RestrictCapabilities(employeeLaunch.Context.EffectivePolicy.AllowedCapabilities)
+			}
+		}
 		if buildErr != nil {
 			s.failLaunchedRun(sess, runID, buildErr)
 			return
@@ -331,6 +348,10 @@ func (s *Service) launchSessionRun(sess *session.Session, message string) (strin
 		s.applyOwner(runtime)
 		defer runtime.Close()
 		runtime.Runner.Sink = s.emit
+		if employeeLaunch != nil {
+			employeeContext := employeeLaunch.Context
+			runtime.Runner.EmployeeContext = &employeeContext
+		}
 		// The runner persists and emits its own terminal state; every return
 		// from Run — completion, failure, cancellation, or deadline
 		// interruption — ends the run's pending approvals (ADR 0011).
@@ -338,6 +359,11 @@ func (s *Service) launchSessionRun(sess *session.Session, message string) (strin
 		if expired := runcontrol.ExpireRunApprovals(sess.ApprovalRequests, runID, time.Now().UTC()); len(expired) > 0 {
 			if _, err := s.commitAndPublishMany(sess, s.appendApprovalExpiredEvents(sess, expired, nil)); err != nil {
 				sess.LastError = err.Error()
+			}
+		}
+		if employeeLaunch != nil {
+			if finalizeErr := s.finalizeEmployeeTaskOutcome(employeeLaunch.TaskID); finalizeErr != nil {
+				sess.LastError = finalizeErr.Error()
 			}
 		}
 	}()

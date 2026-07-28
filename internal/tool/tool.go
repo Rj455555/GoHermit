@@ -124,6 +124,28 @@ func (r *Registry) ModelDefinitions() []model.ToolDefinition {
 	return out
 }
 
+// RestrictCapabilities narrows this per-Run registry to the already computed
+// effective Employee policy. A capability may name a permission class
+// (read/write/execute) or one exact tool. It can never add a tool.
+func (r *Registry) RestrictCapabilities(capabilities []string) {
+	allowed := make(map[string]struct{}, len(capabilities))
+	for _, capability := range capabilities {
+		allowed[capability] = struct{}{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name, registered := range r.tools {
+		definition := registered.Definition()
+		if _, exact := allowed[name]; exact {
+			continue
+		}
+		if _, permission := allowed[string(definition.Permission)]; permission {
+			continue
+		}
+		delete(r.tools, name)
+	}
+}
+
 type Executor struct {
 	Registry       *Registry
 	DefaultTimeout time.Duration

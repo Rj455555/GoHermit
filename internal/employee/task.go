@@ -63,8 +63,9 @@ type TaskMemoryFactSnapshot struct {
 	Digest string `json:"digest"`
 }
 
-// EmployeeTask is a durable pre-dispatch owner request. Phase 5 permits only
-// queued and cancelled. Session/Run execution truth is deliberately absent.
+// EmployeeTask is a durable owner request. State remains the Phase 5 inbox
+// state; once SessionID and RunID are bound, execution truth is projected from
+// the existing Session/Run rather than copied into this record.
 type EmployeeTask struct {
 	SchemaVersion    int                      `json:"schema_version"`
 	ID               string                   `json:"id"`
@@ -156,8 +157,16 @@ func ValidateTask(task EmployeeTask) error {
 	if err := validateTaskText(task.Prompt); err != nil {
 		return err
 	}
-	if task.SessionID != "" || task.RunID != "" {
-		return errors.New("Phase 5 Employee Task must not bind a Session or Run")
+	if (task.SessionID == "") != (task.RunID == "") {
+		return errors.New("Employee Task Session and Run bindings must be both empty or both set")
+	}
+	if task.SessionID != "" {
+		if err := validateIdentifier("Task Session id", task.SessionID); err != nil {
+			return err
+		}
+		if err := validateIdentifier("Task Run id", task.RunID); err != nil {
+			return err
+		}
 	}
 	if err := ValidateRevisionSnapshot(task.EmployeeSnapshot); err != nil {
 		return fmt.Errorf("Task Employee snapshot: %w", err)
@@ -186,11 +195,11 @@ func ValidateTask(task EmployeeTask) error {
 	}
 	switch task.State {
 	case TaskQueued:
-		if task.CancelledAt != nil || !task.UpdatedAt.Equal(task.CreatedAt) {
+		if task.CancelledAt != nil || (task.SessionID == "" && !task.UpdatedAt.Equal(task.CreatedAt)) {
 			return errors.New("queued Employee Task has invalid lifecycle timestamps")
 		}
 	case TaskCancelled:
-		if task.CancelledAt == nil || !task.CancelledAt.Equal(task.UpdatedAt) {
+		if task.CancelledAt == nil || !task.CancelledAt.Equal(task.UpdatedAt) || task.SessionID != "" {
 			return errors.New("cancelled Employee Task requires matching cancelled_at")
 		}
 	default:
@@ -214,6 +223,42 @@ func ValidateTask(task EmployeeTask) error {
 		return errors.New("Employee Task exceeds 512 KiB file limit")
 	}
 	return nil
+}
+
+// BindTask attaches the stable execution identities without changing the
+// immutable SnapshotDigest. Exact re-binding is idempotent; any ambiguity is a
+// conflict at the Store boundary.
+func BindTask(current EmployeeTask, sessionID, runID string, now time.Time) (EmployeeTask, error) {
+	if err := ValidateTask(current); err != nil {
+		return EmployeeTask{}, err
+	}
+	if current.State != TaskQueued {
+		return EmployeeTask{}, fmt.Errorf("%w: cancelled Task cannot be bound", ErrInvalidTaskTransition)
+	}
+	if err := validateIdentifier("Task Session id", sessionID); err != nil {
+		return EmployeeTask{}, err
+	}
+	if err := validateIdentifier("Task Run id", runID); err != nil {
+		return EmployeeTask{}, err
+	}
+	if current.SessionID != "" || current.RunID != "" {
+		if current.SessionID == sessionID && current.RunID == runID {
+			return current.Clone(), nil
+		}
+		return EmployeeTask{}, fmt.Errorf("%w: Task already has different execution bindings", ErrInvalidTaskTransition)
+	}
+	if now.IsZero() || now.Before(current.UpdatedAt) {
+		return EmployeeTask{}, fmt.Errorf("%w: binding time precedes Task state", ErrInvalidTaskTransition)
+	}
+	next := current.Clone()
+	next.SessionID, next.RunID, next.UpdatedAt = sessionID, runID, now.UTC()
+	if err := ValidateTask(next); err != nil {
+		return EmployeeTask{}, err
+	}
+	if next.SnapshotDigest != current.SnapshotDigest {
+		return EmployeeTask{}, errors.New("binding changed immutable Employee Task Snapshot Digest")
+	}
+	return next, nil
 }
 
 func (task EmployeeTask) VerifySnapshotDigest() bool {
