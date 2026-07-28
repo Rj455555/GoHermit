@@ -10,6 +10,10 @@
 - Phase 3: Owner-approved on 2026-07-28 after the clean-branch Gate revision.
 - Phase 4: implementation complete; `COMPLETE_WAITING_FOR_OWNER`.
 - Phase 5 and every later product-code change remain blocked.
+- External review state differs from the authorization premise: PR #36 was
+  squash-merged at 2026-07-28T08:44:10Z before the Phase 4 push. The Phase 4
+  commits are pushed to the authorized branch, but no replacement PR was
+  created because the Owner explicitly prohibited one.
 - Required terminal status:
   `WAITING_FOR_PHASE_4_APPROVAL`.
 
@@ -78,8 +82,8 @@
   schema v6, Runtime Preparation, Team mapping, UI, Embedding/vector database,
   remote Knowledge, background refresh, version, or release change.
 - No Phase 5 implementation.
-- No merge of Draft PR #36 and no additional product-code change after the
-  Phase 4 closeout.
+- No replacement PR, no merge action, and no additional product-code change
+  after the Phase 4 closeout.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -1134,7 +1138,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Owner-approved 2026-07-28; clean implementation `1fff90c`; Gate fix `ada73f1`; Draft PR #36 |
-| 4 | Knowledge Base and Employee Memory | `COMPLETE_WAITING_FOR_OWNER` | Implementation `6e3a23ca3eff1e710b88f319633e23df598b1f29`; Draft PR #36; evidence commit pending |
+| 4 | Knowledge Base and Employee Memory | `COMPLETE_WAITING_FOR_OWNER` | Implementation `6e3a23c`; evidence `353d451`; branch CI `30345791170` green; PR #36 was externally merged before Phase 4 push |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
@@ -1572,9 +1576,15 @@ Knowledge and Memory context layers are bounded and Employee-isolated.
 - Implementation commit:
   `6e3a23ca3eff1e710b88f319633e23df598b1f29`
   (`feat(employees): add phase 4 knowledge and memory`).
-- Evidence commit: pending until this evidence record is committed.
-- Branch and review: `agent/electronic-employees-v0.7-phase3`; existing Draft
-  PR #36 remains the only PR and must remain Draft/Open/unmerged.
+- Evidence commit:
+  `353d4517a95b858b558cbb194d28f4e4ae21f1fc`
+  (`docs(plan): record phase 4 evidence`).
+- Branch and review: `agent/electronic-employees-v0.7-phase3`; PR #36 was
+  already squash-merged externally at 2026-07-28T08:44:10Z as
+  `d31bcf3b1d9eaf324721cc9004bcf8b9ea95c521`, before the Phase 4 push.
+  GitHub does not permit an already-merged PR to remain Draft/Open or receive
+  later branch commits. No replacement PR was created because the Owner
+  explicitly prohibited one.
 - Actual product/test files:
 
 ```text
@@ -1671,7 +1681,9 @@ PASS credential-shaped secret-pattern scan
 PASS macOS real symlink and executable-bit tests; marker never created
 PASS compose.yaml parse through Python PyYAML
 PASS Knowledge package coverage 79.9%; Employee Memory package coverage 86.4%
-PENDING GitHub CI after push
+PASS GitHub CI push run 30345791170:
+     go/race/vet/build/cross-platform, Docker, and Web E2E green;
+     live-smoke intentionally skipped
 ```
 
 - Deviation: the approved Expected files named
@@ -1690,6 +1702,9 @@ PENDING GitHub CI after push
   in Phase 4, while verification against a real Task/Session/Run is deferred to
   the authorized runtime producer in Phase 7. Phase 4 does not automatically
   select context; immutable Task-time selection remains Phase 5/6 work.
+  Review-state blocker: PR #36 cannot satisfy the requested Draft/Open state
+  because it was externally merged before Phase 4 was pushed. Owner direction
+  is required before any replacement PR may be created.
 
 ### Phase 5: Employee Task Inbox persistence and API
 
