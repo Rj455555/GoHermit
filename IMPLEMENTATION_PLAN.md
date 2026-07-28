@@ -6,11 +6,12 @@
 
 - Revised plan: Owner-approved on 2026-07-28.
 - Phase 1: Owner-approved on 2026-07-28.
-- Phase 2: containment Gate revision implemented and verified after Owner
-  rejection; waiting for Owner reapproval.
-- Phase 3 and every later product-code change remain blocked.
+- Phase 2: Owner-approved on 2026-07-28 after both security Gate revisions.
+- Phase 3: clean-branch Gate revision implemented and verified on 2026-07-28;
+  waiting for Owner reapproval.
+- Phase 4 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_2_REAPPROVAL`.
+  `WAITING_FOR_PHASE_3_REAPPROVAL`.
 
 ### Fixed invariants
 
@@ -54,8 +55,8 @@
 | Phase | Scope | Gate state |
 |---|---|---|
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` |
-| 2 | Employee Store, Control Plane, and CRUD API | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `BLOCKED_BY_GATE` |
+| 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` |
+| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
 | 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` |
@@ -66,20 +67,18 @@
 
 ### Current phase scope
 
-- Phase 1 is Owner-approved and closed to further implementation.
-- Review the Phase 2 owner-scoped Employee Store, immutable revision
-  persistence, bounded Activity, Control Plane, Dry Run, current-Workspace
-  Projects endpoint, CRUD API, tests, and recorded evidence.
-- Keep Phase 3 and all later phases blocked until the next explicit Owner Gate.
+- Phases 1 and 2 are Owner-approved and closed to further implementation.
+- Review the clean Phase 3 branch, canonical Digest chain, executable-content
+  rejection, encoded-path rejection, complete validation, and Draft PR #36.
+- Keep Phase 4 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No Skill Catalog or execution, SKILL.md Adapter, Knowledge, Memory,
-  EmployeeTask, Session schema v6, Task Runtime, UI, Team Role Mapping,
-  version, or release change.
-- No Phase 3 implementation.
-- No commit, push, Draft PR mutation, deployment, model call, or generated
-  repository artifact after the Phase 2 closeout is pushed.
+- No Skill execution, Knowledge, Memory, EmployeeTask, Session schema v6,
+  Task Runtime, UI, Team Role Mapping, version, or release change.
+- No Phase 4 implementation.
+- No merge of Draft PR #36 and no additional product-code change after the
+  Phase 3 Gate closeout.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -88,7 +87,8 @@
 ```bash
 git branch --show-current
 git status --short
-go test ./internal/employee ./internal/employeestore ./internal/controlplane ./internal/web -count=1
+go test ./internal/skill ./internal/employee ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
+go test ./internal/tool ./internal/tool/builtin ./internal/policy ./internal/approval -count=1
 go test ./... -count=1
 go test -race ./... -count=1
 go vet ./...
@@ -99,32 +99,32 @@ git diff --check
 
 ### Next Gate
 
-Phase 3 may start only after the Owner explicitly accepts Phase 2,
+Phase 4 may start only after the Owner explicitly reapproves Phase 3,
 for example:
 
 ```text
-批准 Phase 2，开始 Phase 3
+批准 Phase 3 Gate 修订，开始 Phase 4
 ```
 
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_2_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_3_REAPPROVAL
 ```
 
 ---
 
-Plan status: `WAITING_FOR_PHASE_2_REAPPROVAL`
-Baseline: `origin/main@b2a187fbcb6c79faaa368977fef40d6ec1786e6c`
-Feature branch: `agent/electronic-employees-v0.7`
+Plan status: `WAITING_FOR_PHASE_3_REAPPROVAL`
+Baseline: `origin/main@9a75e8f021b2bd5de1522d93e7463b313318c99d`
+Feature branch: `agent/electronic-employees-v0.7-phase3`
 Last audited: 2026-07-28
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
-authorized phase section is the minimum required reading path. Phase 1 is
-Owner-approved and Phase 2 is complete; Phase 3 must not start until the Owner
-explicitly accepts the Phase 2 gate. Each Owner approval authorizes exactly one
-phase.
+authorized phase section is the minimum required reading path. Phases 1 and 2
+are Owner-approved and Phase 3 Gate revision is complete; Phase 4 must not
+start until the Owner explicitly reapproves Phase 3. Each Owner approval
+authorizes exactly one phase.
 
 ## 1. Current-state evidence
 
@@ -1130,9 +1130,9 @@ push, and Draft PR evidence, then stops for Owner approval.
 
 | Phase | Name | Status | Commit / PR / evidence |
 |---|---|---|---|
-| 1 | Employee Domain and ADR | `COMPLETE_WAITING_FOR_OWNER` | Implemented and verified 2026-07-28 |
-| 2 | Employee Store, Control Plane, and CRUD API | `BLOCKED_BY_GATE` | Not started |
-| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `BLOCKED_BY_GATE` | Not started |
+| 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
+| 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
+| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `1fff90c`; Gate fix `ada73f1`; Draft PR #36 |
 | 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` | Not started |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
@@ -1445,6 +1445,84 @@ Exit: native manifest and SKILL.md Adapter path/frontmatter/synthetic
 version/digest/zero-capability tests pass; scripts and dependencies are never
 executed; policy formulas prove Skills can only remove capabilities; legacy
 context ordering regresses cleanly.
+
+Phase 3 Gate revision record (2026-07-28):
+
+- Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 4 and every later
+  product phase remain `BLOCKED_BY_GATE` and were not started.
+- Clean branch:
+  `agent/electronic-employees-v0.7-phase3`, created from
+  `origin/main@9a75e8f021b2bd5de1522d93e7463b313318c99d`.
+  The old audit branch `agent/electronic-employees-v0.7` remains unchanged at
+  `ee3c386cf0e5778c4861bc989fdb727069e94a2f`.
+- Phase 3 implementation was transplanted only from old commit
+  `76906a2b42e49efd27320a866e474339ef61c625`; its clean-branch commit is
+  `1fff90c`. No old plan-only commit was cherry-picked and no Phase 1/2 product
+  commit was replayed.
+- Gate implementation commit:
+  `ada73f11573bdab13fd05a84154c99dfd8b14816`
+  (`fix(skills): harden phase 3 catalog gate`).
+- Evidence commit: `EVIDENCE_COMMIT_PENDING`.
+- Draft PR: [#36](https://github.com/Rj455555/GoHermit/pull/36), targeting
+  `main`; it remains Draft and must not be merged before Owner reapproval.
+- Digest root cause: native Manifest validation accepted uppercase SHA-256,
+  Catalog retained the supplied case, Employee binding normalization persisted
+  lowercase, and Control Plane drift comparison was exact. A valid uppercase
+  Manifest therefore became `digest_drift` immediately after persistence.
+  The Catalog now canonicalizes every validated native Digest once to lowercase
+  before projection and uses exact comparison with the calculated lowercase
+  Digest. Binding, immutable Revision Snapshot, reopened Store, API projection,
+  and drift status now share one representation; no `EqualFold` comparison
+  masks non-canonical persisted data.
+- Executable-content root cause: the shared `readRegular` boundary rejected
+  symlinks and non-regular files but did not inspect executable permission
+  bits. It now rejects any Catalog file with
+  `mode.Perm() & 0111 != 0`. Native and Adapter executable references fail
+  closed before reading into context; `scripts/`, package metadata, installers,
+  and dependencies remain ignored and are never executed or installed.
+- Encoded-path root cause: the earlier `%2e...` regression fixture did not
+  create the literal file or a matching Digest, so missing-file failure hid the
+  validation gap. `validateContentPath` now directly rejects every path
+  containing `%`, without URL decoding. The replacement test creates the
+  literal `references/%2e%2e%2foutside` file and a matching Manifest Digest;
+  Catalog still rejects the ambiguous path before content loading.
+- New named regressions:
+  - `TestNativeManifestDigestIsCanonicalLowercase`;
+  - `TestUppercaseManifestDigestBindingRemainsCurrentAfterStoreReopen`;
+  - existing `TestEmployeeSkillsReportsDigestDriftAndCatalogCorruption`
+    continues to prove real drift;
+  - `TestCatalogRejectsExecutableContentWithoutExecutingIt/native`;
+  - `TestCatalogRejectsExecutableContentWithoutExecutingIt/adapter`;
+  - `TestCatalogLoadsNonExecutableReadOnlyReference`;
+  - `TestNativeManifestRejectsURLAndEncodedPaths/existing_encoded_path_with_valid_digest`.
+  Marker-writing executable fixtures ran on macOS and no marker was created.
+  Existing traversal, absolute-path, symlink, non-regular, and Catalog
+  containment tests remain green with no symlink/executable-bit skip.
+- Additional fail-closed tests cover exact `Catalog.Resolve`, invalid Catalog
+  roots, composite bounded configuration types, and structural schema limits.
+  `internal/skill` statement coverage is 80.8%.
+- Verification:
+  - targeted Digest/executable/encoded-path/symlink regressions: pass;
+  - `go test ./internal/skill ./internal/employee ./internal/contextmgr ./internal/controlplane ./internal/web -count=1`: pass;
+  - `go test ./internal/tool ./internal/tool/builtin ./internal/policy ./internal/approval -count=1`: pass;
+  - `go test ./... -count=1`: pass;
+  - `go test -race ./... -count=1`: pass;
+  - `go vet ./...`: pass;
+  - `go build ./cmd/hermit` and `go build ./cmd/hermit-web`: pass;
+  - `gofmt`, `git diff --check`, credential-shaped secret-pattern scan, and
+    independent `compose.yaml` YAML parse: pass.
+- Clean-history evidence before plan closeout:
+  `git log --oneline origin/main..HEAD` contained only `1fff90c` and
+  `ada73f1`; `git diff --stat origin/main...HEAD` contained only the 16 Phase 3
+  implementation/Gate files. The final plan-only evidence commits add this
+  document and no product difference.
+- Remaining risks are unchanged: Activity append and Employee revision update
+  are separate atomic file operations under the accepted no-cross-file-
+  transaction boundary; Catalog intentionally rereads and rehashes its bounded
+  explicit root; the schema subset and capability vocabulary remain
+  conservative; cross-process Employee Store locking remains deferred. No
+  second Event, Run, Approval, Verification, or recovery state machine was
+  introduced.
 
 ### Phase 4: Knowledge Base and Employee Memory
 
@@ -1865,11 +1943,11 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-The Phase 2 gate ends here. No Phase 3 implementation is authorized until the
-Owner explicitly accepts Phase 2, for example:
+The Phase 3 Gate revision ends here. No Phase 4 implementation is authorized
+until the Owner explicitly reapproves Phase 3, for example:
 
 ```text
-批准 Phase 2，开始 Phase 3
+批准 Phase 3 Gate 修订，开始 Phase 4
 ```
 
-STATUS: WAITING_FOR_PHASE_2_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_3_REAPPROVAL
