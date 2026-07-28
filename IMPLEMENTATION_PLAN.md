@@ -1182,10 +1182,10 @@ Completion evidence (2026-07-28):
   binaries removed after verification.
 - `gofmt` and `git diff --check`: pass.
 - Phase 1 implementation commit:
-  `PENDING_PHASE_1_COMMIT_CREATION`.
-- Deviations: none in product scope. The immutable commit SHA must be recorded
-  by a plan-only closeout commit because a Git commit cannot contain its own
-  SHA.
+  `15b66bf39d960b420a00f86e165300dea4d8f579`.
+- Deviations: none in product scope. This exact immutable implementation SHA
+  is recorded by a plan-only closeout commit because a Git commit cannot
+  contain its own SHA.
 - Residual risk: Emoji validation uses a conservative Unicode-symbol rule
   rather than a third-party grapheme library; it accepts bounded common Emoji
   and rejects text, paths, and URLs. Complex Emoji compatibility can be
