@@ -7,11 +7,11 @@
 - Revised plan: Owner-approved on 2026-07-28.
 - Phase 1: Owner-approved on 2026-07-28.
 - Phase 2: Owner-approved on 2026-07-28 after both security Gate revisions.
-- Phase 3: clean-branch Gate revision implemented and verified on 2026-07-28;
-  waiting for Owner reapproval.
-- Phase 4 and every later product-code change remain blocked.
+- Phase 3: Owner-approved on 2026-07-28 after the clean-branch Gate revision.
+- Phase 4: explicitly authorized and `IN_PROGRESS`.
+- Phase 5 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_3_REAPPROVAL`.
+  `PHASE_4_IN_PROGRESS`.
 
 ### Fixed invariants
 
@@ -56,8 +56,8 @@
 |---|---|---|
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` |
-| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` |
+| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `OWNER_APPROVED` |
+| 4 | Knowledge Base and Employee Memory | `IN_PROGRESS` |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` |
@@ -67,18 +67,20 @@
 
 ### Current phase scope
 
-- Phases 1 and 2 are Owner-approved and closed to further implementation.
-- Review the clean Phase 3 branch, canonical Digest chain, executable-content
-  rejection, encoded-path rejection, complete validation, and Draft PR #36.
-- Keep Phase 4 and all later phases blocked until the next explicit Owner Gate.
+- Phases 1 through 3 are Owner-approved and closed to further implementation.
+- Implement only deterministic explicit-root local Knowledge/Citations,
+  owner-scoped Employee-isolated Memory and Candidate management, bounded
+  Knowledge/Memory context layers, and their Control Plane/Web APIs.
+- Keep Phase 5 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No Skill execution, Knowledge, Memory, EmployeeTask, Session schema v6,
-  Task Runtime, UI, Team Role Mapping, version, or release change.
-- No Phase 4 implementation.
+- No Task/Run execution, automatic Candidate generation or promotion, Session
+  schema v6, Runtime Preparation, Team mapping, UI, Embedding/vector database,
+  remote Knowledge, background refresh, version, or release change.
+- No Phase 5 implementation.
 - No merge of Draft PR #36 and no additional product-code change after the
-  Phase 3 Gate closeout.
+  Phase 4 closeout.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -87,8 +89,8 @@
 ```bash
 git branch --show-current
 git status --short
-go test ./internal/skill ./internal/employee ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
-go test ./internal/tool ./internal/tool/builtin ./internal/policy ./internal/approval -count=1
+go test ./internal/knowledge ./internal/employeememory ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
+go test ./internal/tool/builtin ./internal/contextmgr -count=1
 go test ./... -count=1
 go test -race ./... -count=1
 go vet ./...
@@ -99,32 +101,32 @@ git diff --check
 
 ### Next Gate
 
-Phase 4 may start only after the Owner explicitly reapproves Phase 3,
+Phase 5 may start only after the Owner explicitly approves Phase 4,
 for example:
 
 ```text
-批准 Phase 3 Gate 修订，开始 Phase 4
+批准 Phase 4，开始 Phase 5
 ```
 
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_3_REAPPROVAL
+STATUS: PHASE_4_IN_PROGRESS
 ```
 
 ---
 
-Plan status: `WAITING_FOR_PHASE_3_REAPPROVAL`
+Plan status: `PHASE_4_IN_PROGRESS`
 Baseline: `origin/main@9a75e8f021b2bd5de1522d93e7463b313318c99d`
 Feature branch: `agent/electronic-employees-v0.7-phase3`
 Last audited: 2026-07-28
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
-authorized phase section is the minimum required reading path. Phases 1 and 2
-are Owner-approved and Phase 3 Gate revision is complete; Phase 4 must not
-start until the Owner explicitly reapproves Phase 3. Each Owner approval
-authorizes exactly one phase.
+authorized phase section is the minimum required reading path. Phases 1 through
+3 are Owner-approved and Phase 4 is the only authorized implementation scope;
+Phase 5 must not start until the Owner explicitly approves Phase 4. Each Owner
+approval authorizes exactly one phase.
 
 ## 1. Current-state evidence
 
@@ -1132,8 +1134,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 |---|---|---|---|
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
-| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `1fff90c`; Gate fix `ada73f1`; Draft PR #36 |
-| 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` | Not started |
+| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Owner-approved 2026-07-28; clean implementation `1fff90c`; Gate fix `ada73f1`; Draft PR #36 |
+| 4 | Knowledge Base and Employee Memory | `IN_PROGRESS` | Authorized 2026-07-28; evidence pending |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
@@ -1945,11 +1947,11 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-The Phase 3 Gate revision ends here. No Phase 4 implementation is authorized
-until the Owner explicitly reapproves Phase 3, for example:
+Phase 4 is the only authorized implementation scope. No Phase 5 implementation
+is authorized until the Owner explicitly approves Phase 4, for example:
 
 ```text
-批准 Phase 3 Gate 修订，开始 Phase 4
+批准 Phase 4，开始 Phase 5
 ```
 
-STATUS: WAITING_FOR_PHASE_3_REAPPROVAL
+STATUS: PHASE_4_IN_PROGRESS
