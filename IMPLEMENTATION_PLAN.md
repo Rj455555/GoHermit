@@ -8,8 +8,8 @@
 - Phase 1: Owner-approved on 2026-07-28.
 - Phase 2: Owner-approved on 2026-07-28 after both security Gate revisions.
 - Phase 3: `OWNER_APPROVED`; squash-merged through PR #36.
-- Phase 4: Gate revision implemented and verified on the clean Phase 4 branch;
-  `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`.
+- Phase 4: Final UTF-8 Gate revision implemented and locally verified on the
+  clean Phase 4 branch; `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`.
 - Phase 5 and every later product-code change remain blocked.
 - Required terminal status:
   `WAITING_FOR_PHASE_4_REAPPROVAL`.
@@ -70,8 +70,8 @@
 
 - Phases 1 through 3 are Owner-approved and closed to further implementation.
 - Review only the clean Phase 4 branch, persisted Knowledge integrity chain,
-  bounded empty-body/query handling, canonical provenance ordering, isolation,
-  complete validation, and the replacement Draft PR.
+  bounded UTF-8-safe JSON handling, canonical provenance ordering, isolation,
+  complete validation, and Draft PR #37.
 - Keep Phase 5 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
@@ -1135,7 +1135,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
-| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `f5d24b0`; Gate fix `75ee1a3`; evidence `fa127a0`; Draft PR #37; CI green |
+| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `f5d24b0`; Gate fix `75ee1a3`; final UTF-8 fix `c7c7c25`; Draft PR #37 |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
@@ -1653,6 +1653,56 @@ PASS CI go jobs (gofmt, tests, race, vet, builds, and cross-platform checks)
 PASS CI docker jobs (Compose configuration and Docker build)
 PASS CI web-e2e jobs
 EXPECTED SKIP live-smoke jobs
+```
+
+#### Phase 4 final UTF-8 Gate revision
+
+- Status remains `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`; Phase 5 through
+  Phase 10 remain `BLOCKED_BY_GATE` and Phase 5 has not started.
+- Root cause: Go `encoding/json` replaces malformed UTF-8 bytes and isolated
+  UTF-16 surrogate escapes in quoted strings with U+FFFD. The earlier
+  post-decode `utf8.ValidString` checks therefore could not distinguish
+  malformed input from accepted text.
+- Implementation commit:
+  `c7c7c25c66f9d357c88eff730f5912828a718614`
+  (`fix(employees): reject invalid unicode in phase 4 JSON`).
+- Employee Store `decodeStrict` now calls `utf8.Valid(raw)` before any JSON
+  Decode. Unknown-field rejection, the single-value rule, bounded file reads,
+  and corrupt-store error mapping remain unchanged.
+- Phase 4 HTTP JSON decoding now reads through `MaxBytesReader`, validates the
+  bounded raw body with `utf8.Valid`, and only then performs strict JSON Decode
+  from a `bytes.Reader`. Invalid raw UTF-8 returns HTTP 400 before Control Plane
+  or Store mutation.
+- Knowledge Title, ManualText, Source Error, Citation Heading/Snippet and
+  canonical Terms, plus Employee Memory Value, reject
+  `unicode.ReplacementChar`. This deliberately also rejects an Owner-authored
+  literal U+FFFD so malformed surrogate replacement cannot be persisted.
+- Focused regression coverage:
+  `TestDecodeStrictRejectsRawInvalidUTF8BeforeJSONDecode`,
+  `TestKnowledgeStoreRejectsInvalidUTF8InNonDigestSourceError`,
+  `TestPhase4JSONRejectsInvalidUTF8AndSurrogatesWithoutMutation`,
+  `TestEmployeeKnowledgeAPIInvalidUTF8StoreReturnsInternalError`, and
+  `TestPhase4MultilingualUTF8SurvivesReopenAndEntersContext`.
+  Existing Knowledge and Memory validation tests also cover U+FFFD in Title,
+  ManualText, Source Error, Heading, Snippet, and Memory Value.
+- Failed Knowledge requests leave `sources.json` and `index.json` absent;
+  failed Memory edit requests leave `facts.json` byte-for-byte unchanged.
+  Valid Chinese, Emoji, and other well-formed multilingual UTF-8 survives
+  persistence, Store reopen, and bounded Context assembly.
+- macOS validation completed on 2026-07-28:
+
+```text
+PASS final UTF-8/surrogate targeted tests
+PASS go test ./internal/knowledge ./internal/employeememory ./internal/employeestore ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
+PASS go test ./internal/tool/builtin ./internal/contextmgr -count=1
+PASS go test ./... -count=1
+PASS go test -race ./... -count=1
+PASS go vet ./...
+PASS CLI and Web builds to /tmp
+PASS gofmt on every changed Go file
+PASS git diff --check
+PASS credential-shaped secret-pattern scan
+PENDING GitHub CI for the final UTF-8 Gate head
 ```
 
 - Persistence retains the accepted single-file atomic/no-cross-file-transaction
