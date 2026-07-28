@@ -2451,6 +2451,35 @@ Phase 7 Recovery Gate evidence (2026-07-29):
     [30377841927](https://github.com/Rj455555/GoHermit/actions/runs/30377841927):
     Go, Docker, and Web E2E PASS;
   - `live-smoke` skipped by workflow design.
+- Initial Recovery Gate evidence commit:
+  `09b90ba` (`docs(plan): record phase 7 recovery gate evidence`).
+- Evidence-head CI exposed one pre-existing Phase 7 projection race:
+  - push workflow
+    [30378206311](https://github.com/Rj455555/GoHermit/actions/runs/30378206311)
+    passed;
+  - PR workflow
+    [30378209923](https://github.com/Rj455555/GoHermit/actions/runs/30378209923)
+    failed only `TestEmployeeTaskConcurrentStartCreatesAndStartsOneStableRun`:
+    the stable Run was bound and launched, but Start could project the prior
+    `prepared` checkpoint before the Runner goroutine persisted `running`.
+- Start projection stabilization commit:
+  `b99213b` (`fix(phase7): await started run projection`).
+  Start now uses the existing bounded, read-only Session/Run projection wait
+  after a successful launch. An `errRunActive` retry is idempotent only when
+  the active identity is the same Session/Run; a different active Run remains
+  a conflict. No state is manufactured and no replacement Run is created.
+- Stabilization verification:
+  - PASS `TestEmployeeTaskConcurrentStartCreatesAndStartsOneStableRun` with
+    `-count=50`;
+  - PASS the complete scoped normal/race and repository-wide normal/race
+    suites, vet, CLI/Web builds, gofmt, and diff check;
+  - push workflow
+    [30378858495](https://github.com/Rj455555/GoHermit/actions/runs/30378858495):
+    Go, Docker, and Web E2E PASS;
+  - PR workflow
+    [30378861605](https://github.com/Rj455555/GoHermit/actions/runs/30378861605):
+    Go, Docker, and Web E2E PASS;
+  - `live-smoke` skipped by workflow design.
 - Remaining accepted risk: no-digest legacy records cannot support semantic
   argument comparison; compatibility therefore depends on the provider's
   exact Call ID identity. They never enter the new digest frontier. All new
