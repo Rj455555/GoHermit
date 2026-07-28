@@ -199,6 +199,12 @@ type Session struct {
 	EmployeeRevision           int                       `json:"employee_revision,omitempty"`
 	EmployeeTaskSnapshotDigest string                    `json:"employee_task_snapshot_digest,omitempty"`
 	EmployeeContextSnapshot    *employee.CompactSnapshot `json:"employee_context_snapshot,omitempty"`
+	// Team Employee values are present only on hidden Worker Sessions. The
+	// parent Mission stores public assignment metadata; private context stays
+	// in this independently bounded checkpoint and is redacted from Web API
+	// projections by the Control Plane.
+	TeamEmployeeAssignment      *team.TeamEmployeeAssignment `json:"team_employee_assignment,omitempty"`
+	TeamEmployeeContextSnapshot *employee.CompactSnapshot    `json:"team_employee_context_snapshot,omitempty"`
 }
 
 func New(goal, workspace, configDigest string) (*Session, error) {
@@ -237,6 +243,49 @@ func NewPrepared(
 		CompletedSteps: []string{}, PendingSteps: []string{}, TestResults: []TestResult{},
 		EmployeeID: employeeID, EmployeeTaskID: taskID, EmployeeRevision: revision,
 		EmployeeTaskSnapshotDigest: taskSnapshotDigest, EmployeeContextSnapshot: &copy,
+	}
+	if err := validateSessionCheckpoint(value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+// NewTeamWorker constructs a hidden child Session from an immutable Team
+// assignment and compact Employee context. It creates no Run.
+func NewTeamWorker(
+	id, goal, title, workspace, configDigest, parentSessionID, parentRunID string,
+	selection Selection, assignment team.TeamEmployeeAssignment,
+	compact employee.CompactSnapshot,
+) (*Session, error) {
+	if _, err := sessionIDPath(id); err != nil {
+		return nil, err
+	}
+	if err := team.ValidateTeamEmployeeAssignment(assignment); err != nil {
+		return nil, fmt.Errorf("Team Employee assignment: %w", err)
+	}
+	if err := employee.ValidateCompactSnapshot(compact); err != nil {
+		return nil, fmt.Errorf("Team Employee context snapshot: %w", err)
+	}
+	if compact.EmployeeID != assignment.EmployeeID ||
+		compact.EmployeeRevision != assignment.EmployeeRevision ||
+		compact.TaskID != assignment.WorkItemID ||
+		compact.TaskSnapshotDigest != assignment.EmployeeSnapshotDigest ||
+		compact.Digest != assignment.ContextDigest ||
+		selection.Company != assignment.Company || selection.Access != assignment.Access ||
+		selection.Model != assignment.Model || selection.Agent != assignment.AgentProfile {
+		return nil, errors.New("Team Employee assignment and compact context mismatch")
+	}
+	now := time.Now().UTC()
+	assignmentCopy, compactCopy := assignment, compact.Clone()
+	value := &Session{
+		SchemaVersion: SchemaVersion, ID: id, Title: clipTitle(title), Goal: goal,
+		Status: Open, Selection: selection, CreatedAt: now, UpdatedAt: now,
+		Workspace: workspace, ConfigDigest: configDigest, ModifiedFiles: map[string]string{},
+		Runs: []Run{}, RecentMessages: []model.Message{}, ToolCalls: []ToolRecord{},
+		CompletedSteps: []string{}, PendingSteps: []string{}, TestResults: []TestResult{},
+		Hidden: true, ParentSessionID: parentSessionID, ParentRunID: parentRunID,
+		WorkItemID:             assignment.WorkItemID,
+		TeamEmployeeAssignment: &assignmentCopy, TeamEmployeeContextSnapshot: &compactCopy,
 	}
 	if err := validateSessionCheckpoint(value); err != nil {
 		return nil, err
@@ -426,6 +475,11 @@ func validateSessionCheckpoint(value *Session) error {
 	if err := validateSessionToolRecords(value); err != nil {
 		return err
 	}
+	if value.Mission != nil {
+		if err := value.Mission.ValidateEmployeeAssignments(); err != nil {
+			return fmt.Errorf("Team Employee assignments: %w", err)
+		}
+	}
 	emptyPreparation := value.EmployeeID == "" && value.EmployeeTaskID == "" &&
 		value.EmployeeRevision == 0 && value.EmployeeTaskSnapshotDigest == "" &&
 		value.EmployeeContextSnapshot == nil
@@ -434,6 +488,9 @@ func validateSessionCheckpoint(value *Session) error {
 			return nil
 		}
 		return fmt.Errorf("unsupported session schema version %d", value.SchemaVersion)
+	}
+	if err := validateTeamEmployeeCheckpoint(value); err != nil {
+		return err
 	}
 	if emptyPreparation {
 		return nil
@@ -451,6 +508,38 @@ func validateSessionCheckpoint(value *Session) error {
 		compact.TaskID != value.EmployeeTaskID ||
 		compact.TaskSnapshotDigest != value.EmployeeTaskSnapshotDigest {
 		return errors.New("Employee preparation metadata mismatch")
+	}
+	return nil
+}
+
+func validateTeamEmployeeCheckpoint(value *Session) error {
+	empty := value.TeamEmployeeAssignment == nil && value.TeamEmployeeContextSnapshot == nil
+	if empty {
+		return nil
+	}
+	if value.TeamEmployeeAssignment == nil || value.TeamEmployeeContextSnapshot == nil ||
+		!value.Hidden || value.ParentSessionID == "" || value.ParentRunID == "" ||
+		value.WorkItemID == "" {
+		return errors.New("Team Employee Worker checkpoint is incomplete")
+	}
+	assignment, compact := *value.TeamEmployeeAssignment, *value.TeamEmployeeContextSnapshot
+	if err := team.ValidateTeamEmployeeAssignment(assignment); err != nil {
+		return fmt.Errorf("Team Employee assignment: %w", err)
+	}
+	if err := employee.ValidateCompactSnapshot(compact); err != nil {
+		return fmt.Errorf("Team Employee context snapshot: %w", err)
+	}
+	if value.WorkItemID != assignment.WorkItemID ||
+		compact.TaskID != value.WorkItemID ||
+		compact.EmployeeID != assignment.EmployeeID ||
+		compact.EmployeeRevision != assignment.EmployeeRevision ||
+		compact.TaskSnapshotDigest != assignment.EmployeeSnapshotDigest ||
+		compact.Digest != assignment.ContextDigest ||
+		value.Selection.Company != assignment.Company ||
+		value.Selection.Access != assignment.Access ||
+		value.Selection.Model != assignment.Model ||
+		value.Selection.Agent != assignment.AgentProfile {
+		return errors.New("Team Employee Worker checkpoint identity mismatch")
 	}
 	return nil
 }

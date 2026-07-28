@@ -220,6 +220,12 @@ func (s *Service) GetSession(ctx context.Context, id string) (*session.Session, 
 	if err != nil {
 		return nil, nil, classified(KindInternal, err)
 	}
+	// Hidden Team Worker checkpoints keep private Employee Memory in their
+	// compact recovery snapshot. The Web projection never exposes that
+	// field, even when a caller guesses a hidden Session ID.
+	if sess.Hidden && sess.TeamEmployeeContextSnapshot != nil {
+		sess.TeamEmployeeContextSnapshot = nil
+	}
 	return sess, messages, nil
 }
 

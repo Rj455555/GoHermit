@@ -13,6 +13,16 @@ async function mockLoopWorkbench(page: Page, options: { providerReady?: boolean 
   let loops: LoopDefinition[] = []
   let invocations: Invocation[] = []
   const sessions = new Map<string, any>()
+  let teamTemplate: Record<string, any> = {
+    schema_version: 2,
+    name: 'default',
+    default: { company: 'deepseek', access: 'deepseek', model: 'deepseek-chat' },
+    roles: { verifier: { company: 'deepseek', access: 'deepseek', model: 'deepseek-chat' } },
+  }
+  const employees = [
+    { id: 'employee-a', name: 'Ada', job_title: 'Explorer', state: 'active', revision: 3 },
+    { id: 'employee-b', name: 'Lin', job_title: 'Reviewer', state: 'active', revision: 7 },
+  ]
 
   await page.route('**/api/**', async route => {
     const request = route.request()
@@ -39,12 +49,12 @@ async function mockLoopWorkbench(page: Page, options: { providerReady?: boolean 
       owner: { configured: false },
     })
     if (path === '/api/owner') return json(route, { schema_version: 1, identity: {}, preferences: {}, environments: [], facts: [] })
-    if (path === '/api/team-template/export') return json(route, {
-      schema_version: 1,
-      name: 'default',
-      default: { company: 'deepseek', access: 'deepseek', model: 'deepseek-chat' },
-      roles: { verifier: { company: 'deepseek', access: 'deepseek', model: 'deepseek-chat' } },
-    })
+    if (path === '/api/team-template/export') return json(route, teamTemplate)
+    if (path === '/api/team-template/import' && method === 'POST') {
+      teamTemplate = JSON.parse(request.postData() || '{}')
+      return json(route, { name: teamTemplate.name, roles: Object.keys(teamTemplate.roles || {}) })
+    }
+    if (path === '/api/employees' && method === 'GET') return json(route, { employees })
     if (path === '/api/sessions' && method === 'GET') {
       return json(route, {
         sessions: [...sessions.values()].map(({ session }) => ({
@@ -93,7 +103,12 @@ async function mockLoopWorkbench(page: Page, options: { providerReady?: boolean 
         task_prompt: definition.task_source.prompt,
         agent: definition.agent_selection,
         team_template_ref: definition.team_template_ref,
-        roles: [{ role: 'verifier', ...definition.agent_selection, credential_configured: providerReady, detail: providerReady ? 'Fake Provider' : 'missing' }],
+        roles: [{
+          role: 'verifier', ...definition.agent_selection,
+          employee_id: teamTemplate.roles?.verifier?.employee_id,
+          employee_revision: teamTemplate.roles?.verifier?.employee_id ? 7 : undefined,
+          credential_configured: providerReady, detail: providerReady ? 'Fake Provider' : 'missing',
+        }],
         write_scope: 'read-only: the loop may inspect the workspace but never modify it',
         checks: definition.verification_recipe.checks,
         budget: definition.budget,
@@ -214,8 +229,27 @@ async function mockLoopWorkbench(page: Page, options: { providerReady?: boolean 
     setProviderReady(value: boolean) { providerReady = value },
     loops: () => loops,
     invocations: () => invocations,
+    teamTemplate: () => teamTemplate,
   }
 }
+
+test('maps a Team Role to an exact active Employee and preserves the model-precedence choice', async ({ page }) => {
+  const harness = await mockLoopWorkbench(page)
+  await page.goto('/')
+  await page.getByTestId('nav-loops').click()
+  await page.getByTestId('loop-new').click()
+  const explorer = page.locator('#loop-team-roles .role-preview').first()
+  await explorer.getByTestId('team-role-employee').selectOption('employee-b')
+  await expect.poll(() => harness.teamTemplate().roles.explorer?.employee_id).toBe('employee-b')
+  expect(harness.teamTemplate().roles.explorer.model).toBe('deepseek-chat')
+  await explorer.getByTestId('team-role-default-model').check()
+  await expect.poll(() => harness.teamTemplate().roles.explorer?.model).toBe('')
+  expect(harness.teamTemplate().roles.explorer).toMatchObject({
+    employee_id: 'employee-b', company: '', access: '', model: '',
+  })
+  await expect(explorer).toContainText('Lin')
+  await expect(explorer).toContainText('r7')
+})
 
 test('creates, persists and revises a Loop Definition with Dry Run readiness', async ({ page }) => {
   const harness = await mockLoopWorkbench(page)

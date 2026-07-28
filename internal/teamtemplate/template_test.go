@@ -329,6 +329,50 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSchemaV1MigratesWithoutInventingEmployeeAssignment(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "team-template.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := validTemplate()
+	legacy.SchemaVersion = LegacySchemaV1
+	raw, _ := json.Marshal(legacy)
+	if err = os.WriteFile(store.Path(), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SchemaVersion != SchemaVersion || got.Default.EmployeeID != "" {
+		t.Fatalf("migration invented assignment or wrong version: %+v", got)
+	}
+	if got.Default.Company != legacy.Default.Company ||
+		got.Default.Access != legacy.Default.Access || got.Default.Model != legacy.Default.Model {
+		t.Fatalf("legacy selection changed: got=%+v want=%+v", got.Default, legacy.Default)
+	}
+}
+
+func TestEmployeeSelectionRequiresSafeIDAndAtomicModelOverride(t *testing.T) {
+	template := validTemplate()
+	template.Roles[string(team.RoleExplorer)] = RoleSelection{EmployeeID: "employee-a"}
+	if err := Validate(template); err != nil {
+		t.Fatalf("Employee default model path rejected: %v", err)
+	}
+	template.Roles[string(team.RoleExplorer)] = RoleSelection{
+		EmployeeID: "employee-a", Company: "deepseek",
+	}
+	if err := Validate(template); err == nil {
+		t.Fatal("partial mission model override must fail closed")
+	}
+	for _, id := range []string{"../outside", "/absolute", `%2e%2e`, `employee\outside`} {
+		template.Roles[string(team.RoleExplorer)] = RoleSelection{EmployeeID: id}
+		if err := Validate(template); err == nil {
+			t.Fatalf("unsafe employee_id %q was accepted", id)
+		}
+	}
+}
+
 func TestExportRedactsSecretFields(t *testing.T) {
 	template := validTemplate()
 	template.Name = "core api_key=abc123"

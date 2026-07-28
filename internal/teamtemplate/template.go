@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,9 +20,11 @@ import (
 )
 
 const (
-	SchemaVersion  = 1
-	MaxRoleEntries = 5
-	MaxTextBytes   = 8 << 10
+	SchemaVersion      = 2
+	LegacySchemaV1     = 1
+	MaxRoleEntries     = 5
+	MaxTextBytes       = 8 << 10
+	MaxEmployeeIDBytes = 128
 	// MaxRoleModelCalls and MaxRoleTokens bound the optional per-role cost
 	// ceilings so a tampered template cannot carry absurd limits.
 	MaxRoleModelCalls = 1_000
@@ -31,9 +34,10 @@ const (
 // RoleSelection pins one role to a provider/model pair. It mirrors
 // session.Selection without the agent field and holds names, never keys.
 type RoleSelection struct {
-	Company string `json:"company"`
-	Access  string `json:"access"`
-	Model   string `json:"model"`
+	Company    string `json:"company"`
+	Access     string `json:"access"`
+	Model      string `json:"model"`
+	EmployeeID string `json:"employee_id,omitempty"`
 	// MaxModelCalls and MaxTokens optionally cap the role's usage on top of
 	// the mission budget; zero means unlimited. Both are additive so files
 	// written before the keys existed load unchanged.
@@ -62,6 +66,9 @@ var allowedOverrides = map[string]bool{
 // Empty reports whether the template holds no usable default selection —
 // the case for a store whose file was never written.
 func (t Template) Empty() bool {
+	if clean(t.Default.EmployeeID) != "" {
+		return false
+	}
 	return clean(t.Default.Company) == "" || clean(t.Default.Access) == "" || clean(t.Default.Model) == ""
 }
 
@@ -130,10 +137,9 @@ func (s *Store) Save(t Template) error {
 }
 
 func (s *Store) load() (Template, error) {
-	template := Template{SchemaVersion: SchemaVersion}
 	raw, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return template, nil
+		return Template{SchemaVersion: SchemaVersion}, nil
 	}
 	if err != nil {
 		return Template{}, fmt.Errorf("read team template: %w", err)
@@ -143,13 +149,9 @@ func (s *Store) load() (Template, error) {
 	}
 	// Unknown fields fail closed so a newer file format is never silently
 	// truncated on load.
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&template); err != nil {
-		return Template{}, fmt.Errorf("decode team template: %w", err)
-	}
-	if template.SchemaVersion != SchemaVersion {
-		return Template{}, fmt.Errorf("unsupported team template version %d", template.SchemaVersion)
+	template, err := decodeTemplate(raw)
+	if err != nil {
+		return Template{}, err
 	}
 	if err = Validate(template); err != nil {
 		return Template{}, err
@@ -204,10 +206,26 @@ func Validate(t Template) error {
 }
 
 func validateSelection(label string, selection RoleSelection) error {
-	if clean(selection.Company) == "" || clean(selection.Access) == "" || clean(selection.Model) == "" {
+	employeeID := clean(selection.EmployeeID)
+	company, access, model := clean(selection.Company), clean(selection.Access), clean(selection.Model)
+	populated := 0
+	for _, value := range []string{company, access, model} {
+		if value != "" {
+			populated++
+		}
+	}
+	if employeeID == "" && populated != 3 {
 		return fmt.Errorf("%s selection requires company, access, and model", label)
 	}
-	for _, value := range []string{selection.Company, selection.Access, selection.Model} {
+	if employeeID != "" && populated != 0 && populated != 3 {
+		return fmt.Errorf("%s selection override must provide company, access, and model together", label)
+	}
+	if employeeID != "" {
+		if err := validateEmployeeID(employeeID); err != nil {
+			return fmt.Errorf("%s: %w", label, err)
+		}
+	}
+	for _, value := range []string{selection.Company, selection.Access, selection.Model, selection.EmployeeID} {
 		if err := validateText(value); err != nil {
 			return fmt.Errorf("%s selection: %w", label, err)
 		}
@@ -258,14 +276,9 @@ func Import(data []byte) (Template, error) {
 	if len(data) > 256<<10 {
 		return Template{}, errors.New("team template exceeds size limit")
 	}
-	template := Template{SchemaVersion: SchemaVersion}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&template); err != nil {
-		return Template{}, fmt.Errorf("decode team template: %w", err)
-	}
-	if template.SchemaVersion != SchemaVersion {
-		return Template{}, fmt.Errorf("unsupported team template version %d", template.SchemaVersion)
+	template, err := decodeTemplate(data)
+	if err != nil {
+		return Template{}, err
 	}
 	for _, field := range secretFields(template) {
 		if owner.LooksSecret(field.value) {
@@ -288,12 +301,14 @@ func secretFields(t Template) []secretField {
 		{"default selection company", t.Default.Company},
 		{"default selection access", t.Default.Access},
 		{"default selection model", t.Default.Model},
+		{"default selection employee id", t.Default.EmployeeID},
 	}
 	for _, selection := range t.Roles {
 		fields = append(fields,
 			secretField{"role override company", selection.Company},
 			secretField{"role override access", selection.Access},
 			secretField{"role override model", selection.Model},
+			secretField{"role override employee id", selection.EmployeeID},
 		)
 	}
 	return fields
@@ -310,7 +325,52 @@ func redactSelection(selection RoleSelection) RoleSelection {
 	selection.Company = redact(selection.Company)
 	selection.Access = redact(selection.Access)
 	selection.Model = redact(selection.Model)
+	selection.EmployeeID = redact(selection.EmployeeID)
 	return selection
+}
+
+func decodeTemplate(raw []byte) (Template, error) {
+	var version struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(raw, &version); err != nil {
+		return Template{}, fmt.Errorf("decode team template: %w", err)
+	}
+	if version.SchemaVersion != LegacySchemaV1 && version.SchemaVersion != SchemaVersion {
+		return Template{}, fmt.Errorf("unsupported team template version %d", version.SchemaVersion)
+	}
+	template := Template{}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&template); err != nil {
+		return Template{}, fmt.Errorf("decode team template: %w", err)
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return Template{}, errors.New("decode team template: trailing JSON value")
+	}
+	// v1 and v2 have identical legacy selection semantics; v2 only adds the
+	// optional employee_id. Migration is therefore deterministic and cannot
+	// invent an Employee assignment.
+	if template.SchemaVersion == LegacySchemaV1 {
+		template.SchemaVersion = SchemaVersion
+	}
+	return template, nil
+}
+
+func validateEmployeeID(value string) error {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > MaxEmployeeIDBytes ||
+		filepath.IsAbs(value) || strings.ContainsAny(value, `/\%`) ||
+		value == "." || value == ".." || strings.Contains(value, "..") {
+		return errors.New("employee_id is invalid or path-unsafe")
+	}
+	for _, r := range value {
+		if !(r == '-' || r == '_' || r == '.' ||
+			r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' ||
+			r >= '0' && r <= '9') {
+			return errors.New("employee_id contains an unsupported character")
+		}
+	}
+	return nil
 }
 
 func validateText(value string) error {

@@ -11,6 +11,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/agent"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/team"
@@ -18,13 +19,15 @@ import (
 )
 
 type teamProvider struct {
-	mu    sync.Mutex
-	calls int
+	mu       sync.Mutex
+	calls    int
+	requests []model.GenerateRequest
 }
 
-func (p *teamProvider) Generate(context.Context, model.GenerateRequest) (model.GenerateResponse, error) {
+func (p *teamProvider) Generate(_ context.Context, request model.GenerateRequest) (model.GenerateResponse, error) {
 	p.mu.Lock()
 	p.calls++
+	p.requests = append(p.requests, model.GenerateRequest{Model: request.Model, Messages: append([]model.Message{}, request.Messages...)})
 	p.mu.Unlock()
 	return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: `{"summary":"inspected","evidence":["workspace"]}`}, FinishReason: "stop", Usage: model.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}}, nil
 }
@@ -303,5 +306,119 @@ func TestTeamWorkerRoleOverrideSelectsTemplateRuntime(t *testing.T) {
 	}
 	if explorerChild.Selection.Company != "deepseek" || explorerChild.Selection.Model != "deepseek-chat" || explorerChild.Selection.Agent != "explorer" {
 		t.Fatalf("explorer child selection = %+v, want the session-level selection", explorerChild.Selection)
+	}
+}
+
+func TestTeamWorkerEmployeeContextsAreIsolatedAndHandoffStaysPublic(t *testing.T) {
+	root := t.TempDir()
+	store, err := session.NewStore(root, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := session.New("parent", root, "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent.ID = "parent"
+	if err = store.Save(context.Background(), parent); err != nil {
+		t.Fatal(err)
+	}
+	run := func(id, memoryValue string) (string, team.Result) {
+		t.Helper()
+		provider := &teamProvider{}
+		build := func(context.Context, string, string, RuntimeOptions) (*Runtime, error) {
+			manager, managerErr := contextmgr.New(contextmgr.Config{MaxTokens: 4096, CompressionThreshold: .8, HardLimitThreshold: .92, ReserveOutputTokens: 512})
+			if managerErr != nil {
+				return nil, managerErr
+			}
+			return &Runtime{Workspace: root, Store: store, Runner: &agent.Runner{
+				Provider: provider, Executor: tool.Executor{Registry: tool.NewRegistry(), DefaultTimeout: time.Second},
+				Context: manager, Store: store, Config: agent.Config{MaxTurns: 2, Timeout: time.Minute, Model: "test"},
+			}}, nil
+		}
+		workID := "explore-" + id
+		compact := employee.CompactSnapshot{
+			SchemaVersion: employee.CompactSnapshotSchemaVersion,
+			EmployeeID:    id, EmployeeRevision: 1, TaskID: workID,
+			TaskSnapshotDigest: strings.Repeat("a", 64),
+			Identity:           employee.CompactIdentity{Name: id, JobTitle: "Explorer", Charter: "Inspect bounded evidence."},
+			EffectivePolicy:    employee.EffectivePolicy{AllowedCapabilities: []string{"read"}},
+			Budget:             employee.BudgetPolicy{MaxModelCalls: 2, MaxTokens: 1000, TimeoutSeconds: 60},
+			Project: employee.CompactProject{
+				BindingID: "project-" + id, WorkspaceFingerprint: strings.Repeat("b", 64),
+				ReadAllowed: true, WorkspaceSummary: "bounded workspace",
+			},
+			Skills: []employee.CompactSkill{}, Knowledge: []employee.CompactKnowledge{},
+			Memory: []employee.CompactMemory{{
+				FactID: "fact-" + id, Digest: strings.Repeat("c", 64),
+				Category: "preference", Value: memoryValue, Provenance: `{"source":"owner"}`,
+			}},
+		}
+		if err := employee.SealCompactSnapshot(&compact); err != nil {
+			t.Fatal(err)
+		}
+		assignment := team.TeamEmployeeAssignment{
+			WorkItemID: workID, Role: team.RoleExplorer, EmployeeID: id, EmployeeRevision: 1,
+			EmployeeSnapshotDigest: strings.Repeat("a", 64), ProjectBindingID: "project-" + id,
+			WorkspaceFingerprint: strings.Repeat("b", 64), Company: "deepseek", Access: "deepseek",
+			Model: "deepseek-chat", AgentProfile: "explorer", EffectivePolicyDigest: strings.Repeat("d", 64),
+			ContextDigest: compact.Digest,
+		}
+		if err := team.SealTeamEmployeeAssignment(&assignment); err != nil {
+			t.Fatal(err)
+		}
+		assignmentCopy, compactCopy := assignment, compact
+		worker := TeamWorker{
+			Workspace: root, ParentSessionID: "parent", ParentRunID: "run", ParentStore: store, Build: build,
+			WorkItemRuntimes: map[string]RoleRuntime{workID: {
+				Selection:          config.RuntimeSelection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "explorer"},
+				EmployeeAssignment: &assignmentCopy, EmployeeContext: &compactCopy,
+			}},
+		}
+		result, err := worker.Execute(context.Background(), team.Assignment{
+			MissionID: "mission", Goal: "inspect",
+			WorkItem:  team.WorkItem{ID: workID, Role: team.RoleExplorer, Title: "Explore", Goal: "inspect", ExecutionSessionID: "worker-" + workID},
+			MaxTokens: 1000, MaxDuration: time.Minute, Employee: &assignmentCopy,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var transcript strings.Builder
+		for _, request := range provider.requests {
+			for _, message := range request.Messages {
+				transcript.WriteString(message.Content)
+			}
+		}
+		return transcript.String(), result
+	}
+
+	aText, aResult := run("employee-a", "Employee A prefers alpha.")
+	bText, bResult := run("employee-b", "Employee B prefers beta.")
+	if !strings.Contains(aText, "prefers alpha") || strings.Contains(aText, "prefers beta") ||
+		!strings.Contains(bText, "prefers beta") || strings.Contains(bText, "prefers alpha") {
+		t.Fatalf("Employee contexts crossed: A=%q B=%q", aText, bText)
+	}
+	handoffs, _ := json.Marshal([]team.Handoff{aResult.Handoff, bResult.Handoff})
+	if strings.Contains(string(handoffs), "prefers alpha") || strings.Contains(string(handoffs), "prefers beta") {
+		t.Fatal("private Employee Memory leaked into public Handoff")
+	}
+}
+
+func TestTeamWorkerRejectsProviderEchoOfPrivateMemory(t *testing.T) {
+	memory := []employee.CompactMemory{{Value: "owner-private-preference"}}
+	cases := []team.Handoff{
+		{Summary: "echo owner-private-preference"},
+		{Evidence: []string{"owner-private-preference"}},
+		{Checks: []team.Check{{Summary: "owner-private-preference"}}},
+		{Substeps: []team.SubstepSpec{{Goal: "owner-private-preference"}}},
+		{Findings: []team.Finding{{Summary: "owner-private-preference"}}},
+	}
+	for index, handoff := range cases {
+		if !handoffContainsPrivateMemory(handoff, memory) {
+			t.Fatalf("case %d did not detect private Employee Memory", index)
+		}
+	}
+	if handoffContainsPrivateMemory(team.Handoff{Summary: "public bounded result"}, memory) {
+		t.Fatal("public handoff was incorrectly rejected")
 	}
 }

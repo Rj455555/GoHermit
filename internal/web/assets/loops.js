@@ -8,6 +8,7 @@ let loopSessionState = null;
 let loopEventStream = null;
 let loopRuntimeEvents = [];
 let loopTeamTemplate = null;
+let loopEmployees = [];
 
 const terminalInvocationStatuses = new Set(['completed', 'skipped', 'blocked', 'failed', 'cancelled']);
 const loopEventTypes = [
@@ -442,7 +443,8 @@ function renderDryRunReport() {
       card.className = 'role-preview';
       card.innerHTML = '<strong></strong><span></span>';
       card.querySelector('strong').textContent = role.role || 'Agent';
-      card.querySelector('span').textContent = `${role.model} · ${role.credential_configured ? 'ready' : 'missing credential'}`;
+      const employee = role.employee_id ? ` · ${role.employee_id} r${role.employee_revision || '?'}` : '';
+      card.querySelector('span').textContent = `${role.model || 'unresolved model'}${employee} · ${role.credential_configured ? 'ready' : (role.detail || 'not ready')}`;
       roles.append(card);
     }
     root.append(roles);
@@ -702,17 +704,97 @@ async function renderTeamRolePreview() {
       loopTeamTemplate = {};
     }
   }
+  if (!loopEmployees.length) {
+    try {
+      const page = await request('/api/employees?limit=100&state=active');
+      loopEmployees = page.employees || [];
+    } catch (_) {
+      loopEmployees = [];
+    }
+  }
   const roles = ['explorer', 'builder', 'reviewer', 'verifier', 'lead'];
   const fallback = loopTeamTemplate.default || collectLoopDefinition().agent_selection;
   for (const role of roles) {
     const selection = (loopTeamTemplate.roles && loopTeamTemplate.roles[role]) || fallback;
     const card = document.createElement('div');
     card.className = 'role-preview';
-    card.innerHTML = '<strong></strong><span></span>';
+    card.innerHTML = '<strong></strong><span></span><label>Employee<select data-testid="team-role-employee"><option value="">No Employee (legacy Role)</option></select></label><label class="check-required"><input type="checkbox" data-testid="team-role-default-model"><span>Use Employee default model</span></label><small></small>';
     card.querySelector('strong').textContent = roleLabel(role);
-    card.querySelector('span').textContent = selection && selection.model ? `${selection.model} · ${selection.access || ''}` : 'uses loop selection';
+    const employee = loopEmployees.find(item => item.id === (selection && selection.employee_id));
+    card.querySelector('span').textContent = selection && selection.model
+      ? `${selection.model} · ${selection.access || ''}${selection.employee_id ? ' · Mission override' : ''}`
+      : (selection && selection.employee_id ? 'Employee default model' : 'uses loop selection');
+    const select = card.querySelector('select');
+    for (const item of loopEmployees) {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = `${item.name} · r${item.revision} · ${item.state}`;
+      select.append(option);
+    }
+    if (selection && selection.employee_id && !employee) {
+      const stale = document.createElement('option');
+      stale.value = selection.employee_id;
+      stale.textContent = `${selection.employee_id} · unavailable`;
+      select.append(stale);
+    }
+    select.value = (selection && selection.employee_id) || '';
+    const defaultModel = card.querySelector('input');
+    defaultModel.checked = Boolean(selection && selection.employee_id && !selection.model);
+    defaultModel.disabled = !select.value;
+    card.querySelector('small').textContent = employee
+      ? `Pinned at Mission preflight: ${employee.id} r${employee.revision}. Run Dry Run for live readiness.`
+      : (selection && selection.employee_id ? 'Employee is unavailable; preflight will fail closed.' : 'Legacy RoleSelection behavior is unchanged.');
+    const save = () => saveTeamRoleEmployee(role, select.value, defaultModel.checked).catch(error => {
+      toast(error.message || String(error));
+    });
+    select.addEventListener('change', () => {
+      defaultModel.disabled = !select.value;
+      save();
+    });
+    defaultModel.addEventListener('change', save);
     root.append(card);
   }
+}
+
+async function saveTeamRoleEmployee(role, employeeID, useEmployeeDefault) {
+  const next = structuredClone(loopTeamTemplate || {});
+  next.schema_version = 2;
+  next.name = next.name || 'default';
+  next.default = next.default || {
+    company: $('#loop-company').value,
+    access: $('#loop-access').value,
+    model: $('#loop-model').value,
+  };
+  next.roles = next.roles || {};
+  const current = structuredClone(next.roles[role] || next.default);
+  if (employeeID) {
+    current.employee_id = employeeID;
+    if (useEmployeeDefault) {
+      current.company = '';
+      current.access = '';
+      current.model = '';
+    } else if (!current.model) {
+      current.company = next.default.company || $('#loop-company').value;
+      current.access = next.default.access || $('#loop-access').value;
+      current.model = next.default.model || $('#loop-model').value;
+    }
+  } else {
+    delete current.employee_id;
+    if (!current.model) {
+      current.company = next.default.company || $('#loop-company').value;
+      current.access = next.default.access || $('#loop-access').value;
+      current.model = next.default.model || $('#loop-model').value;
+    }
+  }
+  next.roles[role] = current;
+  await request('/api/team-template/import', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(next),
+  });
+  loopTeamTemplate = next;
+  toast(employeeID ? `${roleLabel(role)} assigned to ${employeeID}` : `${roleLabel(role)} restored to legacy Role selection`);
+  await renderTeamRolePreview();
 }
 
 function renderLoopDashboard() {

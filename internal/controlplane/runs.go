@@ -203,6 +203,20 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 	if err != nil {
 		return "", err
 	}
+	// Resolve every Team Employee before creating or changing a Run. A
+	// resumed Mission restores its already pinned hidden Worker snapshots;
+	// a new Mission resolves the current Employee stores exactly once.
+	var teamPlan *teamRolePlan
+	if selection.Agent == "team" {
+		if sess.Mission != nil && len(sess.Mission.EmployeeAssignments) > 0 {
+			teamPlan, err = s.restoreTeamEmployeePlan(context.Background(), sess)
+		} else {
+			teamPlan, err = s.resolveTeamRolePlan(context.Background(), selection)
+		}
+		if err != nil {
+			return "", err
+		}
+	}
 	apiKey, err := s.resolveCredential(context.Background(), selection)
 	if err != nil {
 		return "", err
@@ -253,14 +267,8 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 	}
 	if selection.Agent == "team" && (sess.Mission == nil || sess.Mission.RunID != run.ID) {
 		budget := team.DefaultBudget()
-		rolePlan, planErr := s.resolveTeamRolePlan(context.Background(), selection)
-		if planErr != nil {
-			s.active.Store(false)
-			s.runMu.Unlock()
-			return "", planErr
-		}
-		if rolePlan != nil && len(rolePlan.roleLimits) > 0 {
-			budget.RoleLimits = rolePlan.roleLimits
+		if teamPlan != nil && len(teamPlan.roleLimits) > 0 {
+			budget.RoleLimits = teamPlan.roleLimits
 		}
 		mission, missionErr := team.AdaptiveMission("mission-"+run.ID, run.ID, run.Message, budget)
 		if missionErr != nil {
@@ -269,6 +277,11 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 			return "", missionErr
 		}
 		sess.Mission = mission
+		if materializeErr := s.materializeTeamEmployeeAssignments(context.Background(), sess, teamPlan); materializeErr != nil {
+			s.active.Store(false)
+			s.runMu.Unlock()
+			return "", materializeErr
+		}
 	}
 	var createdPlanEvent event.Event
 	if run.Plan == nil {
@@ -325,7 +338,7 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 			s.approvals.Release(sess.ID)
 		}()
 		if selection.Agent == "team" {
-			s.runTeam(runCtx, sess, runID, selection, apiKey, liveModels)
+			s.runTeam(runCtx, sess, runID, selection, apiKey, liveModels, teamPlan)
 			return
 		}
 		var runtime *app.Runtime
