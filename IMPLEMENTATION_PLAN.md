@@ -14,11 +14,11 @@
   `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`.
 - Phase 6: `OWNER_APPROVED`; squash-merged through PR #39 into
   `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`.
-- Phase 7: `COMPLETE_WAITING_FOR_OWNER` on clean branch
+- Phase 7: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
   `agent/electronic-employees-v0.7-phase7`.
 - Phase 8 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_7_APPROVAL`.
+  `WAITING_FOR_PHASE_7_REAPPROVAL`.
 
 ### Fixed invariants
 
@@ -67,7 +67,7 @@
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` |
 | 6 | Runtime Preparation | `OWNER_APPROVED` |
-| 7 | Manual Execution Lifecycle | `COMPLETE_WAITING_FOR_OWNER` |
+| 7 | Manual Execution Lifecycle | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
@@ -122,15 +122,15 @@ for example:
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_7_APPROVAL
+STATUS: WAITING_FOR_PHASE_7_REAPPROVAL
 ```
 
 ---
 
-Plan status: `PHASE_7_COMPLETE_WAITING_FOR_OWNER`
+Plan status: `PHASE_7_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
 Baseline: `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`
 Feature branch: `agent/electronic-employees-v0.7-phase7`
-Last audited: 2026-07-28
+Last audited: 2026-07-29
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
@@ -1152,7 +1152,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` | PR #38 squash-merged as `ad31d633`; full Phase 5 is in `origin/main` |
 | 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
-| 7 | Manual Execution Lifecycle | `COMPLETE_WAITING_FOR_OWNER` | Implementation `a67c5eb` on clean branch `agent/electronic-employees-v0.7-phase7` from `origin/main@f213ac19` |
+| 7 | Manual Execution Lifecycle | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `a67c5eb`; Recovery Gate `7d265bd` on clean branch `agent/electronic-employees-v0.7-phase7` from `origin/main@f213ac19` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` | Not started |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
@@ -2185,7 +2185,7 @@ Final Phase 6 Gate revision evidence (2026-07-28):
 
 ### Phase 7: Manual Execution Lifecycle
 
-Status: `COMPLETE_WAITING_FOR_OWNER`. Phase 8 through Phase 10 remain
+Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 8 through Phase 10 remain
 `BLOCKED_BY_GATE`.
 
 Independent value:
@@ -2369,6 +2369,95 @@ Phase 7 implementation evidence (2026-07-28):
   `origin/main@f213ac19`; Draft PR
   [#40](https://github.com/Rj455555/GoHermit/pull/40) remains Open, Draft,
   unmerged, and without auto-merge. Phase 8 has not started.
+
+Phase 7 Recovery Gate evidence (2026-07-29):
+
+- Recovery Gate implementation/test commit:
+  `7d265bd` (`fix(phase7): harden interrupted tool recovery evidence`).
+- Root causes:
+  - `toolCallDigest` compacted raw JSON without structurally normalizing object
+    keys, strings, or numbers, so a semantically identical provider retry
+    could receive a different digest and replay a completed side effect.
+  - recovery collected every completed ToolRecord for the Run, so a matching
+    call from an earlier Turn could suppress a legitimate new call.
+  - ToolRecord fields had become recovery authority without common
+    fail-closed validation at Save, Load, Recover, and commit-journal apply.
+- Canonical argument digest:
+  - accepts exactly one valid UTF-8 JSON value, capped at 64 KiB and 64 nesting
+    levels;
+  - rejects trailing/multiple values, duplicate object keys, invalid UTF-8,
+    isolated-surrogate replacement, invalid JSON, and oversized input;
+  - recursively normalizes object order, whitespace, string escapes, and exact
+    decimal-number representation without float precision loss;
+  - hashes only `tool name + NUL + canonical JSON` and persists only canonical
+    lowercase SHA-256, never raw arguments.
+- Recovery frontier:
+  - every new ToolRecord stores the exact Run ID and Turn;
+  - semantic digest matching collects only completed records whose Turn equals
+    the interrupted Run's persisted `EndTurn`;
+  - each matching completed record is counted and consumed at most once;
+  - earlier Turns and `started`/`uncertain` records cannot enter the digest
+    pool, so uncertain reality still requires inspection and replanning;
+  - legacy no-digest records never participate in semantic matching and may
+    suppress only the exact tool-name/provider-Call-ID identity.
+- ToolRecord fail-closed contract:
+  - maximum 500 records; Call ID maximum 256 bytes; tool name maximum 128
+    bytes;
+  - Run ID must resolve within the same Session; Call IDs are unique per Run;
+  - non-empty digest is exactly 64 lowercase hexadecimal characters and
+    requires a valid Turn within Session and Run boundaries;
+  - lifecycle status is only `started`, `completed`, or `uncertain`;
+    `started_at`, `completed_at`, and record time must form a valid ordering;
+  - pre-Phase-7 records with empty status remain readable, while a completed
+    no-digest compatibility record may use exact Call ID only;
+  - the same validator runs before Save/CommitEvents, after strict Load
+    migration, during Recover, before recovered journal application, and
+    inside direct journal apply. Corruption fails before any tool execution.
+- No Session schema bump was needed. `ToolRecord.turn` is an additive schema-v6
+  field; existing schema-v1 through schema-v6 migration remains one-way and
+  legacy records retain their exact-ID-only compatibility boundary.
+- Added/expanded tests:
+  - `TestToolCallDigestCanonicalizesJSON`;
+  - `TestToolCallDigestRejectsAmbiguousOrUnboundedJSON`;
+  - `TestInvalidToolArgumentsNeverExecute`;
+  - `TestInterruptedRunDoesNotReplayCompletedToolCall`;
+  - `TestRecoveryCanonicalDigestIgnoresWhitespaceAndEquivalentEscapes`;
+  - `TestRecoveryExecutesGenuinelyDifferentArguments`;
+  - `TestRecoveryDoesNotConsumeMatchingCallFromEarlierTurn`;
+  - `TestRecoveryNeverSuppressesStartedOrUncertainCall`;
+  - `TestRecoveryConsumesEachFrontierCompletionOnce`;
+  - `TestRecoveryCountsMultipleFrontierCompletions`;
+  - `TestRecoveryLegacyRecordUsesExactCallIDOnly`;
+  - `TestCorruptToolRecordPreventsRecoveryBeforeToolExecution`;
+  - `TestToolRecordValidationRejectsUnsafeRecoveryEvidence`;
+  - `TestToolRecordCorruptionMakesLoadAndRecoverFailClosed`;
+  - `TestCommitJournalApplyRejectsCorruptToolRecord`;
+  - `TestApplyJournalValidatesToolRecordBeforeWritingCheckpoint`;
+  - `TestLegacyToolRecordWithoutDigestRoundTrips`.
+- Local verification:
+  - PASS `go test ./internal/agent ./internal/session ./internal/controlplane -count=1`;
+  - PASS the same scoped packages with `-race -count=1`;
+  - PASS `go test ./... -count=1` and `go test -race ./... -count=1`;
+  - PASS `go vet ./...`, both required CLI/Web builds, `gofmt`, and
+    `git diff --check`;
+  - PASS credential-shaped secret scan and independent Ruby/Psych
+    `compose.yaml` parse;
+  - focused package coverage: Agent 77.0%, Session 74.4%.
+- GitHub implementation-head CI:
+  - push workflow
+    [30377838145](https://github.com/Rj455555/GoHermit/actions/runs/30377838145):
+    Go, Docker, and Web E2E PASS;
+  - PR workflow
+    [30377841927](https://github.com/Rj455555/GoHermit/actions/runs/30377841927):
+    Go, Docker, and Web E2E PASS;
+  - `live-smoke` skipped by workflow design.
+- Remaining accepted risk: no-digest legacy records cannot support semantic
+  argument comparison; compatibility therefore depends on the provider's
+  exact Call ID identity. They never enter the new digest frontier. All new
+  records carry both canonical digest and Turn.
+- The exact final review Head and final evidence-head CI are recorded in PR
+  #40 after the single plan-evidence commit is pushed, avoiding an infinite
+  self-referential evidence chain. Phase 8 remains completely unstarted.
 
 ### Phase 8: Employees and Tasks Web UI
 
@@ -2614,4 +2703,4 @@ is authorized until the Owner explicitly approves Phase 7, for example:
 批准 Phase 7，开始 Phase 8
 ```
 
-STATUS: WAITING_FOR_PHASE_7_APPROVAL
+STATUS: WAITING_FOR_PHASE_7_REAPPROVAL
