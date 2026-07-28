@@ -8,11 +8,13 @@
 - Phase 1: Owner-approved on 2026-07-28.
 - Phase 2: Owner-approved on 2026-07-28 after both security Gate revisions.
 - Phase 3: `OWNER_APPROVED`; squash-merged through PR #36.
-- Phase 4: Final UTF-8 Gate revision implemented and locally verified on the
-  clean Phase 4 branch; `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`.
-- Phase 5 and every later product-code change remain blocked.
+- Phase 4: `OWNER_APPROVED`; externally squash-merged through PR #37 into
+  `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`.
+- Phase 5: `IN_PROGRESS` on clean branch
+  `agent/electronic-employees-v0.7-phase5`.
+- Phase 6 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_4_REAPPROVAL`.
+  `WAITING_FOR_PHASE_5_APPROVAL`.
 
 ### Fixed invariants
 
@@ -58,8 +60,8 @@
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `OWNER_APPROVED` |
-| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` |
+| 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` |
+| 5 | Employee Task Inbox persistence and API | `IN_PROGRESS` |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
@@ -68,19 +70,20 @@
 
 ### Current phase scope
 
-- Phases 1 through 3 are Owner-approved and closed to further implementation.
-- Review only the clean Phase 4 branch, persisted Knowledge integrity chain,
-  bounded UTF-8-safe JSON handling, canonical provenance ordering, isolation,
-  complete validation, and Draft PR #37.
-- Keep Phase 5 and all later phases blocked until the next explicit Owner Gate.
+- Phases 1 through 4 are Owner-approved and closed to further implementation.
+- Implement only the durable Employee Task Inbox: immutable queued/cancelled
+  snapshots, safe persistence, stable pagination, bounded Activity references,
+  and CRUD/cancel APIs with zero execution side effects.
+- Keep Phase 6 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No EmployeeTask, Session schema v6, Task Runtime, UI, Team Role Mapping,
-  version, or release change.
-- No Phase 5 implementation.
-- No merge, auto-merge, force push, or additional product-code change after
-  the Phase 4 Gate closeout.
+- No prepared/running/completed Task state, Session schema v6, Task Runtime,
+  model/provider/tool call, workspace lease, UI, Team Role Mapping, version,
+  or release change.
+- No Phase 6 implementation.
+- No PR until Phase 5 implementation, local verification, push, and push CI
+  are complete; no merge, auto-merge, or force push.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -89,8 +92,8 @@
 ```bash
 git branch --show-current
 git status --short
-go test ./internal/knowledge ./internal/employeememory ./internal/employeestore ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
-go test ./internal/tool/builtin ./internal/contextmgr -count=1
+go test ./internal/employee ./internal/employeestore ./internal/controlplane ./internal/web -count=1
+go test ./internal/loop ./internal/loopstore ./internal/session -count=1
 go test ./... -count=1
 go test -race ./... -count=1
 go vet ./...
@@ -101,17 +104,17 @@ git diff --check
 
 ### Next Gate
 
-Phase 5 may start only after the Owner explicitly reapproves Phase 4,
+Phase 6 may start only after the Owner explicitly approves Phase 5,
 for example:
 
 ```text
-批准 Phase 4 Gate 修订，开始 Phase 5
+批准 Phase 5，开始 Phase 6
 ```
 
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_4_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_5_APPROVAL
 ```
 
 ---
@@ -1135,8 +1138,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
-| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `f5d24b0`; Gate fix `75ee1a3`; final UTF-8 fix `c7c7c25`; Draft PR #37 |
-| 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
+| 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
+| 5 | Employee Task Inbox persistence and API | `IN_PROGRESS` | Clean branch `agent/electronic-employees-v0.7-phase5` from `origin/main@e65bc119` |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
@@ -1723,6 +1726,18 @@ EXPECTED SKIP live-smoke jobs
   Phase 4 only validates the complete bounded provenance tuple.
 
 ### Phase 5: Employee Task Inbox persistence and API
+
+Gate start evidence:
+
+- Phase 4 was Owner-approved after its final UTF-8 Gate and externally
+  squash-merged through PR #37.
+- Fixed base:
+  `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`.
+- Clean Phase 5 branch:
+  `agent/electronic-employees-v0.7-phase5`, created directly from that base.
+- No Phase 4 implementation, Gate, or plan-only commit was cherry-picked.
+- A new Draft PR may be created only after Phase 5 implementation, local
+  verification, final push, and green push CI.
 
 Independent value:
 
