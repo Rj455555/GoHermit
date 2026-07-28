@@ -132,7 +132,11 @@ func NewStore(root string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve employee store path: %w", err)
 	}
-	return &Store{root: filepath.Clean(absolute)}, nil
+	canonical, err := canonicalStoreRoot(filepath.Clean(absolute))
+	if err != nil {
+		return nil, fmt.Errorf("resolve employee store real path: %w", err)
+	}
+	return &Store{root: canonical}, nil
 }
 
 func (s *Store) Create(draft employee.Employee, bindingDrafts []employee.ProjectBinding) (Record, error) {
@@ -180,10 +184,16 @@ func (s *Store) Create(draft employee.Employee, bindingDrafts []employee.Project
 func (s *Store) Get(id string) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := validateStoreID(id); err != nil {
+		return Record{}, err
+	}
 	return s.getLocked(id)
 }
 
 func (s *Store) getLocked(id string) (Record, error) {
+	if err := validateStoreID(id); err != nil {
+		return Record{}, err
+	}
 	index, err := s.loadIndex()
 	if err != nil {
 		return Record{}, err
@@ -192,26 +202,7 @@ func (s *Store) getLocked(id string) (Record, error) {
 	if position < 0 {
 		return Record{}, ErrNotFound
 	}
-	var current employee.Employee
-	if err := decodeFileStrict(filepath.Join(s.root, id, "employee.json"), MaxStoreFileBytes, &current); err != nil {
-		return Record{}, fmt.Errorf("%w: load employee %q: %v", ErrCorrupt, id, err)
-	}
-	var projects projectsFile
-	if err := decodeFileStrict(filepath.Join(s.root, id, "projects.json"), MaxStoreFileBytes, &projects); err != nil {
-		return Record{}, fmt.Errorf("%w: load employee projects %q: %v", ErrCorrupt, id, err)
-	}
-	if projects.SchemaVersion != StoreSchemaVersion {
-		return Record{}, fmt.Errorf("%w: unsupported employee projects schema version %d", ErrCorrupt, projects.SchemaVersion)
-	}
-	record := Record{Employee: current, ProjectBindings: projects.Bindings}
-	if err := validateRecord(record); err != nil {
-		return Record{}, fmt.Errorf("%w: employee %q: %v", ErrCorrupt, id, err)
-	}
-	summary := summarize(record)
-	if summary != index.Employees[position] {
-		return Record{}, fmt.Errorf("%w: employee index and record disagree", ErrCorrupt)
-	}
-	return record, nil
+	return s.loadIndexedRecord(index.Employees[position])
 }
 
 func (s *Store) Update(id string, expectedRevision int, proposed employee.Employee, bindingDrafts []employee.ProjectBinding) (Record, error) {
@@ -256,6 +247,9 @@ func (s *Store) Archive(id string, expectedRevision int) (Record, error) {
 func (s *Store) change(id string, expected int, activityType ActivityType, mutate func(Record, time.Time) (Record, error)) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := validateStoreID(id); err != nil {
+		return Record{}, err
+	}
 	current, err := s.getLockedWithoutMutex(id)
 	if err != nil {
 		return Record{}, err
@@ -292,6 +286,9 @@ func (s *Store) change(id string, expected int, activityType ActivityType, mutat
 }
 
 func (s *Store) getLockedWithoutMutex(id string) (Record, error) {
+	if err := validateStoreID(id); err != nil {
+		return Record{}, err
+	}
 	index, err := s.loadIndex()
 	if err != nil {
 		return Record{}, err
@@ -300,25 +297,7 @@ func (s *Store) getLockedWithoutMutex(id string) (Record, error) {
 	if position < 0 {
 		return Record{}, ErrNotFound
 	}
-	var current employee.Employee
-	if err := decodeFileStrict(filepath.Join(s.root, id, "employee.json"), MaxStoreFileBytes, &current); err != nil {
-		return Record{}, fmt.Errorf("%w: load employee %q: %v", ErrCorrupt, id, err)
-	}
-	var projects projectsFile
-	if err := decodeFileStrict(filepath.Join(s.root, id, "projects.json"), MaxStoreFileBytes, &projects); err != nil {
-		return Record{}, fmt.Errorf("%w: load employee projects %q: %v", ErrCorrupt, id, err)
-	}
-	if projects.SchemaVersion != StoreSchemaVersion {
-		return Record{}, fmt.Errorf("%w: unsupported employee projects schema", ErrCorrupt)
-	}
-	record := Record{Employee: current, ProjectBindings: projects.Bindings}
-	if err := validateRecord(record); err != nil {
-		return Record{}, fmt.Errorf("%w: employee %q: %v", ErrCorrupt, id, err)
-	}
-	if summarize(record) != index.Employees[position] {
-		return Record{}, fmt.Errorf("%w: employee index and record disagree", ErrCorrupt)
-	}
-	return record, nil
+	return s.loadIndexedRecord(index.Employees[position])
 }
 
 func (s *Store) List(options ListOptions) (Page, error) {
@@ -381,21 +360,11 @@ func (s *Store) LoadRevision(id string, revision int) (employee.RevisionSnapshot
 		return employee.RevisionSnapshot{}, ErrNotFound
 	}
 	var snapshot employee.RevisionSnapshot
-	path := filepath.Join(s.root, id, "revisions", strconv.Itoa(revision)+".json")
-	if err := ensureContained(s.root, path); err != nil {
-		return employee.RevisionSnapshot{}, err
-	}
-	if err := ensureResolvedContained(s.root, path); err != nil {
+	if err := s.decodeFileStrict(employee.MaxSnapshotBytes, &snapshot, id, "revisions", strconv.Itoa(revision)+".json"); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return employee.RevisionSnapshot{}, ErrNotFound
 		}
-		return employee.RevisionSnapshot{}, err
-	}
-	if err := decodeFileStrict(path, employee.MaxSnapshotBytes, &snapshot); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return employee.RevisionSnapshot{}, ErrNotFound
-		}
-		return employee.RevisionSnapshot{}, err
+		return employee.RevisionSnapshot{}, fmt.Errorf("%w: load employee revision: %v", ErrCorrupt, err)
 	}
 	if err := employee.ValidateRevisionSnapshot(snapshot); err != nil {
 		return employee.RevisionSnapshot{}, err
@@ -406,9 +375,77 @@ func (s *Store) LoadRevision(id string, revision int) (employee.RevisionSnapshot
 	return snapshot, nil
 }
 
+func (s *Store) loadIndexedRecord(expected Summary) (Record, error) {
+	if err := validateStoreID(expected.ID); err != nil {
+		return Record{}, fmt.Errorf("%w: employee index contains invalid id %q: %v", ErrCorrupt, expected.ID, err)
+	}
+	if err := s.validateEmployeeLayout(expected.ID); err != nil {
+		return Record{}, fmt.Errorf("%w: employee %q layout: %v", ErrCorrupt, expected.ID, err)
+	}
+	var current employee.Employee
+	if err := s.decodeFileStrict(MaxStoreFileBytes, &current, expected.ID, "employee.json"); err != nil {
+		return Record{}, fmt.Errorf("%w: load employee %q: %v", ErrCorrupt, expected.ID, err)
+	}
+	var projects projectsFile
+	if err := s.decodeFileStrict(MaxStoreFileBytes, &projects, expected.ID, "projects.json"); err != nil {
+		return Record{}, fmt.Errorf("%w: load employee projects %q: %v", ErrCorrupt, expected.ID, err)
+	}
+	if projects.SchemaVersion != StoreSchemaVersion {
+		return Record{}, fmt.Errorf("%w: unsupported employee projects schema version %d", ErrCorrupt, projects.SchemaVersion)
+	}
+	record := Record{Employee: current, ProjectBindings: projects.Bindings}
+	if err := validateRecord(record); err != nil {
+		return Record{}, fmt.Errorf("%w: employee %q: %v", ErrCorrupt, expected.ID, err)
+	}
+	if summarize(record) != expected {
+		return Record{}, fmt.Errorf("%w: employee index and record disagree", ErrCorrupt)
+	}
+	return record, nil
+}
+
+func (s *Store) validateEmployeeLayout(id string) error {
+	if err := validateStoreID(id); err != nil {
+		return err
+	}
+	if err := s.requireDirectory(id); err != nil {
+		return err
+	}
+	if _, err := s.safeFileInfo(id, "employee.json"); err != nil {
+		return err
+	}
+	if _, err := s.safeFileInfo(id, "projects.json"); err != nil {
+		return err
+	}
+	if err := s.requireDirectory(id, "activity"); err != nil {
+		return err
+	}
+	if _, err := s.safeFileInfo(id, "activity", "events.jsonl"); err != nil {
+		return err
+	}
+	if err := s.requireDirectory(id, "revisions"); err != nil {
+		return err
+	}
+	entries, err := s.readDirectory(id, "revisions")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			return errors.New("employee revision entry is not a regular file")
+		}
+		if _, err := s.safeFileInfo(id, "revisions", entry.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) Activity(id string, options ListOptions) (ActivityPage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := validateStoreID(id); err != nil {
+		return ActivityPage{}, err
+	}
 	if _, err := s.getLockedWithoutMutex(id); err != nil {
 		return ActivityPage{}, err
 	}
@@ -446,6 +483,9 @@ func (s *Store) Activity(id string, options ListOptions) (ActivityPage, error) {
 func (s *Store) RecordActivity(event ActivityEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := validateStoreID(event.EmployeeID); err != nil {
+		return err
+	}
 	if event.ID != "" {
 		return errors.New("employee activity id is store-assigned")
 	}
@@ -459,23 +499,21 @@ func (s *Store) persistRecord(record Record, updating bool) error {
 	if err := validateRecord(record); err != nil {
 		return err
 	}
+	if err := validateStoreID(record.Employee.ID); err != nil {
+		return err
+	}
 	snapshot, err := employee.NewRevisionSnapshot(record.Employee, record.ProjectBindings)
 	if err != nil {
 		return err
 	}
-	revisionPath := filepath.Join(s.root, record.Employee.ID, "revisions", strconv.Itoa(record.Employee.Revision)+".json")
-	if _, err := os.Stat(revisionPath); err == nil {
-		return errors.New("immutable employee revision already exists")
-	} else if !errors.Is(err, os.ErrNotExist) {
+	revisionName := strconv.Itoa(record.Employee.Revision) + ".json"
+	if err := s.writeJSONExclusive(snapshot, employee.MaxSnapshotBytes, record.Employee.ID, "revisions", revisionName); err != nil {
 		return err
 	}
-	if err := writeJSON(revisionPath, snapshot, employee.MaxSnapshotBytes); err != nil {
+	if err := s.writeJSON(projectsFile{StoreSchemaVersion, record.ProjectBindings}, MaxStoreFileBytes, record.Employee.ID, "projects.json"); err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(s.root, record.Employee.ID, "projects.json"), projectsFile{StoreSchemaVersion, record.ProjectBindings}, MaxStoreFileBytes); err != nil {
-		return err
-	}
-	if err := writeJSON(filepath.Join(s.root, record.Employee.ID, "employee.json"), record.Employee, MaxStoreFileBytes); err != nil {
+	if err := s.writeJSON(record.Employee, MaxStoreFileBytes, record.Employee.ID, "employee.json"); err != nil {
 		return err
 	}
 	_ = updating
@@ -484,7 +522,7 @@ func (s *Store) persistRecord(record Record, updating bool) error {
 
 func (s *Store) loadIndex() (indexFile, error) {
 	var index indexFile
-	err := decodeFileStrict(filepath.Join(s.root, "index.json"), MaxStoreFileBytes, &index)
+	err := s.decodeFileStrict(MaxStoreFileBytes, &index, "index.json")
 	if errors.Is(err, os.ErrNotExist) {
 		return indexFile{SchemaVersion: StoreSchemaVersion, Employees: []Summary{}}, nil
 	}
@@ -498,6 +536,9 @@ func (s *Store) loadIndex() (indexFile, error) {
 		return indexFile{}, fmt.Errorf("%w: employee index exceeds record limit", ErrCorrupt)
 	}
 	for i, summary := range index.Employees {
+		if err := validateStoreID(summary.ID); err != nil {
+			return indexFile{}, fmt.Errorf("%w: employee index contains invalid id %q: %v", ErrCorrupt, summary.ID, err)
+		}
 		if summary.ID == "" || summary.Revision < 1 || summary.Name == "" || summary.UpdatedAt.IsZero() {
 			return indexFile{}, fmt.Errorf("%w: employee index contains invalid summary", ErrCorrupt)
 		}
@@ -513,23 +554,8 @@ func (s *Store) loadIndex() (indexFile, error) {
 
 func (s *Store) validateIndexedRecords(index indexFile) error {
 	for _, expected := range index.Employees {
-		var current employee.Employee
-		if err := decodeFileStrict(filepath.Join(s.root, expected.ID, "employee.json"), MaxStoreFileBytes, &current); err != nil {
-			return fmt.Errorf("%w: load employee %q: %v", ErrCorrupt, expected.ID, err)
-		}
-		var projects projectsFile
-		if err := decodeFileStrict(filepath.Join(s.root, expected.ID, "projects.json"), MaxStoreFileBytes, &projects); err != nil {
-			return fmt.Errorf("%w: load employee projects %q: %v", ErrCorrupt, expected.ID, err)
-		}
-		if projects.SchemaVersion != StoreSchemaVersion {
-			return fmt.Errorf("%w: unsupported employee projects schema version %d", ErrCorrupt, projects.SchemaVersion)
-		}
-		record := Record{Employee: current, ProjectBindings: projects.Bindings}
-		if err := validateRecord(record); err != nil {
-			return fmt.Errorf("%w: employee %q: %v", ErrCorrupt, expected.ID, err)
-		}
-		if summarize(record) != expected {
-			return fmt.Errorf("%w: employee index and record disagree", ErrCorrupt)
+		if _, err := s.loadIndexedRecord(expected); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -538,12 +564,14 @@ func (s *Store) validateIndexedRecords(index indexFile) error {
 func (s *Store) saveIndex(index indexFile) error {
 	index.SchemaVersion = StoreSchemaVersion
 	sortSummaries(index.Employees)
-	return writeJSON(filepath.Join(s.root, "index.json"), index, MaxStoreFileBytes)
+	return s.writeJSON(index, MaxStoreFileBytes, "index.json")
 }
 
 func (s *Store) loadActivity(id string) ([]ActivityEvent, error) {
-	path := filepath.Join(s.root, id, "activity", "events.jsonl")
-	raw, err := readBounded(path, MaxActivityFileBytes)
+	if err := validateStoreID(id); err != nil {
+		return nil, err
+	}
+	raw, err := s.readBounded(MaxActivityFileBytes, id, "activity", "events.jsonl")
 	if errors.Is(err, os.ErrNotExist) {
 		return []ActivityEvent{}, nil
 	}
@@ -629,7 +657,7 @@ func (s *Store) appendActivity(id string, event ActivityEvent) error {
 	if buffer.Len() > MaxActivityFileBytes {
 		return errors.New("employee activity exceeds file size limit")
 	}
-	return storage.AtomicWrite(filepath.Join(s.root, id, "activity", "events.jsonl"), buffer.Bytes(), 0o600)
+	return s.atomicWrite(buffer.Bytes(), id, "activity", "events.jsonl")
 }
 
 func validateRecord(record Record) error {
@@ -751,35 +779,149 @@ func decodeCursor(cursor string) (string, error) {
 	return string(raw), nil
 }
 
-func writeJSON(path string, value any, maximum int64) error {
-	raw, err := json.MarshalIndent(value, "", "  ")
+func (s *Store) writeJSON(value any, maximum int64, parts ...string) error {
+	raw, err := marshalBoundedJSON(value, maximum)
 	if err != nil {
 		return err
 	}
-	raw = append(raw, '\n')
-	if int64(len(raw)) > maximum {
-		return errors.New("employee store record exceeds size limit")
-	}
-	return storage.AtomicWrite(path, raw, 0o600)
+	return s.atomicWrite(raw, parts...)
 }
 
-func decodeFileStrict(path string, maximum int64, target any) error {
-	raw, err := readBounded(path, maximum)
+func (s *Store) writeJSONExclusive(value any, maximum int64, parts ...string) error {
+	raw, err := marshalBoundedJSON(value, maximum)
+	if err != nil {
+		return err
+	}
+	return s.atomicWriteExclusive(raw, parts...)
+}
+
+func marshalBoundedJSON(value any, maximum int64) ([]byte, error) {
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	raw = append(raw, '\n')
+	if int64(len(raw)) > maximum {
+		return nil, errors.New("employee store record exceeds size limit")
+	}
+	return raw, nil
+}
+
+func (s *Store) decodeFileStrict(maximum int64, target any, parts ...string) error {
+	raw, err := s.readBounded(maximum, parts...)
 	if err != nil {
 		return err
 	}
 	return decodeStrict(raw, target)
 }
 
-func readBounded(path string, maximum int64) ([]byte, error) {
-	info, err := os.Stat(path)
+func (s *Store) readBounded(maximum int64, parts ...string) ([]byte, error) {
+	path, info, err := s.safeFileInfoPath(parts...)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Size() > maximum {
-		return nil, errors.New("employee store file exceeds size limit or is not regular")
+	if info.Size() > maximum {
+		return nil, errors.New("employee store file exceeds size limit")
 	}
 	return os.ReadFile(path)
+}
+
+func (s *Store) safeFileInfo(parts ...string) (os.FileInfo, error) {
+	_, info, err := s.safeFileInfoPath(parts...)
+	return info, err
+}
+
+func (s *Store) safeFileInfoPath(parts ...string) (string, os.FileInfo, error) {
+	path, err := s.safeStorePath(parts...)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := walkSafeDirectories(filepath.Dir(path), false); err != nil {
+		return "", nil, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", nil, errors.New("employee store file must not be a symlink")
+	}
+	if !info.Mode().IsRegular() {
+		return "", nil, errors.New("employee store file is not regular")
+	}
+	return path, info, nil
+}
+
+func (s *Store) requireDirectory(parts ...string) error {
+	path, err := s.safeStorePath(parts...)
+	if err != nil {
+		return err
+	}
+	if err := walkSafeDirectories(filepath.Dir(path), false); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("employee store directory must not be a symlink")
+	}
+	if !info.IsDir() {
+		return errors.New("employee store path is not a directory")
+	}
+	return nil
+}
+
+func (s *Store) readDirectory(parts ...string) ([]os.DirEntry, error) {
+	if err := s.requireDirectory(parts...); err != nil {
+		return nil, err
+	}
+	path, err := s.safeStorePath(parts...)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadDir(path)
+}
+
+func (s *Store) atomicWrite(data []byte, parts ...string) error {
+	return s.atomicWriteMode(data, false, parts...)
+}
+
+func (s *Store) atomicWriteExclusive(data []byte, parts ...string) error {
+	return s.atomicWriteMode(data, true, parts...)
+}
+
+func (s *Store) atomicWriteMode(data []byte, exclusive bool, parts ...string) error {
+	path, err := s.safeStorePath(parts...)
+	if err != nil {
+		return err
+	}
+	if err := walkSafeDirectories(filepath.Dir(path), true); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil && info.Mode()&os.ModeSymlink != 0:
+		return errors.New("employee store write target must not be a symlink")
+	case err == nil && !info.Mode().IsRegular():
+		return errors.New("employee store write target is not regular")
+	case err == nil && exclusive:
+		return errors.New("immutable employee revision already exists")
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		return err
+	}
+	if err := storage.AtomicWrite(path, data, 0o600); err != nil {
+		return err
+	}
+	written, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if written.Mode()&os.ModeSymlink != 0 || !written.Mode().IsRegular() {
+		return errors.New("employee store atomic write produced an unsafe file")
+	}
+	return nil
 }
 
 func decodeStrict(raw []byte, target any) error {
@@ -855,22 +997,90 @@ func validateStoreID(id string) error {
 	return nil
 }
 
+func (s *Store) safeStorePath(parts ...string) (string, error) {
+	for _, part := range parts {
+		if part == "" || filepath.IsAbs(part) || filepath.Clean(part) != part ||
+			filepath.Base(part) != part || part == "." || part == ".." {
+			return "", errors.New("employee store path component is invalid")
+		}
+	}
+	path := filepath.Join(append([]string{s.root}, parts...)...)
+	if err := ensureContained(s.root, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func ensureContained(root, path string) error {
-	relative, err := filepath.Rel(root, path)
+	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
 		return errors.New("employee store path escapes root")
 	}
 	return nil
 }
 
-func ensureResolvedContained(root, path string) error {
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return err
+func canonicalStoreRoot(root string) (string, error) {
+	current := filepath.Clean(root)
+	var missing []string
+	for {
+		_, err := os.Lstat(current)
+		if err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			resolvedInfo, err := os.Stat(resolved)
+			if err != nil {
+				return "", err
+			}
+			if !resolvedInfo.IsDir() {
+				return "", errors.New("employee store root or existing parent is not a directory")
+			}
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", errors.New("employee store has no existing directory ancestor")
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
 	}
-	resolvedPath, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return err
+}
+
+func walkSafeDirectories(target string, create bool) error {
+	target = filepath.Clean(target)
+	var chain []string
+	for current := target; ; current = filepath.Dir(current) {
+		chain = append(chain, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
 	}
-	return ensureContained(resolvedRoot, resolvedPath)
+	for i := len(chain) - 1; i >= 0; i-- {
+		path := chain[i]
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) && create {
+			if err := os.Mkdir(path, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+				return err
+			}
+			info, err = os.Lstat(path)
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("employee store parent directory must not be a symlink")
+		}
+		if !info.IsDir() {
+			return errors.New("employee store parent path is not a directory")
+		}
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -109,10 +110,27 @@ func TestEmployeeErrorMapping(t *testing.T) {
 	if _, err := service.GetEmployee(context.Background(), "missing"); serviceErrorKind(err) != KindNotFound {
 		t.Fatalf("not found error = %v", err)
 	}
+	if _, err := service.GetEmployee(context.Background(), "../outside"); serviceErrorKind(err) != KindInvalid {
+		t.Fatalf("invalid id error = %v", err)
+	}
 	if _, err := store.Create(controlPlaneDraft("employee-a"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte(`{`), 0o600); err != nil {
+	indexPath := filepath.Join(root, "index.json")
+	var index map[string]any
+	raw, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &index); err != nil {
+		t.Fatal(err)
+	}
+	index["employees"].([]any)[0].(map[string]any)["id"] = "../outside"
+	raw, err = json.Marshal(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.GetEmployee(context.Background(), "employee-a"); serviceErrorKind(err) != KindInternal {

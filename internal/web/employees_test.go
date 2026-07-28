@@ -123,6 +123,10 @@ func TestEmployeeAPIStrictJSONAndSameOrigin(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("oversized request status = %d", recorder.Code)
 	}
+	response = requestJSON(t, handler, http.MethodGet, "/api/employees/bad%25id", nil, "")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid employee id status = %d: %s", response.Code, response.Body.String())
+	}
 }
 
 func TestEmployeeAPICorruptStoreMapsInternal(t *testing.T) {
@@ -135,7 +139,21 @@ func TestEmployeeAPICorruptStoreMapsInternal(t *testing.T) {
 	if response := requestJSON(t, handler, http.MethodPost, "/api/employees", input, ""); response.Code != http.StatusCreated {
 		t.Fatalf("create status = %d", response.Code)
 	}
-	if err := os.WriteFile(filepath.Join(state, "employees", "index.json"), []byte(`{`), 0o600); err != nil {
+	indexPath := filepath.Join(state, "employees", "index.json")
+	var index map[string]any
+	raw, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &index); err != nil {
+		t.Fatal(err)
+	}
+	index["employees"].([]any)[0].(map[string]any)["id"] = "../outside"
+	raw, err = json.Marshal(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	response := requestJSON(t, handler, http.MethodGet, "/api/employees/employee-corrupt", nil, "")
