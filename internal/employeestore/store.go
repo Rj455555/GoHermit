@@ -87,6 +87,8 @@ const (
 	ActivityMemoryEdited     ActivityType = "memory_edited"
 	ActivityMemoryForgotten  ActivityType = "memory_forgotten"
 	ActivityExecutionRef     ActivityType = "task_session_run_referenced"
+	ActivityTaskCreated      ActivityType = "task_created"
+	ActivityTaskCancelled    ActivityType = "task_cancelled"
 )
 
 // ActivityEvent is bounded audit/reference metadata, never execution truth.
@@ -693,6 +695,13 @@ func validateActivity(event ActivityEvent) error {
 	case ActivityExecutionRef:
 		if event.TaskID == "" {
 			return errors.New("employee execution reference requires task_id")
+		}
+	case ActivityTaskCreated, ActivityTaskCancelled:
+		if event.EmployeeRevision < 1 || event.TaskID == "" || event.SubjectID != "" || event.SessionID != "" || event.RunID != "" {
+			return errors.New("invalid Employee Task reference activity")
+		}
+		if err := validateStoreID(event.TaskID); err != nil {
+			return errors.New("invalid Employee Task activity Task id")
 		}
 	default:
 		return fmt.Errorf("unsupported employee activity type %q", event.Type)

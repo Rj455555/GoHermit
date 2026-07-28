@@ -8,11 +8,13 @@
 - Phase 1: Owner-approved on 2026-07-28.
 - Phase 2: Owner-approved on 2026-07-28 after both security Gate revisions.
 - Phase 3: `OWNER_APPROVED`; squash-merged through PR #36.
-- Phase 4: Final UTF-8 Gate revision implemented and locally verified on the
-  clean Phase 4 branch; `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`.
-- Phase 5 and every later product-code change remain blocked.
+- Phase 4: `OWNER_APPROVED`; externally squash-merged through PR #37 into
+  `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`.
+- Phase 5: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
+  `agent/electronic-employees-v0.7-phase5`.
+- Phase 6 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_4_REAPPROVAL`.
+  `WAITING_FOR_PHASE_5_REAPPROVAL`.
 
 ### Fixed invariants
 
@@ -58,8 +60,8 @@
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `OWNER_APPROVED` |
-| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` |
+| 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` |
+| 5 | Employee Task Inbox persistence and API | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
@@ -68,19 +70,20 @@
 
 ### Current phase scope
 
-- Phases 1 through 3 are Owner-approved and closed to further implementation.
-- Review only the clean Phase 4 branch, persisted Knowledge integrity chain,
-  bounded UTF-8-safe JSON handling, canonical provenance ordering, isolation,
-  complete validation, and Draft PR #37.
-- Keep Phase 5 and all later phases blocked until the next explicit Owner Gate.
+- Phases 1 through 4 are Owner-approved and closed to further implementation.
+- Revise only the Phase 5 immutable Task Snapshot Digest boundary. The digest
+  covers immutable Task business content and excludes lifecycle state,
+  timestamps, and future Session/Run execution bindings.
+- Keep Phase 6 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No EmployeeTask, Session schema v6, Task Runtime, UI, Team Role Mapping,
-  version, or release change.
-- No Phase 5 implementation.
-- No merge, auto-merge, force push, or additional product-code change after
-  the Phase 4 Gate closeout.
+- No prepared/running/completed Task state, Session schema v6, Task Runtime,
+  model/provider/tool call, workspace lease, UI, Team Role Mapping, version,
+  or release change.
+- No Phase 6 implementation.
+- Keep Draft PR #38 Open and Draft. No merge, auto-merge, force push, or
+  replacement PR.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -89,8 +92,8 @@
 ```bash
 git branch --show-current
 git status --short
-go test ./internal/knowledge ./internal/employeememory ./internal/employeestore ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
-go test ./internal/tool/builtin ./internal/contextmgr -count=1
+go test ./internal/employee ./internal/employeestore ./internal/controlplane ./internal/web -count=1
+go test ./internal/loop ./internal/loopstore ./internal/session -count=1
 go test ./... -count=1
 go test -race ./... -count=1
 go vet ./...
@@ -101,32 +104,32 @@ git diff --check
 
 ### Next Gate
 
-Phase 5 may start only after the Owner explicitly reapproves Phase 4,
+Phase 6 may start only after the Owner explicitly reapproves the Phase 5 Gate,
 for example:
 
 ```text
-批准 Phase 4 Gate 修订，开始 Phase 5
+批准 Phase 5，开始 Phase 6
 ```
 
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_4_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_5_REAPPROVAL
 ```
 
 ---
 
-Plan status: `WAITING_FOR_PHASE_4_REAPPROVAL`
-Baseline: `origin/main@d31bcf3b1d9eaf324721cc9004bcf8b9ea95c521`
-Feature branch: `agent/electronic-employees-v0.7-phase4`
+Plan status: `WAITING_FOR_PHASE_5_REAPPROVAL`
+Baseline: `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`
+Feature branch: `agent/electronic-employees-v0.7-phase5`
 Last audited: 2026-07-28
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phases 1 through
-3 are Owner-approved and the Phase 4 Gate revision is complete; Phase 5 must
-not start until the Owner explicitly reapproves Phase 4. Each Owner approval
-authorizes exactly one phase.
+4 are Owner-approved. Phase 5 implementation and Gate verification are
+complete and awaiting Owner approval; Phase 6 through Phase 10 remain blocked.
+Each Owner approval authorizes exactly one phase.
 
 ## 1. Current-state evidence
 
@@ -576,13 +579,16 @@ transaction:
 
 1. Persist `task.dispatch.json` with Task ID, stable pre-generated Session ID,
    full EmployeeTask snapshot digest, compact Session snapshot digest, and stage
-   `prepared`.
+   `prepared`. The full EmployeeTask snapshot digest always means the immutable
+   Task business-snapshot digest; it excludes Session/Run execution bindings.
 2. Create the schema-v6 Session with `EmployeeID`, `EmployeeTaskID`, revision,
    digest, and the compact snapshot (maximum 64 KiB), but no Run and no model
    call; update the journal to `session_created`.
 3. Phase 6 stops at this verifiable prepared state.
 4. Phase 7 explicit Start acquires leases, starts one existing Run, binds the
    returned Run ID, atomically updates the Task, and removes the journal.
+   Phase 6 Session binding and Phase 7 Run binding must never rewrite the
+   immutable EmployeeTask Snapshot Digest.
 5. On restart, reconciliation checks the stable Session ID:
    - absent Session at `prepared`: safely recreate it with the same ID;
    - present Session without Run: remain `prepared`; never auto-start;
@@ -1135,8 +1141,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
-| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `f5d24b0`; Gate fix `75ee1a3`; final UTF-8 fix `c7c7c25`; Draft PR #37 |
-| 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
+| 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
+| 5 | Employee Task Inbox persistence and API | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Gate `6fa05473`; evidence `9473c7c2`; Draft PR #38 |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
@@ -1724,6 +1730,18 @@ EXPECTED SKIP live-smoke jobs
 
 ### Phase 5: Employee Task Inbox persistence and API
 
+Gate start evidence:
+
+- Phase 4 was Owner-approved after its final UTF-8 Gate and externally
+  squash-merged through PR #37.
+- Fixed base:
+  `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`.
+- Clean Phase 5 branch:
+  `agent/electronic-employees-v0.7-phase5`, created directly from that base.
+- No Phase 4 implementation, Gate, or plan-only commit was cherry-picked.
+- A new Draft PR may be created only after Phase 5 implementation, local
+  verification, final push, and green push CI.
+
 Independent value:
 
 - Owners can queue, list, inspect, and cancel multiple pre-dispatch Tasks with
@@ -1759,6 +1777,178 @@ Exit: multiple queued Tasks, stable paging, snapshot immutability, queued cancel
 disabled/archive gates, and restart persistence pass; assertions prove zero
 Session/Run/model side effects.
 
+#### Phase 5 implementation and Gate evidence
+
+- Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 6 through Phase 10
+  remain `BLOCKED_BY_GATE`; Phase 6 has not started.
+- Implementation commit:
+  `ac01dce4c7bc49b2a196869b419230d9022fb500`
+  (`feat-phase5-employee-task-inbox`).
+- Evidence commit: `eac7ca13b622ad0311cbb77ee20cc5c883d5897d`.
+- Snapshot Digest Gate revision commit:
+  `6fa05473b602c2d6af962f0cf78b7876a1b23d3e`
+  (`fix(phase5): decouple task snapshot digest from execution bindings`).
+- Snapshot Digest Gate evidence commit:
+  `9473c7c26a3bc590f9adced03bd01771dc090150`
+  (`docs(plan): record phase 5 snapshot digest gate evidence`).
+- Review target:
+  Draft PR [#38](https://github.com/Rj455555/GoHermit/pull/38), base `main`,
+  head `agent/electronic-employees-v0.7-phase5`. Creation is deliberately the
+  final Gate action after the final document-only push CI is green; it must
+  remain Open, Draft, unmerged, and without auto-merge.
+- Actual product/test files:
+  - `internal/employee/task.go`;
+  - `internal/employee/task_test.go`;
+  - `internal/employee/employee.go`;
+  - `internal/employee/snapshot.go`;
+  - `internal/employeestore/tasks.go`;
+  - `internal/employeestore/tasks_test.go`;
+  - `internal/employeestore/store.go`;
+  - `internal/controlplane/employee_tasks.go`;
+  - `internal/controlplane/employee_tasks_test.go`;
+  - `internal/web/employee_tasks.go`;
+  - `internal/web/employee_tasks_test.go`;
+  - `internal/web/server.go`.
+- Domain contract: schema-v1 `EmployeeTask` permits only `queued` and
+  `cancelled`; `queued -> cancelled` is the only transition and repeated
+  cancellation is idempotent. `SessionID` and `RunID` must be empty. The
+  immutable Task Snapshot Digest covers schema version, Task/Employee identity,
+  prompt, creation time, the complete Employee Revision Snapshot, pinned Skill
+  ID/version/digest/config/enabled, selected Knowledge source
+  digest/Citation references, accepted Memory Fact ID/digest, ProjectBinding,
+  and Task policy. Lifecycle state/timestamps and Session/Run execution
+  bindings are mutable projection fields outside that digest. Phase 5 still
+  rejects non-empty Session/Run bindings; later binding must not rewrite the
+  immutable digest.
+- Phase 5 Snapshot Digest Gate revision:
+  - root cause: schema-v1 digest input included empty `SessionID` and `RunID`,
+    which would force Phase 6/7 binding either to rewrite the immutable digest
+    or make Task validation disagree with dispatch/Session snapshots;
+  - fix: remove Session/Run projection fields from `taskSnapshotDigest` while
+    retaining all immutable Task business fields and the Phase 5 empty-binding
+    validation rule;
+  - forward-compatibility tests prove lifecycle cancellation fields and future
+    Session/Run bindings do not change the low-level immutable digest, while
+    prompt, Employee, Skill, Knowledge, Memory, ProjectBinding, and Task Policy
+    changes do;
+  - JSON round-trip, queued-to-cancelled persistence, and Store reopen preserve
+    the same immutable digest.
+- Persistence contract: each Employee owns
+  `<employee-id>/tasks/index.json` and
+  `<employee-id>/tasks/<task-id>.json`. Task records are exclusive atomic
+  mode-0600 writes; index and cancellation updates reuse the existing
+  same-directory atomic write primitive. The Store enforces a 512 KiB Task
+  record, 10,000 summaries per Employee, maximum page size 100, newest-first
+  stable opaque cursors, strict schema/JSON/raw UTF-8, identity/digest/index
+  agreement, and lexical/realpath/symlink/non-regular containment. Global
+  owner-scoped Task lookup fails closed on any ambiguous Task ID.
+- Lifecycle contract: only active Employees create Tasks. Disabled or archived
+  Employees cannot create, but historical Tasks remain readable and a queued
+  Task remains cancellable. Multiple queued Tasks are allowed because Phase 5
+  has no running state.
+- API:
+  - `POST /api/employees/{id}/tasks`;
+  - `GET /api/employees/{id}/tasks`;
+  - `GET /api/employee-tasks/{taskID}`;
+  - `POST /api/employee-tasks/{taskID}/cancel`.
+  Mutations enforce same-origin. JSON creation is bounded, strict,
+  single-value, and raw-UTF-8 validated. Cancellation requires a truly empty,
+  bounded body, including when `ContentLength == -1`. Detail projection omits
+  the local workspace path and complete Employee revision body.
+- Activity adds only `task_created` and `task_cancelled` bounded reference
+  events containing Employee/Task/revision identity. It contains no prompt,
+  Snapshot, Session/Run truth, SSE, Tool, Approval, or Verification payload and
+  cannot drive Task/Session/Run recovery.
+- Named regressions include:
+  - `TestNewEmployeeTaskSealsDeepImmutableQueuedSnapshot`;
+  - `TestEmployeeTaskJSONRoundTripPreservesSnapshotDigest`;
+  - `TestEmployeeTaskSnapshotDigestExcludesLifecycleAndExecutionProjection`;
+  - `TestEmployeeTaskSnapshotDigestCoversEveryImmutableSelection`;
+  - `TestValidateEmployeeTaskRejectsFutureExecutionBindings`;
+  - `TestTaskStoreMultipleQueuedStablePaginationFilterCancelAndReopen`;
+  - `TestTaskStoreConcurrentCreateHasNoDuplicateOrLostIndex`;
+  - `TestTaskStoreRejectsCorruptTaskAndIndex`;
+  - `TestTaskStoreRejectsTaskDirectoryAndIndexSymlinkWithoutOutsideWrites`;
+  - `TestTaskStoreRandomIDFailureDoesNotPersist`;
+  - `TestEmployeeTaskControlPlanePinsSelectionsAndNeverExecutes`;
+  - `TestEmployeeTaskInboxAPIQueuesListsGetsAndCancelsWithoutExecution`;
+  - `TestEmployeeTaskAPIStrictBoundedUTF8SameOriginAndEmptyCancelBody`.
+- Zero-execution evidence: Control Plane and HTTP tests assert no Session Store
+  or Run is created, runtime builder/model/provider is never called, service
+  run state stays inactive, Workspace bytes/tree stay unchanged, Knowledge is
+  not refreshed, and no Memory Candidate is generated. No Phase 5 product
+  file imports or calls Session/Run/Runner/model/tool/workspace-lease APIs.
+- macOS local validation on 2026-07-28:
+
+```text
+PASS gofmt on every tracked Go file
+PASS go test ./internal/employee ./internal/employeestore ./internal/controlplane ./internal/web -count=1
+PASS go test ./internal/loop ./internal/loopstore ./internal/session -count=1
+PASS go test ./... -count=1
+PASS go test -race ./... -count=1
+PASS go vet ./...
+PASS CLI and Web builds to /tmp
+PASS git diff --check
+PASS credential-shaped secret-pattern scan
+PASS independent compose.yaml YAML parse
+PASS macOS real Task symlink/non-regular/containment tests with no skip
+PASS scoped package coverage: employee 82.6%, employeestore 77.8%,
+     controlplane 68.3%, web 68.7%; aggregate 73.6%
+PASS push CI run 30356141023
+PASS CI go, web-e2e, and docker jobs
+EXPECTED SKIP CI live-smoke job
+```
+
+- Final Phase 5 Snapshot Digest Gate validation on 2026-07-28:
+
+```text
+PASS targeted forward-compatibility digest tests (after an expected RED)
+PASS Phase 5 Employee/Store/Control Plane/Web scoped tests
+PASS Loop/LoopStore/Session regressions
+PASS go test ./... -count=1
+PASS go test -race ./... -count=1
+PASS go vet ./...
+PASS CLI and Web builds to /tmp
+PASS gofmt and git diff --check
+PASS credential-shaped secret-pattern scan
+PASS independent compose.yaml YAML parse
+PASS macOS real symlink/non-regular/containment tests with no skip
+PASS push CI run 30359658660: go, docker, and web-e2e
+PASS PR CI run 30359661797: go, docker, and web-e2e
+EXPECTED SKIP live-smoke in both final Gate CI runs
+```
+
+- Final Gate CI:
+  - Push CI
+    [30359658660](https://github.com/Rj455555/GoHermit/actions/runs/30359658660)
+    completed successfully.
+  - PR CI
+    [30359661797](https://github.com/Rj455555/GoHermit/actions/runs/30359661797)
+    completed successfully.
+  - Go, Docker, and Web E2E succeeded in both runs; `live-smoke` was skipped
+    by design.
+
+- Deliberate Phase 5 deviation: JSON round-trip testing exposed that the
+  existing deep-copy helpers collapsed non-nil empty slices to nil. That
+  changed an otherwise immutable Task Snapshot Digest during cancellation
+  after Store reopen. `cloneEmployee`, `cloneProjectBindings`, and Task clone
+  helpers now preserve exact nil/empty representation, and Skill configuration
+  comparison/digesting uses canonical JSON. This is a narrowly required
+  snapshot-integrity fix, not a Phase 1 contract expansion.
+- Remaining risks:
+  - Task record, Task index, and Activity append are separate atomic files.
+    There is intentionally no cross-file transaction or recovery journal;
+    interrupted mismatch is detected and fails closed.
+  - Concurrency remains process-local; cross-process Employee Store locking is
+    deferred.
+  - Global Task lookup validates bounded Employee indexes and records and can
+    be linear in the bounded Employee/Task population. A separate global Task
+    manager was intentionally not introduced.
+  - Snapshot digests detect corruption but are not keyed authenticity proofs.
+  - Docker is not installed on the macOS host; local Compose validation used
+    an independent YAML parser. CI run `30356141023` performed both
+    `docker compose config` and the Docker build successfully.
+
 ### Phase 6: Runtime Preparation
 
 Independent value:
@@ -1768,6 +1958,11 @@ Independent value:
 - Validates Employee state/model/credential, Skill digests, Knowledge status,
   selected Employee Memory, exact current-Service Workspace binding, Task
   policy, and the base/effective capability formulas.
+- Revalidates every pinned Knowledge Source digest and Citation reference
+  against the current Knowledge Store, and every selected Memory Fact ID/digest
+  against a still-existing accepted Fact. Refresh, delete, edit, Forget, or any
+  mismatch fails closed before creating a Session, Run, or dispatch journal;
+  Phase 5 creation-time selection is not sufficient readiness proof.
 - Reads the complete immutable Employee revision already owned by
   EmployeeTask/Employee Store, pins any preparation-time selections there, and
   builds a separate compact Employee/Skill/Knowledge/Memory context snapshot
@@ -1811,6 +2006,12 @@ Exit:
   Phase 9.
 - Preparation assigns a stable Session ID, writes/reconciles the dispatch
   journal, and creates at most one Session with zero Runs.
+- The dispatch journal and compact Session snapshot retain the Phase 5
+  immutable EmployeeTask Snapshot Digest. Assigning a stable Session ID does
+  not rewrite it.
+- Missing or changed Knowledge Source/Citation or accepted Memory Fact
+  readiness fails closed with zero Session, Run, dispatch-journal, model,
+  provider, tool, lease, or Workspace side effects.
 - Repeated preparation and restart are idempotent.
 - Tests assert no runtime build, model call, workspace lease, or model-visible
   execution occurs.

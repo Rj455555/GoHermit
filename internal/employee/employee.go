@@ -460,10 +460,10 @@ func normalizeProjectBinding(binding ProjectBinding) ProjectBinding {
 }
 
 func cloneEmployee(employee Employee) Employee {
-	employee.Responsibilities = append([]string(nil), employee.Responsibilities...)
-	employee.BehaviorBoundaries = append([]string(nil), employee.BehaviorBoundaries...)
-	employee.ProjectBindingIDs = append([]string(nil), employee.ProjectBindingIDs...)
-	employee.PermissionPolicy.AllowedCapabilities = append([]string(nil), employee.PermissionPolicy.AllowedCapabilities...)
+	employee.Responsibilities = cloneStrings(employee.Responsibilities)
+	employee.BehaviorBoundaries = cloneStrings(employee.BehaviorBoundaries)
+	employee.ProjectBindingIDs = cloneStrings(employee.ProjectBindingIDs)
+	employee.PermissionPolicy.AllowedCapabilities = cloneStrings(employee.PermissionPolicy.AllowedCapabilities)
 	if employee.SkillBindings != nil {
 		bindings := make([]SkillBinding, len(employee.SkillBindings))
 		for i, binding := range employee.SkillBindings {
@@ -475,6 +475,13 @@ func cloneEmployee(employee Employee) Employee {
 	employee.DisabledAt = cloneTimePointer(employee.DisabledAt)
 	employee.ArchivedAt = cloneTimePointer(employee.ArchivedAt)
 	return employee
+}
+
+func cloneStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append([]string{}, values...)
 }
 
 func validateAvatar(name string, avatar Avatar) error {
