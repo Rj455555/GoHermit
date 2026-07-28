@@ -17,8 +17,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Rj455555/GoHermit/internal/approval"
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/model"
@@ -27,7 +29,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/team"
 )
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 const commitJournalVersion = 1
 
@@ -188,6 +190,14 @@ type Session struct {
 	// (ADR 0011) inside the session checkpoint — no second persistence
 	// mechanism. Decisions travel the commit.json durable-before-visible path.
 	ApprovalRequests []approval.Request `json:"approval_requests,omitempty"`
+	// Employee preparation metadata is additive in schema v6. Legacy and
+	// ordinary sessions leave every field empty. The compact snapshot is
+	// independently capped at 64 KiB and never embeds a full Employee revision.
+	EmployeeID                 string                    `json:"employee_id,omitempty"`
+	EmployeeTaskID             string                    `json:"employee_task_id,omitempty"`
+	EmployeeRevision           int                       `json:"employee_revision,omitempty"`
+	EmployeeTaskSnapshotDigest string                    `json:"employee_task_snapshot_digest,omitempty"`
+	EmployeeContextSnapshot    *employee.CompactSnapshot `json:"employee_context_snapshot,omitempty"`
 }
 
 func New(goal, workspace, configDigest string) (*Session, error) {
@@ -197,6 +207,40 @@ func New(goal, workspace, configDigest string) (*Session, error) {
 	}
 	now := time.Now().UTC()
 	return &Session{SchemaVersion: SchemaVersion, ID: id, Title: clipTitle(goal), Goal: goal, Status: Open, CreatedAt: now, UpdatedAt: now, Workspace: workspace, ConfigDigest: configDigest, ModifiedFiles: map[string]string{}}, nil
+}
+
+// NewPrepared constructs a schema-v6 EmployeeTask Session with a caller-stable
+// ID and no Run. Runtime Preparation is the only caller; execution remains in
+// the existing Phase 7 Run lifecycle.
+func NewPrepared(
+	id, goal, workspace, configDigest, employeeID, taskID string,
+	revision int, taskSnapshotDigest string, compact employee.CompactSnapshot,
+) (*Session, error) {
+	if _, err := sessionIDPath(id); err != nil {
+		return nil, err
+	}
+	if err := employee.ValidateCompactSnapshot(compact); err != nil {
+		return nil, fmt.Errorf("compact Employee context snapshot: %w", err)
+	}
+	if compact.EmployeeID != employeeID || compact.EmployeeRevision != revision ||
+		compact.TaskID != taskID || compact.TaskSnapshotDigest != taskSnapshotDigest {
+		return nil, errors.New("compact Employee context snapshot identity mismatch")
+	}
+	now := time.Now().UTC()
+	copy := compact.Clone()
+	value := &Session{
+		SchemaVersion: SchemaVersion, ID: id, Title: clipTitle(goal), Goal: goal,
+		Status: Open, CreatedAt: now, UpdatedAt: now, Workspace: workspace,
+		ConfigDigest: configDigest, ModifiedFiles: map[string]string{},
+		Runs: []Run{}, RecentMessages: []model.Message{}, ToolCalls: []ToolRecord{},
+		CompletedSteps: []string{}, PendingSteps: []string{}, TestResults: []TestResult{},
+		EmployeeID: employeeID, EmployeeTaskID: taskID, EmployeeRevision: revision,
+		EmployeeTaskSnapshotDigest: taskSnapshotDigest, EmployeeContextSnapshot: &copy,
+	}
+	if err := validateSessionCheckpoint(value); err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 func NewConversation(title, workspace, configDigest string, selection Selection) (*Session, error) {
@@ -293,10 +337,26 @@ func NewStore(workspace, directory string) (*Store, error) {
 	return &Store{workspace: abs, root: root, pending: map[string][]event.Event{}, sequences: map[string]uint64{}}, nil
 }
 func (s *Store) sessionDir(id string) (string, error) {
-	if id == "" || strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
+	return sessionIDPathWithRoot(s.root, id)
+}
+
+func sessionIDPath(id string) (string, error) {
+	return sessionIDPathWithRoot("", id)
+}
+
+func sessionIDPathWithRoot(root, id string) (string, error) {
+	if id == "" || len(id) > 128 || strings.ContainsAny(id, "/\\%") ||
+		strings.Contains(id, "..") || filepath.IsAbs(id) {
 		return "", errors.New("invalid session ID")
 	}
-	return filepath.Join(s.root, "sessions", id), nil
+	for _, character := range id {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("._-", character) {
+			continue
+		}
+		return "", errors.New("invalid session ID")
+	}
+	return filepath.Join(root, "sessions", id), nil
 }
 
 func (s *Store) Has(id string) bool {
@@ -311,7 +371,7 @@ func (s *Store) Save(ctx context.Context, session *Session) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := validateSessionPlans(session); err != nil {
+	if err := validateSessionCheckpoint(session); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -320,6 +380,39 @@ func (s *Store) Save(ctx context.Context, session *Session) error {
 		return err
 	}
 	delete(s.pending, session.ID)
+	return nil
+}
+
+func validateSessionCheckpoint(value *Session) error {
+	if err := validateSessionPlans(value); err != nil {
+		return err
+	}
+	emptyPreparation := value.EmployeeID == "" && value.EmployeeTaskID == "" &&
+		value.EmployeeRevision == 0 && value.EmployeeTaskSnapshotDigest == "" &&
+		value.EmployeeContextSnapshot == nil
+	if value.SchemaVersion != SchemaVersion {
+		if value.SchemaVersion >= 1 && value.SchemaVersion <= 5 && emptyPreparation {
+			return nil
+		}
+		return fmt.Errorf("unsupported session schema version %d", value.SchemaVersion)
+	}
+	if emptyPreparation {
+		return nil
+	}
+	if value.EmployeeID == "" || value.EmployeeTaskID == "" || value.EmployeeRevision < 1 ||
+		value.EmployeeTaskSnapshotDigest == "" || value.EmployeeContextSnapshot == nil {
+		return errors.New("incomplete Employee preparation metadata")
+	}
+	if err := employee.ValidateCompactSnapshot(*value.EmployeeContextSnapshot); err != nil {
+		return fmt.Errorf("invalid compact Employee context snapshot: %w", err)
+	}
+	compact := value.EmployeeContextSnapshot
+	if compact.EmployeeID != value.EmployeeID ||
+		compact.EmployeeRevision != value.EmployeeRevision ||
+		compact.TaskID != value.EmployeeTaskID ||
+		compact.TaskSnapshotDigest != value.EmployeeTaskSnapshotDigest {
+		return errors.New("Employee preparation metadata mismatch")
+	}
 	return nil
 }
 
@@ -341,7 +434,7 @@ func (s *Store) CommitEvents(ctx context.Context, session *Session, runtimeEvent
 	if session == nil || len(runtimeEvents) == 0 {
 		return nil, errors.New("session and at least one event are required")
 	}
-	if err := validateSessionPlans(session); err != nil {
+	if err := validateSessionCheckpoint(session); err != nil {
 		return nil, err
 	}
 	for _, runtimeEvent := range runtimeEvents {
@@ -387,13 +480,16 @@ func (s *Store) CommitDetachedEvent(ctx context.Context, sessionID string, runti
 	if err != nil {
 		return event.Event{}, fmt.Errorf("read parent checkpoint: %w", err)
 	}
+	if !utf8.Valid(raw) {
+		return event.Event{}, errors.New("parent checkpoint is invalid UTF-8")
+	}
 	var checkpoint Session
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
 	if err = decoder.Decode(&checkpoint); err != nil || checkpoint.SchemaVersion != SchemaVersion || checkpoint.ID != sessionID {
 		return event.Event{}, errors.New("parent checkpoint is corrupt or unsupported")
 	}
-	if err = validateSessionPlans(&checkpoint); err != nil {
+	if err = validateSessionCheckpoint(&checkpoint); err != nil {
 		return event.Event{}, err
 	}
 	runtimeEvent = s.sequenceEventLocked(sessionID, runtimeEvent)
@@ -599,13 +695,17 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint: %w", err)
 	}
+	if !utf8.Valid(b) {
+		return nil, errors.New("corrupt checkpoint: invalid UTF-8")
+	}
 	var header struct {
 		SchemaVersion int `json:"schema_version"`
 	}
 	if err = json.Unmarshal(b, &header); err != nil {
 		return nil, fmt.Errorf("corrupt checkpoint: %w", err)
 	}
-	if header.SchemaVersion != 1 && header.SchemaVersion != 2 && header.SchemaVersion != 3 && header.SchemaVersion != 4 && header.SchemaVersion != SchemaVersion {
+	if header.SchemaVersion != 1 && header.SchemaVersion != 2 && header.SchemaVersion != 3 &&
+		header.SchemaVersion != 4 && header.SchemaVersion != 5 && header.SchemaVersion != SchemaVersion {
 		return nil, fmt.Errorf("unsupported session schema version %d", header.SchemaVersion)
 	}
 	var out Session
@@ -622,6 +722,8 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 		migrateV3(&out)
 	} else if out.SchemaVersion == 4 {
 		migrateV4(&out)
+	} else if out.SchemaVersion == 5 {
+		migrateV5(&out)
 	}
 	mode, modeErr := NormalizePlanMode(string(out.PlanMode))
 	if modeErr != nil {
@@ -640,6 +742,9 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 		if err = taskplan.Validate(out.Runs[i].Plan); err != nil {
 			return nil, fmt.Errorf("corrupt run plan: %w", err)
 		}
+	}
+	if err = validateSessionCheckpoint(&out); err != nil {
+		return nil, fmt.Errorf("corrupt checkpoint: %w", err)
 	}
 	current, _ := filepath.Abs(s.workspace)
 	saved, _ := filepath.Abs(out.Workspace)
@@ -666,6 +771,9 @@ func (s *Store) recoverJournalLocked(dir, sessionID string) error {
 	if len(data) > 8<<20 {
 		return errors.New("commit journal exceeds size limit")
 	}
+	if !utf8.Valid(data) {
+		return errors.New("corrupt commit journal: invalid UTF-8")
+	}
 	var journal commitJournal
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
@@ -675,7 +783,7 @@ func (s *Store) recoverJournalLocked(dir, sessionID string) error {
 	if journal.Session == nil || journal.Session.ID != sessionID {
 		return errors.New("commit journal session mismatch")
 	}
-	if err = validateSessionPlans(journal.Session); err != nil {
+	if err = validateSessionCheckpoint(journal.Session); err != nil {
 		return fmt.Errorf("corrupt commit journal: %w", err)
 	}
 	return s.applyJournalLocked(dir, journal)
@@ -854,6 +962,15 @@ func migrateV3(s *Session) {
 // migrateV4 bumps v4 checkpoints to v5. Approval requests are new in v5 and
 // simply stay absent (empty) on older checkpoints.
 func migrateV4(s *Session) {
+	s.SchemaVersion = SchemaVersion
+	if s.ModifiedFiles == nil {
+		s.ModifiedFiles = map[string]string{}
+	}
+}
+
+// migrateV5 bumps v5 checkpoints to v6. Employee preparation metadata is
+// additive and remains absent on ordinary legacy Sessions.
+func migrateV5(s *Session) {
 	s.SchemaVersion = SchemaVersion
 	if s.ModifiedFiles == nil {
 		s.ModifiedFiles = map[string]string{}

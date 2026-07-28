@@ -318,10 +318,26 @@ func (s *Store) loadTaskIndex(employeeID string) (taskIndexFile, error) {
 	for _, summary := range index.Tasks {
 		expectedFiles[summary.ID+".json"] = summary
 	}
+	seenDispatch := make(map[string]struct{})
 	for _, entry := range entries {
 		if entry.Name() == "index.json" {
 			if _, err := s.safeFileInfo(employeeID, "tasks", entry.Name()); err != nil {
 				return taskIndexFile{}, fmt.Errorf("%w: unsafe Employee Task index: %v", ErrCorrupt, err)
+			}
+			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".dispatch.json") {
+			taskID := strings.TrimSuffix(entry.Name(), ".dispatch.json")
+			summary, exists := expectedFiles[taskID+".json"]
+			if !exists {
+				return taskIndexFile{}, fmt.Errorf("%w: dispatch journal has no indexed Employee Task", ErrCorrupt)
+			}
+			if _, duplicate := seenDispatch[taskID]; duplicate {
+				return taskIndexFile{}, fmt.Errorf("%w: duplicate Employee Task dispatch journal", ErrCorrupt)
+			}
+			seenDispatch[taskID] = struct{}{}
+			if _, err := s.loadDispatchExpected(summary); err != nil {
+				return taskIndexFile{}, err
 			}
 			continue
 		}

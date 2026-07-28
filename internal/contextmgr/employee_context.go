@@ -71,6 +71,57 @@ type MemoryContext struct {
 	Provenance string
 }
 
+// EmployeeContextFromCompact reconstructs the existing Phase 3/4 layer
+// contract from a schema-v6 immutable recovery snapshot. It never consults
+// mutable Employee, Skill, Knowledge, or Memory stores.
+func EmployeeContextFromCompact(snapshot employee.CompactSnapshot) (EmployeeContext, error) {
+	if err := employee.ValidateCompactSnapshot(snapshot); err != nil {
+		return EmployeeContext{}, err
+	}
+	result := EmployeeContext{
+		ID: snapshot.EmployeeID, Revision: snapshot.EmployeeRevision,
+		Name: snapshot.Identity.Name, JobTitle: snapshot.Identity.JobTitle,
+		Charter:            snapshot.Identity.Charter,
+		Responsibilities:   append([]string{}, snapshot.Identity.Responsibilities...),
+		BehaviorBoundaries: append([]string{}, snapshot.Identity.BehaviorBoundaries...),
+		EffectivePolicy: employee.EffectivePolicy{
+			AllowedCapabilities: append([]string{}, snapshot.EffectivePolicy.AllowedCapabilities...),
+			NetworkAllowed:      snapshot.EffectivePolicy.NetworkAllowed,
+		},
+		BudgetSummary: fmt.Sprintf(
+			"max_model_calls=%d, max_tokens=%d, timeout_seconds=%d",
+			snapshot.Budget.MaxModelCalls, snapshot.Budget.MaxTokens, snapshot.Budget.TimeoutSeconds,
+		),
+		ProjectSummary: snapshot.Project.WorkspaceSummary,
+		PinnedSkills:   make([]SkillContext, 0, len(snapshot.Skills)),
+		Knowledge:      make([]KnowledgeContext, 0, len(snapshot.Knowledge)),
+		Memory:         make([]MemoryContext, 0, len(snapshot.Memory)),
+	}
+	for _, item := range snapshot.Skills {
+		references := make(map[string]string, len(item.References))
+		for _, reference := range item.References {
+			references[reference.Path] = reference.Content
+		}
+		result.PinnedSkills = append(result.PinnedSkills, SkillContext{
+			SkillID: item.SkillID, Version: item.Version, Digest: item.Digest,
+			Instructions: item.Instructions, References: references,
+		})
+	}
+	for _, item := range snapshot.Knowledge {
+		result.Knowledge = append(result.Knowledge, KnowledgeContext{
+			CitationID: item.CitationID, SourceID: item.SourceID,
+			Digest: item.Digest, Title: item.Title, Excerpt: item.Snippet,
+		})
+	}
+	for _, item := range snapshot.Memory {
+		result.Memory = append(result.Memory, MemoryContext{
+			ID: item.FactID, Digest: item.Digest, Category: item.Category,
+			Value: item.Value, Provenance: item.Provenance,
+		})
+	}
+	return result, nil
+}
+
 // BuildEmployeeRun is the optional Phase 3 context contract. It does not
 // create a Session, Run, task, or model invocation, and legacy BuildRun
 // remains byte-for-byte on its existing assembly path.
