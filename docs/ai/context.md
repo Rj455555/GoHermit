@@ -4,7 +4,7 @@ This is the compact handoff for coding agents. Read `AGENTS.md` first, then this
 
 ## Product in one paragraph
 
-GoHermit `0.5.0-dev` is a foreground, local-first, single-owner coding harness. A durable Session contains multiple user-message Runs, visible history, bounded context, verified project memory, crash recovery, and a task-specific public Live Plan. A Run may wait for owner Plan approval, use the original single Agent, or use an adaptive Personal Agent Team whose Mission delegates bounded WorkItems through structured Handoffs and a bounded repair/verify loop. Explicit Owner Profile data lives outside repositories and enters every Worker context.
+GoHermit `0.6.0-dev` is a foreground, local-first, single-owner coding harness. A durable Session contains multiple user-message Runs, visible history, bounded context, verified project memory, crash recovery, and a task-specific public Live Plan. A Run may wait for owner Plan approval, use the original single Agent, or use an adaptive Personal Agent Team whose Mission delegates bounded WorkItems through structured Handoffs and a bounded repair/verify loop. Loop Mode adds owner-scoped, revisioned Definitions, zero-side-effect Dry Run, and manual Invocations that snapshot a Definition and bind one existing Session/Run. The Web Loop Workbench exposes that same Control Plane; it does not introduce another runtime or event store.
 
 ## Shortest useful reading path
 
@@ -32,6 +32,7 @@ GoHermit `0.5.0-dev` is a foreground, local-first, single-owner coding harness. 
 | provider catalog/grouping | `internal/config` | `internal/auth`, provider docs, config tests |
 | credentials/device login | `internal/auth` | `docs/ai/console-credentials.md`, Compose data volume |
 | local Web/SSE | `internal/web`, `cmd/hermit-web` | Web tests, `docs/web-debug.md` |
+| Loop Definition/Invocation | `internal/loop`, `internal/loopstore` | `internal/controlplane/loops.go`, `internal/controlplane/invocations.go`, Loop Web handlers/tests |
 | team orchestration | `internal/team`, `internal/app/team_worker.go` | `internal/runcontrol`, `docs/ai/team.md`, ADR 0008 |
 | Live Plan/checklist | `internal/taskplan`, `internal/runcontrol` | `docs/ai/plan-mode.md`, ADR 0009/0010 |
 | owner preferences/memory | `internal/owner` | owner APIs and context manager |
@@ -78,6 +79,9 @@ GoHermit `0.5.0-dev` is a foreground, local-first, single-owner coding harness. 
 - For v0.5, commit-journal crash injection, detached Worker event durability, Plan approval, adaptive Team topology, bounded repair/reverify, task-specific Plan, and Chromium refresh/approval E2E tests pass on Windows. Vet and native/cross-platform builds pass; Linux race and Docker gates are also checked by `.github/workflows/ci.yml` because this Windows host has no Docker and blocks some transient test executables.
 - The only third-party Go module is `github.com/BurntSushi/toml` for strict TOML decoding.
 - The v0.5 eval definition `docs/ai/evals/v0.5.md` is implemented as checked-in fixture graders: `internal/evals` (plan fidelity, handoff quality, shared fixture loader) plus `eval_test.go` graders in `internal/team` (verification), `internal/session` (recovery), and `internal/web` (owner summary); all fixtures under `internal/evals/testdata/` decode with `DisallowUnknownFields` and run inside `go test ./...`.
+- PR #28–#33 are merged: documentation calibration, shared Control Plane, Loop Domain/Store, Dry Run, Manual Invocation, and declarative Verification Recipe are complete.
+- The v0.6 Loop Workbench adds resource APIs and a Codex-style Dashboard/Loops surface for create/import/edit, revision display, readiness review, manual start, resumable Session-backed Timeline, history, cancellation, Approval/Plan/Team/Verification visibility, and browser refresh recovery.
+- The checked-in documentation-maintenance template is read-only, contains no credential, uses argv-only verification, and never requests automatic commit, push, PR, merge, or deploy.
 
 ## Known boundaries
 
@@ -88,9 +92,10 @@ GoHermit `0.5.0-dev` is a foreground, local-first, single-owner coding harness. 
 - Codex device login uses OpenAI's device flow and stores tokens only in the server-side credential store. Revocation is detected when a refresh is required; there is no proactive remote token introspection.
 - The Web surface is single-user and unauthenticated; public exposure is unsupported.
 - Provider/model/Agent selection is fixed for a Session; create a new Session to switch.
-- Plan approval is implemented; scoped tool/side-effect approval and multiple workspaces remain deferred.
-- Adaptive Team topology is deterministic and intent-based; model-proposed substeps, per-role model overrides, and isolated parallel worktrees remain deferred.
+- Plan approval and scoped expiring tool/side-effect approval are implemented. Multiple concurrent workspaces remain deferred.
+- Adaptive Team topology is deterministic and intent-based; bounded model-proposed substeps and per-role model overrides are implemented. Isolated parallel worktrees remain deferred because ADR 0012 is unresolved.
 - Team orchestration currently starts and resumes through the Web Session/Run API. The CLI and legacy `/api/run` reject `team` instead of silently running a single Lead loop.
+- Loop triggers are manual only. Cron, a background daemon, Task Inbox, Shared Artifacts, and Publisher workflows are not part of v0.6.
 
 ## Verification
 

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,59 @@ func (s *Service) GetLoop(id string) (loop.Definition, error) {
 		return loop.Definition{}, classified(KindNotFound, err)
 	}
 	return definition, nil
+}
+
+// CreateLoop validates and inserts a new owner-scoped definition. The store
+// remains the sole owner of timestamps and revision assignment.
+func (s *Service) CreateLoop(definition loop.Definition) (loop.Definition, error) {
+	if err := s.loopStoreAvailable(); err != nil {
+		return loop.Definition{}, err
+	}
+	if err := loop.ValidateDefinition(definition); err != nil {
+		return loop.Definition{}, classified(KindInvalid, err)
+	}
+	if _, err := s.loopStore.GetDefinition(definition.ID); err == nil {
+		return loop.Definition{}, &Error{Kind: KindConflict, Message: "loop definition already exists"}
+	} else if !errors.Is(err, loopstore.ErrDefinitionNotFound) {
+		return loop.Definition{}, classified(KindInternal, err)
+	}
+	if err := s.loopStore.SaveDefinition(definition); err != nil {
+		return loop.Definition{}, classified(KindInternal, err)
+	}
+	saved, err := s.loopStore.GetDefinition(definition.ID)
+	if err != nil {
+		return loop.Definition{}, classified(KindInternal, err)
+	}
+	return saved, nil
+}
+
+// UpdateLoop replaces an existing definition and creates a new store-managed
+// revision. The path identity is authoritative and cannot be changed by the
+// request body.
+func (s *Service) UpdateLoop(id string, definition loop.Definition) (loop.Definition, error) {
+	if err := s.loopStoreAvailable(); err != nil {
+		return loop.Definition{}, err
+	}
+	if strings.TrimSpace(id) == "" || definition.ID != id {
+		return loop.Definition{}, &Error{Kind: KindInvalid, Message: "loop definition id must match the request path"}
+	}
+	if err := loop.ValidateDefinition(definition); err != nil {
+		return loop.Definition{}, classified(KindInvalid, err)
+	}
+	if _, err := s.loopStore.GetDefinition(id); err != nil {
+		if errors.Is(err, loopstore.ErrDefinitionNotFound) {
+			return loop.Definition{}, classified(KindNotFound, err)
+		}
+		return loop.Definition{}, classified(KindInternal, err)
+	}
+	if err := s.loopStore.SaveDefinition(definition); err != nil {
+		return loop.Definition{}, classified(KindInternal, err)
+	}
+	saved, err := s.loopStore.GetDefinition(id)
+	if err != nil {
+		return loop.Definition{}, classified(KindInternal, err)
+	}
+	return saved, nil
 }
 
 // ImportLoop parses and validates an exported loop definition file — the

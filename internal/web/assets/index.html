@@ -10,7 +10,9 @@
   <div id="app" class="app-shell">
     <aside class="icon-rail" aria-label="工具栏">
       <button id="brand-button" class="rail-button brand-button" aria-label="新建任务"><span>G</span></button>
-      <button id="tasks-button" class="rail-button active" aria-label="任务"><span>◫</span></button>
+      <button id="dashboard-button" class="rail-button" data-testid="nav-dashboard" aria-label="Dashboard"><span>⌂</span></button>
+      <button id="tasks-button" class="rail-button active" data-testid="nav-agent" aria-label="Agent"><span>●</span></button>
+      <button id="loops-button" class="rail-button" data-testid="nav-loops" aria-label="Loops"><span>↻</span></button>
       <div class="rail-spacer"></div>
       <span id="health-dot" class="health-dot" title="正在连接"></span>
       <button id="settings-button" class="rail-button" data-testid="nav-settings" aria-label="设置"><span>⚙</span></button>
@@ -35,6 +37,138 @@
         <span><strong>服务离线</strong> 无法连接 GoHermit；Mac mini 可能休眠或 SSH 隧道已断开。</span>
         <button id="retry-connection" class="small-button">重新连接</button>
       </div>
+      <section id="dashboard-view" class="page-view dashboard-view hidden" data-testid="dashboard-view">
+        <header class="page-header">
+          <div><span class="eyebrow">GOHERMIT WORKBENCH</span><h1>Dashboard</h1><p>Loop 与 Agent 的本地运行概览</p></div>
+          <button id="dashboard-open-loops" class="small-button primary">打开 Loop Workbench</button>
+        </header>
+        <div class="dashboard-body">
+          <div class="metric-grid">
+            <article class="metric-card"><span>Loops</span><strong id="dashboard-loop-count">0</strong><small>Owner-scoped definitions</small></article>
+            <article class="metric-card"><span>Active</span><strong id="dashboard-active-count">0</strong><small>当前运行</small></article>
+            <article class="metric-card"><span>Waiting / Blocked</span><strong id="dashboard-blocked-count">0</strong><small>需要 Owner 处理</small></article>
+            <article class="metric-card"><span>Failed</span><strong id="dashboard-failed-count">0</strong><small>最近失败</small></article>
+          </div>
+          <section class="dashboard-panel">
+            <header><div><strong>Recent invocations</strong><span>最近的 Loop 运行与验证结果</span></div></header>
+            <div id="dashboard-invocations" class="dashboard-invocations"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="loops-view" class="page-view loops-view hidden" data-testid="loops-workbench">
+        <header class="page-header loop-page-header">
+          <div><span class="eyebrow">V0.6 · LOOP WORKBENCH</span><h1>Loops</h1><p>定义、预检、运行与恢复</p></div>
+          <div class="page-header-actions">
+            <button id="loop-import-button" class="small-button">导入 JSON</button>
+            <input id="loop-import-file" class="sr-only" type="file" accept="application/json,.json">
+            <button id="loop-new-button" class="small-button primary" data-testid="loop-new">新建 Loop</button>
+          </div>
+        </header>
+        <div class="loop-workbench">
+          <aside class="loop-list-pane">
+            <label class="loop-search"><span class="sr-only">搜索 Loop</span><input id="loop-search" type="search" placeholder="搜索 Loops…"></label>
+            <div id="loop-list" class="loop-list"></div>
+          </aside>
+
+          <section class="loop-main-pane">
+            <header class="loop-main-head">
+              <div><h2 id="loop-editor-title">选择一个 Loop</h2><p id="loop-editor-meta">创建或导入 Definition 后开始</p></div>
+              <div class="loop-tabs">
+                <button id="loop-definition-tab" class="loop-tab active" type="button">Definition</button>
+                <button id="loop-timeline-tab" class="loop-tab" type="button" disabled>Timeline</button>
+              </div>
+            </header>
+
+            <div id="loop-empty" class="loop-empty">
+              <div class="welcome-mark">↻</div>
+              <h2>建立可重复的 Agent 工作流</h2>
+              <p>Definition 由 Owner 持有；Dry Run 零副作用；每次 Invocation 绑定独立 Session 与 Run。</p>
+              <button id="loop-empty-new" class="small-button primary">创建文档维护 Loop</button>
+            </div>
+
+            <form id="loop-form" class="loop-form hidden" novalidate>
+              <section class="form-section">
+                <header><strong>Identity</strong><span>Definition 的稳定身份与用途</span></header>
+                <div class="form-grid">
+                  <label>Loop ID<input id="loop-id" maxlength="128" required></label>
+                  <label>名称<input id="loop-name" maxlength="8192" required></label>
+                  <label class="wide">描述<textarea id="loop-description" maxlength="8192"></textarea></label>
+                  <label class="wide">Workspace identity<input id="loop-workspace" maxlength="8192" required></label>
+                  <label class="toggle-field"><input id="loop-enabled" type="checkbox" checked><span>Enabled</span></label>
+                </div>
+              </section>
+              <section class="form-section">
+                <header><strong>Task</strong><span>固定 Prompt；不保存系统 Prompt 或凭据</span></header>
+                <label class="block-field">Task source<textarea id="loop-prompt" maxlength="8192" required></textarea></label>
+              </section>
+              <section class="form-section">
+                <header><strong>Agent & model</strong><span>只列出当前已配置且可用的接入方式</span></header>
+                <div class="form-grid four">
+                  <label>公司<select id="loop-company"></select></label>
+                  <label>接入方式<select id="loop-access"></select></label>
+                  <label>模型<select id="loop-model"></select></label>
+                  <label>Agent<select id="loop-agent"></select></label>
+                  <label>Plan mode<select id="loop-plan-mode"><option value="auto">自动执行</option><option value="review">先审计划</option></select></label>
+                  <label class="wide">Team Template<input id="loop-team-template" maxlength="8192" placeholder="default（仅 Team）"></label>
+                </div>
+                <div id="loop-team-roles" class="team-role-preview"></div>
+              </section>
+              <section class="form-section">
+                <header><strong>Workspace & approval</strong><span>副作用仍由 Scoped Approval 控制</span></header>
+                <div class="toggle-grid">
+                  <label><input id="loop-read-only" type="checkbox" checked><span>Read-only</span></label>
+                  <label><input id="loop-clean-git" type="checkbox"><span>Require clean Git</span></label>
+                  <label><input id="loop-approval" type="checkbox"><span>Mutation requires approval</span></label>
+                </div>
+              </section>
+              <section class="form-section">
+                <header><div><strong>Verification recipe</strong><span>每条命令均为 argv 数组，不经过 shell</span></div><button id="loop-add-check" type="button" class="small-button">添加检查</button></header>
+                <div id="loop-checks" class="verification-checks"></div>
+              </section>
+              <section class="form-section">
+                <header><strong>Budget & output</strong><span>所有循环、成本和输出均有界</span></header>
+                <div class="form-grid four">
+                  <label>Max model calls<input id="loop-max-calls" type="number" min="1" max="1000"></label>
+                  <label>Max tokens<input id="loop-max-tokens" type="number" min="1" max="10000000"></label>
+                  <label>总超时（秒）<input id="loop-timeout" type="number" min="1" max="86400"></label>
+                  <label>Max repair attempts<input id="loop-repairs" type="number" min="0" max="5"></label>
+                  <label>Max report bytes<input id="loop-report-bytes" type="number" min="1" max="1048576"></label>
+                  <label class="toggle-field"><input id="loop-include-diff" type="checkbox"><span>Report includes diff</span></label>
+                  <label class="toggle-field"><input id="loop-independent-verifier" type="checkbox"><span>Independent verifier</span></label>
+                </div>
+              </section>
+              <details class="json-preview"><summary>高级 JSON 预览</summary><pre id="loop-json-preview"></pre></details>
+              <div id="loop-form-errors" class="form-errors hidden" role="alert"></div>
+              <footer class="form-actions"><span id="loop-save-hint">保存前会同步验证</span><button id="loop-save" type="submit" class="small-button primary" data-testid="loop-save">保存 Definition</button></footer>
+            </form>
+
+            <section id="loop-timeline-panel" class="loop-timeline hidden">
+              <header class="timeline-head"><div><strong id="timeline-title">Invocation timeline</strong><span id="timeline-meta"></span></div><button id="timeline-open-agent" class="small-button hidden">在 Agent 中打开</button></header>
+              <div id="timeline-summary" class="timeline-summary"></div>
+              <ol id="timeline-events" class="timeline-events"></ol>
+            </section>
+          </section>
+
+          <aside class="loop-review-pane">
+            <section class="review-card">
+              <header><div><strong>Dry Run Review</strong><span>零副作用 readiness 检查</span></div><button id="loop-dry-run" class="small-button" disabled>运行预检</button></header>
+              <div id="loop-dry-run-result" class="review-empty">保存 Definition 后运行 Dry Run。</div>
+            </section>
+            <section class="review-card loop-actions-card">
+              <header><div><strong>Actions</strong><span>启动前必须 Ready</span></div></header>
+              <button id="loop-start" class="small-button primary" disabled data-testid="loop-start">Start invocation</button>
+              <button id="loop-cancel" class="small-button danger-text hidden" data-testid="loop-cancel">Cancel invocation</button>
+            </section>
+            <section class="review-card history-card">
+              <header><div><strong>Invocation history</strong><span>最近 50 次</span></div></header>
+              <div id="loop-history" class="loop-history"></div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <div id="agent-view" class="page-view agent-view">
       <header class="thread-header">
         <button id="sidebar-open" class="icon-button mobile-only" aria-label="打开任务列表">☰</button>
         <div class="thread-identity">
@@ -95,6 +229,7 @@
         </div>
         <p id="composer-note" class="composer-note">模型可能出错，请检查重要改动。</p>
       </footer>
+      </div>
     </main>
 
     <div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
@@ -121,5 +256,6 @@
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="/app.js" defer></script>
+  <script src="/loops.js" defer></script>
 </body>
 </html>

@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { extname, resolve } from 'node:path'
 
 const root = resolve('internal/web/assets')
-const allowed = new Set(['/index.html', '/app.js', '/styles.css'])
+const allowed = new Set(['/index.html', '/app.js', '/loops.js', '/styles.css'])
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' }
 
 createServer((request, response) => {

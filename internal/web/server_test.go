@@ -28,6 +28,7 @@ func testServer(t *testing.T) *Server {
 	t.Setenv("GOHERMIT_AUTH_STORE", filepath.Join(root, "credentials.json"))
 	t.Setenv("GOHERMIT_OWNER_STORE", filepath.Join(root, "owner.json"))
 	t.Setenv("GOHERMIT_TEAM_TEMPLATE_STORE", filepath.Join(root, "team-template.json"))
+	t.Setenv("GOHERMIT_LOOP_STORE", filepath.Join(root, "loops"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "missing-codex"))
 	if err := os.WriteFile(filepath.Join(root, "hermit.toml"), []byte("[model]\nprovider = \"codex\"\n"), 0600); err != nil {
 		t.Fatal(err)

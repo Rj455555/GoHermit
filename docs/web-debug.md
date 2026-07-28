@@ -1,8 +1,25 @@
 # Local Web and Docker debugging
 
-`hermit-web` is a local single-owner, Codex-style workbench: a compact tool rail, persistent task list, conversation/execution canvas, pinned composer, and a Settings drawer. Every Run shows a collapsible task-specific Live Plan with checkboxes, current phase, bounded detail, and completion progress. Settings manages the Owner Profile plus provider credentials; both remain server-side. A Session fixes company, access, model, Agent, and Plan mode. `auto` starts immediately; `review` shows the durable Plan and waits for **批准计划** without occupying the workspace. The browser reloads the selected Plan and resumes structured SSE events with `after=<sequence>` or `Last-Event-ID`.
+`hermit-web` is a local single-owner, Codex-style workbench with Dashboard, Agent, Loops, and Settings navigation. Agent keeps the persistent task list, conversation/execution canvas, pinned composer, Live Plan, Team, and Approval views. Loops is the v0.6 Workbench for owner-scoped Definition create/import/edit, Dry Run readiness, manual Invocation, bounded history, cancellation, and a Session-backed Timeline. Settings manages the Owner Profile plus provider credentials; both remain server-side.
+
+A Session fixes company, access, model, Agent, and Plan mode. `auto` starts immediately; `review` shows the durable Plan and waits for **批准计划** without occupying the workspace. Loop Invocations snapshot their Definition and create one independent Session/Run. The browser reloads the selected Loop and Invocation from persistent APIs, reconstructs Timeline state from the bound Session, and resumes structured SSE events with `after=<sequence>` or `Last-Event-ID`. Refresh never cancels a Run or replays completed tools.
 
 Session endpoints and recovery behavior are summarized in `docs/ai/harness.md`. The legacy one-shot `POST /api/run` remains for compatibility, but the Web UI uses `/api/sessions`.
+
+Loop resources are:
+
+```text
+GET/POST /api/loops
+POST     /api/loops/import
+GET/PUT  /api/loops/{id}
+POST     /api/loops/{id}/dry-run
+GET/POST /api/loops/{id}/invocations
+GET      /api/loop-invocations/{id}
+POST     /api/loop-invocations/{id}/cancel
+```
+
+All Loop handlers are thin transports over `internal/controlplane`; Timeline
+reuses `/api/sessions/{id}` and `/api/sessions/{id}/events`.
 
 ## Start on the same machine
 
@@ -64,11 +81,14 @@ The Web heartbeat reports **服务离线** and disables sending while the tunnel
 
 - Web-managed credentials stay in `/data/auth.json` with mode `0600`; Compose persists `/data` in the `gohermit-data` volume.
 - Owner Profile data stays in `/data/owner.json`, is editable/forgettable, rejects credential patterns, and is never placed in the workspace.
+- Team Template and Loop Definition/Invocation data stay in the persistent `/data` volume outside target repositories.
 - Model keys and OAuth tokens are never returned by `/api/info` or any settings response.
 - The workspace and config path are fixed when the server starts; browser selections can only reference server-defined catalog entries.
 - Only one task may run at a time.
 - Request size and task length are bounded; Runs continue across an SSE reconnect and stop only through their bounded runtime or the explicit cancel endpoint.
 - Browser POSTs are same-origin checked and responses set a restrictive content security policy.
+- Loop request bodies are capped, strictly decoded with unknown-field rejection, and never accept credentials. Verification commands are argv arrays and still pass the existing policy allowlist.
+- Dry Run reads readiness only: it never calls a model, creates a Session/Run, consumes Approval, changes a Definition revision, or writes the workspace.
 - The container drops Linux capabilities, enables `no-new-privileges`, mounts config read-only, and does not mount the Docker socket.
 - Repository build/test code and configured plugins remain trusted code; Docker packaging is isolation-in-depth, not a hostile-code sandbox.
 

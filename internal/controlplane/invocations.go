@@ -39,11 +39,11 @@ const (
 // failure after the gates (session creation, run start) transitions the
 // invocation to skipped/failed and returns it alongside the error.
 //
-// Known limitation (PR33 follow-up): the definition's budget fields are not
-// plumbed into run creation — StartRun accepts no budget today, so the run
-// executes under the existing mission/run defaults. The CLI bounds its wait
-// by the snapshot's budget timeout, but no enforcement reaches the run.
-// Verification recipe enforcement is also PR33 scope.
+// Known limitation: the definition's budget fields are not plumbed into run
+// creation — StartRun accepts no budget today, so the run executes under the
+// existing mission/run defaults. The CLI bounds its wait by the snapshot's
+// budget timeout, but no enforcement reaches the run. Verification Recipe
+// execution and acceptance are enforced below through the existing pipeline.
 func (s *Service) StartLoopInvocation(ctx context.Context, loopID string) (loop.Invocation, error) {
 	if err := s.loopStoreAvailable(); err != nil {
 		return loop.Invocation{}, err

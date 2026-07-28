@@ -1,6 +1,6 @@
 # Next development plan
 
-This file starts after the `0.5.0-dev` adaptive Plan/Team milestone. Durable event commits, task-specific titles, review-first approval, intent-based Team topology, parallel read-only preflight, and bounded repair/reverify are implemented; do not plan them again.
+This file starts after the `0.6.0-dev` Loop Workbench milestone. Durable Session/Run recovery, Live Plan, Personal Agent Team, Scoped Approval, Loop Domain/Store, Dry Run, Manual Invocation, Verification Recipe, and the Web Loop Workbench are implemented; do not plan them again. PR #28–#33 are complete.
 
 ## P0: eval-driven Plan refinement — DONE
 
@@ -32,19 +32,24 @@ Acceptance: unattended mode denies approval-required actions; approvals cannot b
 - PR #27 (`fix/verifier-synthetic-check`) is merged as `a3e396e` (owner action after the 2026-07-24 audit was written): read-only Team Runs pass verification with `Checks == [] && Issues == []`; mutation runs still require at least one real passing Check. `team.HandoffChecksPassed` is the single definition shared with runcontrol.
 - Historical drafts PR #2, PR #3, PR #4 are stale: their heads are ancestors of `main` and contain no unmerged product code. They are safe for the owner to close; closing is left to the owner (no GitHub write actions by the agent).
 
-## P3: isolated writer worktrees
+## Worktree Foundation — POSTPONED
 
 Draft an ADR before implementation. Add temporary Git worktrees only after merge ownership, conflict handling, cleanup, recovery, ignored files, submodules, and user changes have deterministic tests. Until then, keep one writer.
 
 Status: ADR 0012 drafted (PR #24) but UNRESOLVED — its WIP self-commit recovery model conflicts with the no-auto-commit invariant (see gap analysis section 6.3). Owner decision required before any worktree implementation.
 
-## P4: private background service
+## v0.7: Task Inbox and Shared Artifacts
 
-After scoped approval is complete, design an optional local daemon, task inbox, schedule, and notifications for the single owner. It must remain local by default and cannot silently commit, push, deploy, message, or publish.
+1. Add a bounded owner-visible Task Inbox that can prepare work without starting a model or Run.
+2. Define Shared Artifacts/Reports as bounded, redacted, owner-scoped outputs linked to the existing Session, Run, and Loop Invocation records.
+3. Reuse the Control Plane and existing stores; do not add a second Run, approval, verification, or event state machine.
+4. Keep execution manual and foreground in the first slice. Cron, a background daemon, notifications, and Publisher actions require separate ADRs and approval semantics.
 
-## Loop Mode (v0.6, from docs/gohermit-gap-analysis-next-prd-2026-07-24.md)
+Acceptance: Inbox refresh/restart recovery is idempotent; consuming an item creates at most one Session/Run; artifacts contain no secrets, private reasoning, full prompts, or unbounded raw tool output.
 
-In progress under that document's narrowed scope: PR28 docs calibration (this note), then Control Plane application services, Loop Domain/Store, Dry Run, Manual Invocation, and Verification Recipe. Worktree isolation, Loop UI, cron/daemon, Task Inbox/Artifacts, and any Publisher remain deferred.
+## Loop Mode (v0.6) — DONE
+
+PR #28–#33 completed documentation calibration, Control Plane application services, Loop Domain/Store, Dry Run, Manual Invocation, and Verification Recipe. The v0.6 Loop Workbench now exposes create/import/edit, readiness, start, Session-backed Timeline, history, cancellation, and refresh recovery in the local Web product. Worktree isolation, cron/daemon, Task Inbox/Shared Artifacts, and Publisher remain outside v0.6.
 
 ## Explicitly deferred
 
@@ -53,3 +58,4 @@ In progress under that document's narrowed scope: PR28 docs calibration (this no
 - Unbounded autonomous Agent creation or free-form Agent chat
 - Automatic commit, push, deploy, messaging, or pull-request creation without scoped approval
 - Telemetry or a remote control plane
+- Cron, a background daemon, notifications, and Publisher actions until separate ADRs define their safety and recovery semantics

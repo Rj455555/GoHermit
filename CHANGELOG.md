@@ -2,6 +2,10 @@
 
 ## 0.6.0-dev
 
+- Added the Codex-style Loop Workbench with Dashboard/Agent/Loops/Settings navigation, Definition create/import/edit forms, configured provider/model selection, argv verification editing, revision display, Dry Run Review, manual start, bounded history, cancellation, and refresh recovery.
+- Added REST resources for Loop Definitions and Invocations. Web handlers remain thin same-origin, size-capped, strict-JSON transports over the same `internal/controlplane` services used by the CLI.
+- Added a resumable Invocation Timeline built from the existing Session/Run, Live Plan, Team, tool summary, Scoped Approval, Verification evidence, repair/reverify, and SSE journal; no second runtime or event store was introduced.
+- Added a credential-free, read-only documentation-maintenance Loop template and Fake Provider Playwright coverage for create/import persistence, revision updates, readiness failure, start, Timeline, refresh recovery, cancellation, history, and Dashboard/Agent/Settings regressions.
 - Added Loop Mode foundation: an owner-scoped, versioned Loop Definition and Invocation domain (`internal/loop`, `internal/loopstore`) reusing the existing Session/Run kernel — no second Agent runtime, Run state machine, or Verifier framework.
 - Added `hermit loop dry-run` and `hermit loop list`: a zero-side-effect readiness report (workspace/git match, task, per-role provider/credential status, write scope, checks, budget, approval requirement) that never calls a model, creates a Session, or touches the workspace.
 - Added `hermit loop run`, `hermit loop history`, and `hermit loop cancel`: manual Loop Invocations that snapshot the Definition, bind to one independent Session/Run, and recover after a crash without duplicating Sessions, Runs, or replaying completed tool calls; a dirty workspace fails a mutating Invocation closed before any provider call.

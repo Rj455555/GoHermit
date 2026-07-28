@@ -35,6 +35,11 @@ const (
 	invocationsDir  = "invocations"
 )
 
+// ErrDefinitionNotFound lets application services distinguish a missing
+// definition from a corrupt or unavailable owner store without parsing an
+// error string.
+var ErrDefinitionNotFound = errors.New("loop definition not found")
+
 // definitionsFileBody is the on-disk shape of definitions.json.
 type definitionsFileBody struct {
 	SchemaVersion int               `json:"schema_version"`
@@ -123,7 +128,7 @@ func (s *Store) GetDefinition(id string) (loop.Definition, error) {
 			return d, nil
 		}
 	}
-	return loop.Definition{}, fmt.Errorf("loop definition %q not found", id)
+	return loop.Definition{}, fmt.Errorf("%w: %q", ErrDefinitionNotFound, id)
 }
 
 // ListDefinitions returns every stored definition, sorted by id.
@@ -154,7 +159,7 @@ func (s *Store) DeleteDefinition(id string) error {
 		body.Definitions = append(body.Definitions[:i], body.Definitions[i+1:]...)
 		return s.saveDefinitions(body)
 	}
-	return fmt.Errorf("loop definition %q not found", id)
+	return fmt.Errorf("%w: %q", ErrDefinitionNotFound, id)
 }
 
 // loadDefinitions reads definitions.json. A missing file yields an empty
