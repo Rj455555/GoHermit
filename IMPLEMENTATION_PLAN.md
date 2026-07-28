@@ -2243,6 +2243,17 @@ Phase 7 implementation evidence (2026-07-28):
 
 - Product/test implementation commit:
   `a67c5eb` (`feat(phase7): add manual employee task execution lifecycle`).
+- Initial implementation-evidence commit:
+  `cd70778` (`docs(plan): record phase 7 implementation evidence`).
+- CI stabilization commit:
+  `d8d5b1b` (`fix(phase7): wait for resumed run projection`). The first PR
+  workflow (`30373666574`) exposed a scheduling race in which Resume had
+  successfully relaunched the original Run but could project the prior
+  `interrupted` checkpoint before the Runner goroutine persisted `running`.
+  Resume now performs a bounded read-only wait for the existing Session/Run
+  checkpoint, including idempotent repeated Resume; it never manufactures a
+  Task state or creates a replacement Run. A missing transition fails
+  explicitly instead of returning a stale successful response.
 - Actual implementation files:
   - `internal/controlplane/employee_execution.go`,
     `internal/controlplane/employee_tasks.go`, `internal/controlplane/runs.go`,
@@ -2310,6 +2321,8 @@ Phase 7 implementation evidence (2026-07-28):
   - `TestRegistryEmployeePolicyCanOnlyNarrowExistingTools`;
   - `TestEmployeeTaskExecutionMutationsRequireSameOriginAndTrueEmptyBody`.
 - Local verification:
+  - PASS `TestEmployeeTaskInterruptedResumeUsesOriginalRun` with `-count=50`
+    after the CI stabilization;
   - PASS Phase 7 scoped Control Plane/Run Control/Employee Store/Memory/Web
     tests and Session/Agent/Approval/Verification/Loop/Loop Store/Team
     regressions;
@@ -2341,9 +2354,21 @@ Phase 7 implementation evidence (2026-07-28):
   - Artifact metadata truncates deterministically after 128 sorted modified
     paths; content remains in the Workspace/Session truth and is never copied
     into the Employee Store.
-- GitHub Go, Docker, and Web E2E push/PR CI evidence will be appended after the
-  clean branch is pushed and the new Draft PR is created. Phase 8 has not
-  started.
+- GitHub CI:
+  - initial push workflow `30373599234`: Go, Docker, and Web E2E PASS;
+  - initial PR workflow `30373666574`: Docker and Web E2E PASS; Go exposed the
+    Resume projection scheduling race described above;
+  - stabilization push workflow
+    [30374549389](https://github.com/Rj455555/GoHermit/actions/runs/30374549389):
+    Go, Docker, and Web E2E PASS;
+  - stabilization PR workflow
+    [30374553688](https://github.com/Rj455555/GoHermit/actions/runs/30374553688):
+    Go, Docker, and Web E2E PASS;
+  - `live-smoke` was skipped by workflow design in each successful run.
+- Review branch `agent/electronic-employees-v0.7-phase7` remains based on
+  `origin/main@f213ac19`; Draft PR
+  [#40](https://github.com/Rj455555/GoHermit/pull/40) remains Open, Draft,
+  unmerged, and without auto-merge. Phase 8 has not started.
 
 ### Phase 8: Employees and Tasks Web UI
 
