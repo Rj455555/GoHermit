@@ -6,8 +6,8 @@
 
 - Revised plan: Owner-approved on 2026-07-28.
 - Phase 1: Owner-approved on 2026-07-28.
-- Phase 2: Gate revision implemented and verified after Owner rejection;
-  waiting for Owner reapproval.
+- Phase 2: containment Gate revision implemented and verified after Owner
+  rejection; waiting for Owner reapproval.
 - Phase 3 and every later product-code change remain blocked.
 - Required terminal status:
   `WAITING_FOR_PHASE_2_REAPPROVAL`.
@@ -1356,6 +1356,55 @@ Phase 2 Gate revision record (2026-07-28):
 - Remaining accepted risks are unchanged: writes are atomic per file rather
   than cross-file transactional, and locking is in-process only. No recovery
   journal or second state machine was added. No Phase 3 subsystem was started.
+
+Phase 2 full-path containment revision record (2026-07-28):
+
+- Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`.
+- Security revision commit:
+  `9190433834b922672ec21ae99ce4f0a3fde4a00a`
+  (`fix(employees): contain all store paths`).
+- `NewStore` now resolves the deepest existing ancestor and stores a stable,
+  canonical real root. It does not scan Home and still represents exactly one
+  owner-scoped Employee Store.
+- All index, Employee, Projects, Revision, and Activity reads use one secure
+  path layer. It enforces lexical containment, walks every existing directory
+  with `Lstat`, rejects parent symlinks, rejects final-file symlinks, and
+  requires a bounded regular file before reading.
+- All Store writes use the same path layer, create missing directories one
+  component at a time only after checking the complete parent chain, reject
+  symlink/non-regular final targets, and then delegate to the existing
+  same-directory `storage.AtomicWrite` implementation with `0600`, fsync, and
+  rename behavior unchanged. Immutable Revision targets retain exclusive
+  create-once checks.
+- `loadIndex` validates every Summary ID with the complete Store ID contract
+  before any path use. Invalid traversal, absolute, encoded, or otherwise
+  unsupported IDs are `ErrCorrupt`; caller-supplied invalid IDs are input
+  errors. Control Plane/Web evidence verifies HTTP 500 and 400 respectively.
+- `Get`, `List`, `Activity`, and lifecycle mutations validate the complete
+  Employee layout, including the Employee directory, current files, Activity
+  directory/file, Revisions directory, and every Revision entry. A symlink or
+  non-regular entry anywhere in that known layout fails closed before a
+  mutation can reach an external target.
+- macOS tests executed real symlink attacks for external index, Employee
+  directory, employee file, projects file, Activity directory/file, Revisions
+  directory/file, plus a pre-positioned Employee-directory write target.
+  Tests assert Get/List/Activity/lifecycle failure and byte-for-byte unchanged
+  external targets. No symlink test was skipped.
+- Verification after the containment revision:
+  - `go test ./internal/employeestore ./internal/controlplane ./internal/web -count=1`: pass;
+  - `go test ./... -count=1`: pass;
+  - `go test -race ./... -count=1`: pass;
+  - `go vet ./...`: pass;
+  - CLI and Web builds: pass;
+  - `gofmt`, `git diff --check`, and secret-pattern scan: pass;
+  - Employee Store statement coverage: 81.8%.
+- Scope deviation: none. The revision changes only Employee Store path
+  handling and necessary error-mapping tests inside the authorized Phase 2
+  file boundary.
+- Remaining accepted risks are unchanged: writes are atomic per file, not a
+  cross-file transaction, and locking is process-local. No Recovery Journal,
+  second state machine, multi-Workspace manager, or Phase 3 subsystem was
+  added.
 
 ### Phase 3: Skill Catalog, SKILL.md Adapter, policy intersection, and context contract
 
