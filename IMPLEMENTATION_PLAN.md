@@ -1142,7 +1142,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
-| 5 | Employee Task Inbox persistence and API | `IN_PROGRESS` | Clean branch `agent/electronic-employees-v0.7-phase5` from `origin/main@e65bc119` |
+| 5 | Employee Task Inbox persistence and API | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Gate `6fa05473`; evidence `9473c7c2`; Draft PR #38 |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
@@ -1788,6 +1788,9 @@ Session/Run/model side effects.
 - Snapshot Digest Gate revision commit:
   `6fa05473b602c2d6af962f0cf78b7876a1b23d3e`
   (`fix(phase5): decouple task snapshot digest from execution bindings`).
+- Snapshot Digest Gate evidence commit:
+  `9473c7c26a3bc590f9adced03bd01771dc090150`
+  (`docs(plan): record phase 5 snapshot digest gate evidence`).
 - Review target:
   Draft PR [#38](https://github.com/Rj455555/GoHermit/pull/38), base `main`,
   head `agent/electronic-employees-v0.7-phase5`. Creation is deliberately the
@@ -1910,7 +1913,20 @@ PASS gofmt and git diff --check
 PASS credential-shaped secret-pattern scan
 PASS independent compose.yaml YAML parse
 PASS macOS real symlink/non-regular/containment tests with no skip
+PASS push CI run 30359658660: go, docker, and web-e2e
+PASS PR CI run 30359661797: go, docker, and web-e2e
+EXPECTED SKIP live-smoke in both final Gate CI runs
 ```
+
+- Final Gate CI:
+  - Push CI
+    [30359658660](https://github.com/Rj455555/GoHermit/actions/runs/30359658660)
+    completed successfully.
+  - PR CI
+    [30359661797](https://github.com/Rj455555/GoHermit/actions/runs/30359661797)
+    completed successfully.
+  - Go, Docker, and Web E2E succeeded in both runs; `live-smoke` was skipped
+    by design.
 
 - Deliberate Phase 5 deviation: JSON round-trip testing exposed that the
   existing deep-copy helpers collapsed non-nil empty slices to nil. That
