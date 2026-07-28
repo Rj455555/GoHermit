@@ -19,10 +19,12 @@ services:
       GOHERMIT_TEAM_TEMPLATE_STORE: "/data/team-templates"
       GOHERMIT_LOOP_STORE: "/data/loops"
       GOHERMIT_EMPLOYEE_STORE: "/data/employees"
+      GOHERMIT_SKILL_CATALOG: "/skills"
     volumes:
       - "${GOHERMIT_WORKSPACE:-./sandbox}:/workspace"
       - "${GOHERMIT_CONFIG:-./configs/codex.toml}:/config/hermit.toml:ro"
       - "${HOME}/.codex:/codex:ro"
+      - "${GOHERMIT_SKILL_CATALOG:-./skills}:/skills:ro"
       - "gohermit-data:/data"
     init: true
     restart: unless-stopped

@@ -188,3 +188,170 @@ func validateCapability(value string) error {
 	}
 	return nil
 }
+
+// CapabilityIntersection contains every policy ceiling that participates in
+// Phase 3 capability calculation. The zero value fails closed.
+type CapabilityIntersection struct {
+	Global             []string
+	AgentToolPolicy    string
+	Employee           []string
+	Project            []string
+	Task               []string
+	GlobalNetwork      bool
+	EmployeeNetwork    bool
+	ProjectNetwork     bool
+	TaskNetwork        bool
+	EnabledSkillGrants []SkillCapabilityGrant
+}
+
+// SkillCapabilityGrant is a capability request, never an authorization.
+// InstructionOnly is true for the read-only SKILL.md compatibility adapter.
+type SkillCapabilityGrant struct {
+	Enabled         bool
+	InstructionOnly bool
+	Requested       []string
+}
+
+type EffectivePolicy struct {
+	AllowedCapabilities []string `json:"allowed_capabilities"`
+	NetworkAllowed      bool     `json:"network_allowed"`
+}
+
+var knownCapabilities = map[string]struct{}{
+	"read": {}, "write": {}, "execute": {}, "network": {},
+	"read_file": {}, "write_file": {},
+	"filesystem.read": {}, "filesystem.list": {}, "filesystem.search": {}, "filesystem.write": {},
+	"patch.apply": {}, "shell.execute": {}, "git.status": {}, "git.diff": {}, "git.log": {}, "test.run": {},
+}
+
+// ValidateRequestedCapabilities rejects duplicate and unknown capability
+// names. It is exported so the catalog and binding boundary share one
+// fail-closed vocabulary.
+func ValidateRequestedCapabilities(values []string) error {
+	if len(values) > MaxPolicyItems {
+		return fmt.Errorf("capability set exceeds %d items", MaxPolicyItems)
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if err := validateCapability(value); err != nil {
+			return err
+		}
+		if _, known := knownCapabilities[value]; !known {
+			return fmt.Errorf("unknown capability %q", value)
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return fmt.Errorf("duplicate capability %q", value)
+		}
+		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+// ResolveEffectivePolicy implements:
+//
+//	base = Global ∩ AgentProfile ToolPolicy ∩ Employee ∩ Project ∩ Task
+//
+// With no enabled Skill, effective is base. With enabled Skills, effective is
+// base intersected with the union of native Skill requests. Adapter Skills
+// contribute no capabilities and therefore can only narrow the result.
+func ResolveEffectivePolicy(input CapabilityIntersection) (EffectivePolicy, error) {
+	layers := [][]string{input.Global, input.Employee, input.Project, input.Task}
+	for _, layer := range layers {
+		if err := ValidateRequestedCapabilities(layer); err != nil {
+			return EffectivePolicy{}, err
+		}
+	}
+	agent, err := agentPolicyCapabilities(input.AgentToolPolicy)
+	if err != nil {
+		return EffectivePolicy{}, err
+	}
+	layers = append(layers[:1], append([][]string{agent}, layers[1:]...)...)
+	base := intersectCapabilities(layers...)
+
+	enabled := false
+	requested := make(map[string]struct{})
+	for _, grant := range input.EnabledSkillGrants {
+		if !grant.Enabled {
+			continue
+		}
+		enabled = true
+		if grant.InstructionOnly {
+			if len(grant.Requested) != 0 {
+				return EffectivePolicy{}, errors.New("instruction-only Skill requested capabilities")
+			}
+			continue
+		}
+		if err := ValidateRequestedCapabilities(grant.Requested); err != nil {
+			return EffectivePolicy{}, fmt.Errorf("Skill capability request: %w", err)
+		}
+		for _, capability := range grant.Requested {
+			requested[capability] = struct{}{}
+		}
+	}
+	if enabled {
+		filtered := base[:0]
+		for _, capability := range base {
+			if _, requestedBySkill := requested[capability]; requestedBySkill {
+				filtered = append(filtered, capability)
+			}
+		}
+		base = filtered
+	}
+	network := input.GlobalNetwork && input.EmployeeNetwork && input.ProjectNetwork && input.TaskNetwork &&
+		containsCapability(base, "network")
+	return EffectivePolicy{AllowedCapabilities: base, NetworkAllowed: network}, nil
+}
+
+func agentPolicyCapabilities(policy string) ([]string, error) {
+	switch policy {
+	case "full", "team":
+		return capabilityUniverse(), nil
+	case "read":
+		return []string{"filesystem.list", "filesystem.read", "filesystem.search", "git.diff", "git.log", "git.status", "read", "read_file"}, nil
+	case "verify":
+		return []string{"execute", "filesystem.list", "filesystem.read", "filesystem.search", "git.diff", "git.log", "git.status", "read", "read_file", "test.run"}, nil
+	default:
+		return nil, fmt.Errorf("unknown AgentProfile ToolPolicy %q", policy)
+	}
+}
+
+func capabilityUniverse() []string {
+	result := make([]string, 0, len(knownCapabilities))
+	for capability := range knownCapabilities {
+		result = append(result, capability)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func intersectCapabilities(layers ...[]string) []string {
+	if len(layers) == 0 {
+		return []string{}
+	}
+	counts := make(map[string]int)
+	for index, layer := range layers {
+		seen := make(map[string]struct{}, len(layer))
+		for _, capability := range layer {
+			if _, duplicate := seen[capability]; duplicate {
+				continue
+			}
+			seen[capability] = struct{}{}
+			if index == 0 || counts[capability] == index {
+				counts[capability] = index + 1
+			}
+		}
+	}
+	result := make([]string, 0)
+	for capability, count := range counts {
+		if count == len(layers) {
+			result = append(result, capability)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func containsCapability(values []string, wanted string) bool {
+	index := sort.SearchStrings(values, wanted)
+	return index < len(values) && values[index] == wanted
+}
