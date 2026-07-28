@@ -22,18 +22,27 @@ const loopEventTypes = [
 ];
 
 function switchWorkbenchView(view) {
-  const target = ['agent', 'dashboard', 'loops'].includes(view) ? view : 'agent';
+  const target = ['agent', 'dashboard', 'employees', 'employee-tasks', 'loops'].includes(view) ? view : 'agent';
+  if (target !== 'employee-tasks' && typeof closeTaskEvents === 'function') closeTaskEvents();
   $('#agent-view').classList.toggle('hidden', target !== 'agent');
   $('#dashboard-view').classList.toggle('hidden', target !== 'dashboard');
+  $('#employees-view').classList.toggle('hidden', target !== 'employees');
+  $('#employee-tasks-view').classList.toggle('hidden', target !== 'employee-tasks');
   $('#loops-view').classList.toggle('hidden', target !== 'loops');
   $('#app').classList.toggle('view-dashboard', target === 'dashboard');
+  $('#app').classList.toggle('view-employees', target === 'employees');
+  $('#app').classList.toggle('view-employee-tasks', target === 'employee-tasks');
   $('#app').classList.toggle('view-loops', target === 'loops');
   $('#dashboard-button').classList.toggle('active', target === 'dashboard');
+  $('#employees-button').classList.toggle('active', target === 'employees');
+  $('#employee-tasks-button').classList.toggle('active', target === 'employee-tasks');
   $('#tasks-button').classList.toggle('active', target === 'agent');
   $('#loops-button').classList.toggle('active', target === 'loops');
   localStorage.setItem('gohermit.view', target);
   closeMobileSidebar();
   if (target === 'dashboard') renderLoopDashboard();
+  if (target === 'employees' && typeof loadEmployees === 'function') loadEmployees().catch(error => showEmployeeError(error));
+  if (target === 'employee-tasks' && typeof loadEmployeeTaskWorkbench === 'function') loadEmployeeTaskWorkbench().catch(error => showTaskError(error));
   if (target === 'loops') loadLoops().catch(error => toast(error.message, true));
 }
 
@@ -755,6 +764,8 @@ function refillLoopModels() {
 }
 
 $('#dashboard-button').addEventListener('click', () => switchWorkbenchView('dashboard'));
+$('#employees-button').addEventListener('click', () => switchWorkbenchView('employees'));
+$('#employee-tasks-button').addEventListener('click', () => switchWorkbenchView('employee-tasks'));
 $('#tasks-button').addEventListener('click', () => switchWorkbenchView('agent'));
 $('#loops-button').addEventListener('click', () => switchWorkbenchView('loops'));
 $('#brand-button').addEventListener('click', () => switchWorkbenchView('agent'));

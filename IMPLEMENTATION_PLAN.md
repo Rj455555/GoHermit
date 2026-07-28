@@ -14,11 +14,13 @@
   `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`.
 - Phase 6: `OWNER_APPROVED`; squash-merged through PR #39 into
   `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`.
-- Phase 7: `OWNER_APPROVED`; ready for Owner-authorized squash merge through
-  PR #40 from clean branch `agent/electronic-employees-v0.7-phase7`.
-- Phase 8 and every later product-code change remain blocked.
+- Phase 7: `OWNER_APPROVED`; squash-merged through PR #40 into
+  `origin/main@d8194df88c474d43d0576e26d61d304df74ecefb`.
+- Phase 8: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
+  `agent/electronic-employees-v0.7-phase8`.
+- Phase 9 and every later product-code change remain blocked.
 - Required terminal status:
-  `PHASE_7_OWNER_APPROVED_PENDING_MERGE`.
+  `WAITING_FOR_PHASE_8_REAPPROVAL`.
 
 ### Fixed invariants
 
@@ -68,26 +70,27 @@
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` |
 | 6 | Runtime Preparation | `OWNER_APPROVED` |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
-| 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
+| 8 | Employees and Tasks Web UI | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
 
 ### Current phase scope
 
 - Phases 1 through 7 are Owner-approved and closed to further implementation.
-- Phase 7 Manual Execution Lifecycle is complete and awaiting the authorized
-  PR #40 squash merge before Phase 8 work begins.
+- Phase 8 Employees and Tasks Web UI is implementation-complete over existing
+  APIs, Session SSE, and the existing execution state machine; the Web UI Gate
+  revision is complete and waiting for Owner reapproval.
 - Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery remains
   the only execution truth and kernel.
-- Keep Phase 8 and all later phases blocked until the next explicit Owner Gate.
+- Keep Phase 9 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
 - No second Run/Event/Plan/Approval/Verification/Tool/recovery state machine,
   Task SSE, scheduler, daemon, auto-start-next, automatic Memory acceptance,
   multi-Workspace, cross-Employee read-only concurrency, Team Role Mapping,
-  Phase 8 UI, version, or release change.
-- No Phase 8 implementation.
+  Phase 9 implementation, version, or release change.
+- No Phase 9 implementation.
 - No merge, auto-merge, force push, or automatic Workspace submission.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
@@ -110,25 +113,25 @@ git diff --check
 
 ### Next Gate
 
-Phase 8 may start only after the Owner-authorized PR #40 squash merge is
-confirmed in the latest `origin/main`. Until then, stop with:
+Phase 9 may start only after the Owner explicitly approves Phase 8. Until then,
+stop after Phase 8 with:
 
 ```text
-STATUS: PHASE_7_OWNER_APPROVED_PENDING_MERGE
+STATUS: WAITING_FOR_PHASE_8_REAPPROVAL
 ```
 
 ---
 
-Plan status: `PHASE_7_OWNER_APPROVED_PENDING_MERGE`
-Baseline: `origin/main@f213ac19b425d536f9503073fdd68a57d74f2194`
-Feature branch: `agent/electronic-employees-v0.7-phase7`
+Plan status: `PHASE_8_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
+Baseline: `origin/main@d8194df88c474d43d0576e26d61d304df74ecefb`
+Feature branch: `agent/electronic-employees-v0.7-phase8`
 Last audited: 2026-07-29
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phases 1 through
-7 are Owner-approved. Phase 8 through Phase 10 remain blocked until PR #40 is
-confirmed merged and a clean Phase 8 branch is created from the latest main.
+7 are Owner-approved. Phase 8 is the only authorized implementation scope;
+Phase 9 and Phase 10 remain blocked.
 Each Owner approval authorizes exactly one phase.
 
 ## 1. Current-state evidence
@@ -1144,8 +1147,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` | PR #38 squash-merged as `ad31d633`; full Phase 5 is in `origin/main` |
 | 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
-| 7 | Manual Execution Lifecycle | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `a67c5eb`; Recovery Gate `7d265bd` on clean branch `agent/electronic-employees-v0.7-phase7` from `origin/main@f213ac19` |
-| 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
+| 7 | Manual Execution Lifecycle | `OWNER_APPROVED` | Recovery Gate approved and PR #40 squash-merged as `d8194df`; full Phase 7 is in `origin/main` |
+| 8 | Employees and Tasks Web UI | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Start `46fb285`; implementation `9afe90a`; Web UI Gate revision complete on clean branch `agent/electronic-employees-v0.7-phase8`; final Gate commit/CI recorded in Draft PR #41 |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` | Not started |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
 
@@ -2482,6 +2485,9 @@ Phase 7 Recovery Gate evidence (2026-07-29):
 
 ### Phase 8: Employees and Tasks Web UI
 
+Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 9 and Phase 10
+remain `BLOCKED_BY_GATE`.
+
 Independent value:
 
 - Delivers Dashboard/Employees/Tasks/Agent/Loops/Settings navigation, the
@@ -2524,6 +2530,188 @@ current-Service Workspace binding, multiple Tasks, explicit Start,
 timeline/approval, refresh, Memory Candidate accept/reject and Fact Forget,
 disable/enable/archive history, plus every existing Agent/Loops/Settings
 regression.
+
+Phase 8 implementation evidence (2026-07-29):
+
+- Clean baseline and branch:
+  - PR #40 was explicitly changed from Draft to Ready only after both Head CI
+    workflows passed, then Owner-authorized squash merge produced
+    `origin/main@d8194df88c474d43d0576e26d61d304df74ecefb`;
+  - `agent/electronic-employees-v0.7-phase8` was created directly from that
+    exact main SHA; its merge-base remains exact and no Phase 1–7 commit
+    history was reintroduced.
+- Commits:
+  - Phase start/status: `46fb285`;
+  - product implementation and tests:
+    `9afe90a91b8266698c903f1a355a65cccaa2607d`.
+- Actual product and test files:
+  - `internal/web/assets/index.html`, `styles.css`, `app.js`, and `loops.js`;
+  - new `internal/web/assets/employees.js` and `tasks.js`;
+  - `internal/web/server_test.go`;
+  - new `tests/e2e/employees.spec.ts` and `tasks.spec.ts`;
+  - `tests/e2e/static-server.mjs`;
+  - this plan.
+- UI contract:
+  - primary navigation is Dashboard / Employees / Tasks / Agent / Loops /
+    Settings without changing existing Agent or Loop routes;
+  - the bounded nine-step Employee wizard lists only
+    `available_companies`, so unconfigured or expired Provider/Access/Model
+    entries are not selectable;
+  - Employee detail independently presents Overview, Skills, Knowledge,
+    Memory, Projects, Tasks, and bounded Activity references;
+  - one Employee may retain multiple Tasks; creation stays `queued` and
+    execution begins only through the explicit existing Task Start API;
+  - Task state is rendered from the existing EmployeeTask projection, and
+    Plan, Tool, Verification, Approval, and timeline data comes from the
+    bound Session checkpoint and existing Session SSE. No Task SSE or
+    frontend execution state machine was added;
+  - fetch/SSE failures surface a recoverable error while retaining the last
+    rendered checkpoint, Plan, Tool records, and history.
+- Fake Provider E2E:
+  - `employee wizard uses only ready models and opens isolated resource
+    detail` covers all nine wizard steps, ready-model filtering, native and
+    SKILL.md Adapter display, current Workspace binding, deterministic
+    Knowledge/Citation display, Candidate accept/reject, Fact Forget,
+    Employee Task history, and disable/enable/archive Activity history;
+  - `tasks require explicit Start and render the existing Session execution
+    truth` covers multiple Tasks, zero Start calls during create, explicit
+    Start, projected status, read-only Plan checkboxes, Tool/Verification/
+    Approval projection, Session identities, and refresh failure preserving
+    previously rendered execution history;
+  - all seven pre-existing Approval/Agent/Loops/Settings browser regressions
+    remain green; total Playwright result is 9 PASS.
+- Local verification:
+  - PASS the four required `node --check` commands using the Codex workspace
+    Node runtime;
+  - PASS `pnpm test:e2e` (9 tests);
+  - PASS `go test ./internal/web -count=1`;
+  - PASS `go test ./... -count=1`;
+  - PASS `go test -race ./... -count=1`;
+  - PASS `go vet ./...`;
+  - PASS CLI and Web builds, with binaries written under `/tmp`;
+  - PASS `gofmt`, `git diff --check`, credential-shaped secret scan, and
+    `compose.yaml` YAML parse.
+- GitHub push CI
+  [30384003303](https://github.com/Rj455555/GoHermit/actions/runs/30384003303):
+  Go, Docker (including `docker compose config` and image build), and Web E2E
+  PASS; `live-smoke` skipped by workflow design.
+- Deliberate file-boundary detail: `app.js` now accepts the existing Phase 4
+  HTTP 204 mutation responses without trying to parse an empty JSON body;
+  `loops.js` only extends the existing view router to the two Phase 8 views.
+  No backend API or execution behavior changed.
+- Remaining bounded risks:
+  - the global Task view intentionally loads the newest bounded 100-Task page
+    per Employee; older history remains available through the API but the UI
+    does not yet expose cursor continuation;
+  - browser automation uses deterministic mocked Fake Provider/Store data;
+    no paid-model or external-network inference is part of the default suite;
+  - final evidence-head and Draft-PR CI links are recorded in the Draft PR
+    description to avoid an infinite self-referential evidence commit chain.
+- Phase 9 Team Role to Employee mapping is completely unstarted.
+
+Phase 8 Web UI Gate revision evidence (2026-07-29):
+
+- Root causes:
+  - the Task detail used one shared event array and recreated an EventSource
+    from sequence zero after every checkpoint refresh, so historical events
+    could replay, update events could create a refresh/reconnect loop, and
+    switching Tasks could leak the previous Task timeline;
+  - Skill controls keyed only on `skill_id`, which silently selected the first
+    Catalog version and discarded native configuration;
+  - wizard step nine displayed client-generated JSON rather than the existing
+    server Dry Run, and detail/global Task surfaces omitted parts of the
+    approved Settings, Project, Knowledge, filtering, confirmation, and
+    actionable-error contract;
+  - the initial Fake Provider E2E used legacy `session.plan`,
+    `session.tools`, and `session.verification` fallback fields instead of the
+    persisted `session.runs[].plan`, `session.tool_calls`, and
+    `session.test_results` API contract.
+- Session SSE repair:
+  - event state is isolated by immutable Task/Session identity, with the last
+    accepted monotonic sequence persisted in local storage;
+  - each connection uses
+    `/api/sessions/{id}/events?after={lastSequence}` while native EventSource
+    retains `Last-Event-ID` compatibility for transport reconnects;
+  - duplicate or non-monotonic events are ignored, bound Run IDs are enforced,
+    checkpoint refresh reuses a healthy same-Session connection, explicit
+    recovery resumes from the saved sequence, navigation closes the active
+    connection, and rendered checkpoint/event state is retained on failure;
+  - no Task SSE or frontend execution state machine was introduced.
+- Skill identity and configuration repair:
+  - checkbox, DOM, save, reload, Task-selection, and status lookup keys now use
+    the complete `skill_id + version + digest` identity;
+  - each version displays full digest, kind, requested capabilities, effective
+    intersection, and binding status;
+  - native configuration is edited as strict JSON and checked against the
+    bounded Catalog schema before the backend performs its authoritative
+    validation; SKILL.md Adapter configuration is disabled and stays at zero
+    capabilities;
+  - missing versions and stale digests remain visible, actionable, and
+    disabled rather than being silently replaced.
+- Completed UI contract:
+  - advancing from policy/budget persists the Employee once, optionally adds
+    one bounded Manual Text or current-Workspace local Knowledge source, then
+    calls the real zero-side-effect Employee Dry Run for step nine;
+  - the review displays real Provider/access/model, Workspace, Project, and
+    policy checks plus server-returned Skill/Knowledge and persisted
+    budget/concurrency evidence; blocked checks link to Settings or Employee
+    configuration;
+  - Settings uses `expected_revision`; Disable and terminal Archive require
+    confirmation; Projects only edits the current Service Workspace mutation
+    policy; archived Employee mutation controls are disabled;
+  - Overview includes policy ceiling, budget, active Task, recent verification,
+    and readiness; Knowledge supports Manual Text and bounded local source
+    kinds with full digest display;
+  - Global Tasks adds Employee, Project, state, and updated-time filters while
+    Start, Resume, Cancel, Approval, Verification, checkpoint refresh, and
+    disconnect recovery continue to project the existing backend state.
+- New and revised E2E coverage:
+  - `employee wizard pins the complete Skill identity and uses real server
+    readiness`;
+  - `Skill configuration rejects invalid JSON and never substitutes a stale or
+    Adapter identity`;
+  - `tasks require explicit Start and render the existing Session execution
+    truth`;
+  - `task Session SSE resumes by sequence, suppresses duplicates, isolates
+    Tasks, and closes on navigation`;
+  - `native EventSource receives non-empty Session history after the saved
+    sequence`;
+  - tests exercise two Catalog versions with the same Skill ID, exact second
+    version/digest persistence, required configuration, stale digest display,
+    Adapter zero-capability enforcement, Manual Text, expected-revision
+    Settings, Workspace policy, real Run plan/tool/test-result fields,
+    Start/Resume/Cancel, approve/deny, verification failure, non-empty SSE
+    history, duplicate suppression, disconnect recovery, Task isolation, and
+    leaving the Tasks page.
+- Local Gate validation:
+  - PASS all four required `node --check` commands;
+  - PASS `pnpm test:e2e` (12 tests);
+  - PASS the focused Employees/Tasks suite repeated ten times
+    (`50/50`, no fixed sleeps and no reconnect flake);
+  - PASS `go test ./internal/web -count=1`, `go test ./... -count=1`,
+    `go test -race ./... -count=1`, `go vet ./...`, CLI build, Web build,
+    `git diff --check`, credential-shaped secret scan, and Compose YAML parse;
+  - no Go source changed, so `gofmt` had no modified Go input.
+- Delivery:
+  - Gate implementation commit:
+    `47d413b3c05632d150439646e2a8cf2ddfeb5b80`;
+  - Push CI
+    [30389376017](https://github.com/Rj455555/GoHermit/actions/runs/30389376017)
+    and PR CI
+    [30389381165](https://github.com/Rj455555/GoHermit/actions/runs/30389381165)
+    both PASS on that implementation Head: Go, Docker/Compose, and Web E2E are
+    green; `live-smoke` is skipped by workflow design;
+  - the final review Head after this one evidence-only synchronization commit
+    is recorded in the Draft PR description rather than making this plan
+    self-referential and creating an infinite evidence commit chain;
+  - PR #41 must remain Open, Draft, unmerged, and without auto-merge.
+- Remaining bounded risks:
+  - the accepted newest-100 Tasks per Employee global-view limit remains;
+  - native EventSource browser reconnect behavior is covered with a real
+    non-empty stream, while deterministic cursor/crash edge cases use an
+    injected transport with the same EventSource surface;
+  - paid-provider inference remains outside the default Fake Provider E2E.
+- Phase 9 remains completely unstarted.
 
 ### Phase 9: Team Role to Employee mapping
 
@@ -2717,8 +2905,7 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-Phase 7 is Owner-approved. No Phase 8 implementation is authorized until PR
-#40 is confirmed merged and the clean Phase 8 branch is created from the latest
-`origin/main`.
+Phase 7 is Owner-approved and merged. Phase 8 is the only authorized
+implementation scope. Phase 9 and Phase 10 remain blocked.
 
-STATUS: PHASE_7_OWNER_APPROVED_PENDING_MERGE
+STATUS: WAITING_FOR_PHASE_8_REAPPROVAL
