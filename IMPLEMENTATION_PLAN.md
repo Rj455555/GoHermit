@@ -1988,11 +1988,11 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-The Phase 2 gate ends here. No Phase 3 implementation is authorized until the
-Owner explicitly accepts Phase 2, for example:
+The Phase 3 gate ends here. No Phase 4 implementation is authorized until the
+Owner explicitly accepts Phase 3, for example:
 
 ```text
-批准 Phase 2，开始 Phase 3
+批准 Phase 3，开始 Phase 4
 ```
 
-STATUS: WAITING_FOR_PHASE_2_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_3_APPROVAL
