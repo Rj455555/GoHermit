@@ -2,15 +2,404 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/Rj455555/GoHermit/internal/app"
+	"github.com/Rj455555/GoHermit/internal/config"
+	"github.com/Rj455555/GoHermit/internal/contextmgr"
 	"github.com/Rj455555/GoHermit/internal/employee"
+	"github.com/Rj455555/GoHermit/internal/employeememory"
 	"github.com/Rj455555/GoHermit/internal/employeestore"
 	"github.com/Rj455555/GoHermit/internal/knowledge"
+	"github.com/Rj455555/GoHermit/internal/session"
+	"github.com/Rj455555/GoHermit/internal/skill"
 )
+
+type EmployeeTaskPreparationState string
+
+const EmployeeTaskPrepared EmployeeTaskPreparationState = "prepared"
+
+type EmployeeTaskPreparation struct {
+	TaskID                string                       `json:"task_id"`
+	EmployeeID            string                       `json:"employee_id"`
+	EmployeeRevision      int                          `json:"employee_revision"`
+	SessionID             string                       `json:"session_id"`
+	TaskSnapshotDigest    string                       `json:"task_snapshot_digest"`
+	CompactSnapshotDigest string                       `json:"compact_snapshot_digest"`
+	State                 EmployeeTaskPreparationState `json:"state"`
+}
+
+var runtimePreparationGlobalCapabilities = []string{
+	"execute", "filesystem.list", "filesystem.read", "filesystem.search",
+	"filesystem.write", "git.diff", "git.log", "git.status", "network",
+	"patch.apply", "read", "read_file", "shell.execute", "test.run", "write", "write_file",
+}
+
+// PrepareEmployeeTask performs readiness, seals compact recovery context, and
+// reconciles exactly one stable schema-v6 Session. It never builds a runtime,
+// creates a Run, invokes a model/provider, executes a Tool, or takes a
+// workspace execution lease.
+func (s *Service) PrepareEmployeeTask(ctx context.Context, taskID string) (EmployeeTaskPreparation, error) {
+	if err := ctx.Err(); err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInvalid, err)
+	}
+	s.prepareMu.Lock()
+	defer s.prepareMu.Unlock()
+
+	task, err := s.employees.GetTask(taskID)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classifyEmployeeStore(err)
+	}
+	if task.State != employee.TaskQueued {
+		return EmployeeTaskPreparation{}, classified(KindConflict, errors.New("only a queued Employee Task can be prepared"))
+	}
+	current, err := s.employees.Get(task.EmployeeID)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classifyEmployeeStore(err)
+	}
+	if current.Employee.State != employee.StateActive {
+		return EmployeeTaskPreparation{}, classified(KindConflict, fmt.Errorf("Employee state %s is not ready", current.Employee.State))
+	}
+	revision, err := s.employees.LoadRevision(task.EmployeeID, task.EmployeeRevision)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classifyEmployeeStore(err)
+	}
+	if !reflect.DeepEqual(revision, task.EmployeeSnapshot) {
+		return EmployeeTaskPreparation{}, classified(KindInternal, errors.New("Employee Task revision snapshot does not match immutable revision Store"))
+	}
+	if err := s.validateWorkspaceBindings([]employee.ProjectBinding{task.ProjectBinding}); err != nil {
+		return EmployeeTaskPreparation{}, classified(KindConflict, err)
+	}
+	workspace, err := canonicalWorkspace(s.Workspace)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, err)
+	}
+	if task.ProjectBinding.WorkspaceRealPath != workspace {
+		return EmployeeTaskPreparation{}, classified(KindConflict, errors.New("Employee Task ProjectBinding does not exactly match the current service workspace"))
+	}
+	sessionWorkspace, err := filepath.Abs(s.Workspace)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, fmt.Errorf("resolve Session workspace: %w", err))
+	}
+
+	configuration, err := app.LoadConfig(s.Workspace, s.ConfigPath)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classified(KindConflict, fmt.Errorf("service configuration is not ready: %w", err))
+	}
+	selection := config.RuntimeSelection{
+		Company: task.EmployeeSnapshot.Employee.DefaultSelection.Company,
+		Access:  task.EmployeeSnapshot.Employee.DefaultSelection.Access,
+		Model:   task.EmployeeSnapshot.Employee.DefaultSelection.Model,
+		Agent:   task.EmployeeSnapshot.Employee.AgentProfile,
+	}
+	liveModels, err := s.validateSelection(ctx, selection)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classified(KindConflict, fmt.Errorf("provider, access, model, or Agent Profile is not ready: %w", err))
+	}
+	_, agentProfile, err := config.ResolveSelectionWithModels(selection, liveModels)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classified(KindConflict, fmt.Errorf("provider, access, model, or Agent Profile is not ready: %w", err))
+	}
+	access, ok := config.AccessProfile(selection.Company, selection.Access)
+	if !ok {
+		return EmployeeTaskPreparation{}, classified(KindConflict, errors.New("Employee Task access method is not configured"))
+	}
+	ready, _, detail := s.AccessStatus(ctx, access)
+	if !ready {
+		return EmployeeTaskPreparation{}, classified(KindConflict, errors.New(detail))
+	}
+
+	compactSkills, grants, err := s.prepareTaskSkills(task)
+	if err != nil {
+		return EmployeeTaskPreparation{}, err
+	}
+	compactKnowledge, err := s.prepareTaskKnowledge(task)
+	if err != nil {
+		return EmployeeTaskPreparation{}, err
+	}
+	compactMemory, err := s.prepareTaskMemory(task)
+	if err != nil {
+		return EmployeeTaskPreparation{}, err
+	}
+	effective, err := employee.ResolveEffectivePolicy(employee.CapabilityIntersection{
+		Global: runtimePreparationGlobalCapabilities, AgentToolPolicy: agentProfile.ToolPolicy,
+		Employee: task.EmployeeSnapshot.Employee.PermissionPolicy.AllowedCapabilities,
+		Project:  task.ProjectBinding.AllowedToolCapabilities, Task: task.Policy.AllowedCapabilities,
+		GlobalNetwork:   configuration.Permissions.AllowNetwork,
+		EmployeeNetwork: task.EmployeeSnapshot.Employee.PermissionPolicy.NetworkAllowed,
+		ProjectNetwork:  task.ProjectBinding.NetworkAllowed, TaskNetwork: task.Policy.NetworkAllowed,
+		EnabledSkillGrants: grants,
+	})
+	if err != nil {
+		return EmployeeTaskPreparation{}, classified(KindConflict, fmt.Errorf("effective capability policy is not ready: %w", err))
+	}
+	compact := employee.CompactSnapshot{
+		SchemaVersion: employee.CompactSnapshotSchemaVersion,
+		EmployeeID:    task.EmployeeID, EmployeeRevision: task.EmployeeRevision,
+		TaskID: task.ID, TaskSnapshotDigest: task.SnapshotDigest,
+		Identity: employee.CompactIdentity{
+			Name:               task.EmployeeSnapshot.Employee.Name,
+			JobTitle:           task.EmployeeSnapshot.Employee.JobTitle,
+			Charter:            task.EmployeeSnapshot.Employee.Charter,
+			Responsibilities:   append([]string{}, task.EmployeeSnapshot.Employee.Responsibilities...),
+			BehaviorBoundaries: append([]string{}, task.EmployeeSnapshot.Employee.BehaviorBoundaries...),
+		},
+		EffectivePolicy: effective, Budget: task.Policy.Budget,
+		Project: employee.CompactProject{
+			BindingID:            task.ProjectBinding.ID,
+			WorkspaceFingerprint: task.ProjectBinding.WorkspaceFingerprint,
+			ReadAllowed:          task.ProjectBinding.ReadAllowed,
+			MutationAllowed:      task.ProjectBinding.MutationAllowed,
+			NetworkAllowed:       task.ProjectBinding.NetworkAllowed,
+			WorkspaceSummary: fmt.Sprintf(
+				"binding=%s; real_path=%s; fingerprint=%s; read=%t; mutation=%t",
+				task.ProjectBinding.ID, workspace, task.ProjectBinding.WorkspaceFingerprint,
+				task.ProjectBinding.ReadAllowed, task.ProjectBinding.MutationAllowed,
+			),
+		},
+		Skills: compactSkills, Knowledge: compactKnowledge, Memory: compactMemory,
+	}
+	if err := employee.SealCompactSnapshot(&compact); err != nil {
+		return EmployeeTaskPreparation{}, classified(KindConflict, fmt.Errorf("compact Employee context is not ready: %w", err))
+	}
+	if _, err := contextmgr.EmployeeContextFromCompact(compact); err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, fmt.Errorf("compact Employee context contract: %w", err))
+	}
+
+	sessionID := stableEmployeeSessionID(task, workspace)
+	configDigest := session.ConfigDigest(configuration)
+	sessionSelection := session.Selection{
+		Company: selection.Company, Access: selection.Access,
+		Model: selection.Model, Agent: selection.Agent,
+	}
+	expectedJournal := employeestore.DispatchRecord{
+		SchemaVersion: employeestore.DispatchSchemaVersion,
+		EmployeeID:    task.EmployeeID, TaskID: task.ID, SessionID: sessionID,
+		TaskSnapshotDigest: task.SnapshotDigest, CompactSnapshotDigest: compact.Digest,
+		WorkspaceRealPath: workspace, Stage: employeestore.DispatchPrepared,
+	}
+	if s.store == nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, errors.New("Session Store is unavailable"))
+	}
+	sessionExists, err := s.store.CheckTarget(sessionID)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, fmt.Errorf("Session Store target is unsafe or unavailable: %w", err))
+	}
+	journal, err := s.employees.PrepareDispatch(expectedJournal)
+	if err != nil {
+		return EmployeeTaskPreparation{}, classifyEmployeeStore(err)
+	}
+	if err := s.callPrepareStageHook("journal_written"); err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, err)
+	}
+	if sessionExists {
+		existing, loadErr := s.store.Load(ctx, sessionID)
+		if loadErr != nil {
+			return EmployeeTaskPreparation{}, classified(KindInternal, loadErr)
+		}
+		if !preparedSessionMatches(existing, task, compact, workspace, sessionWorkspace, configDigest, sessionSelection) {
+			return EmployeeTaskPreparation{}, classified(KindInternal, errors.New("existing prepared Session does not match dispatch journal"))
+		}
+	} else {
+		prepared, createErr := session.NewPrepared(
+			sessionID, task.Prompt, sessionWorkspace, configDigest,
+			task.EmployeeID, task.ID, task.EmployeeRevision, task.SnapshotDigest, compact,
+		)
+		if createErr != nil {
+			return EmployeeTaskPreparation{}, classified(KindInternal, createErr)
+		}
+		prepared.Selection = sessionSelection
+		prepared.GitState = session.GitState(ctx, sessionWorkspace)
+		if saveErr := s.store.Save(ctx, prepared); saveErr != nil {
+			return EmployeeTaskPreparation{}, classified(KindInternal, saveErr)
+		}
+	}
+	if err := s.callPrepareStageHook("session_saved"); err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, err)
+	}
+	if journal.Stage != employeestore.DispatchSessionCreated {
+		journal, err = s.employees.MarkDispatchSessionCreated(task.ID)
+		if err != nil {
+			return EmployeeTaskPreparation{}, classifyEmployeeStore(err)
+		}
+	}
+	if err := s.callPrepareStageHook("journal_advanced"); err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, err)
+	}
+	return EmployeeTaskPreparation{
+		TaskID: task.ID, EmployeeID: task.EmployeeID, EmployeeRevision: task.EmployeeRevision,
+		SessionID: journal.SessionID, TaskSnapshotDigest: task.SnapshotDigest,
+		CompactSnapshotDigest: compact.Digest, State: EmployeeTaskPrepared,
+	}, nil
+}
+
+func (s *Service) prepareTaskSkills(task employee.EmployeeTask) ([]employee.CompactSkill, []employee.SkillCapabilityGrant, error) {
+	catalog, err := s.skillCatalog()
+	if err != nil {
+		return nil, nil, classified(KindInternal, err)
+	}
+	result := make([]employee.CompactSkill, 0, len(task.Skills))
+	grants := make([]employee.SkillCapabilityGrant, 0, len(task.Skills))
+	for _, binding := range task.Skills {
+		item, resolveErr := catalog.Resolve(binding.SkillID, binding.Version)
+		if errors.Is(resolveErr, fs.ErrNotExist) {
+			return nil, nil, classified(KindConflict, fmt.Errorf("pinned Skill %s@%s is missing", binding.SkillID, binding.Version))
+		}
+		if resolveErr != nil {
+			return nil, nil, classifySkillCatalog(resolveErr)
+		}
+		if item.Manifest.Digest != binding.Digest {
+			return nil, nil, classified(KindConflict, fmt.Errorf("pinned Skill %s@%s Digest changed", binding.SkillID, binding.Version))
+		}
+		if err := skill.ValidateConfiguration(item.Manifest.ConfigurationSchema, binding.Configuration); err != nil {
+			return nil, nil, classified(KindConflict, fmt.Errorf("pinned Skill %s@%s configuration: %w", binding.SkillID, binding.Version, err))
+		}
+		if !binding.Enabled {
+			continue
+		}
+		references := make([]employee.CompactSkillReference, 0, len(item.References))
+		for path, content := range item.References {
+			references = append(references, employee.CompactSkillReference{Path: path, Content: content})
+		}
+		sort.Slice(references, func(left, right int) bool { return references[left].Path < references[right].Path })
+		result = append(result, employee.CompactSkill{
+			SkillID: binding.SkillID, Version: binding.Version, Digest: binding.Digest,
+			Instructions: item.Instructions, References: references,
+		})
+		grants = append(grants, employee.SkillCapabilityGrant{
+			Enabled: true, InstructionOnly: item.Kind == skill.KindAdapter,
+			Requested: append([]string{}, item.Manifest.RequestedCapabilities...),
+		})
+	}
+	return result, grants, nil
+}
+
+func (s *Service) prepareTaskKnowledge(task employee.EmployeeTask) ([]employee.CompactKnowledge, error) {
+	if len(task.Knowledge) == 0 {
+		return []employee.CompactKnowledge{}, nil
+	}
+	state, err := s.employees.Knowledge(task.EmployeeID)
+	if err != nil {
+		return nil, classifyPhase4Store(err)
+	}
+	sources := make(map[string]knowledge.Source, len(state.Sources))
+	indexes := make(map[string]knowledge.Index, len(state.Indexes))
+	for _, source := range state.Sources {
+		sources[source.ID] = source
+	}
+	for _, index := range state.Indexes {
+		indexes[index.SourceID] = index
+	}
+	result := make([]employee.CompactKnowledge, 0)
+	for _, pinned := range task.Knowledge {
+		source, sourceOK := sources[pinned.SourceID]
+		index, indexOK := indexes[pinned.SourceID]
+		if !sourceOK || !indexOK || source.Status != knowledge.StatusReady ||
+			source.Digest != pinned.SourceDigest || index.SourceDigest != pinned.SourceDigest {
+			return nil, classified(KindConflict, fmt.Errorf("pinned Knowledge source %q changed or is unavailable", pinned.SourceID))
+		}
+		available := make(map[string]knowledge.Citation)
+		for _, document := range index.Documents {
+			for _, citation := range document.Citations {
+				available[citation.ID] = citation
+			}
+		}
+		for _, reference := range pinned.Citations {
+			citation, exists := available[reference.CitationID]
+			if !exists || citation.EmployeeID != task.EmployeeID ||
+				citation.SourceID != pinned.SourceID || citation.Path != reference.Path ||
+				citation.Digest != reference.Digest || citation.StartLine != reference.StartLine ||
+				citation.EndLine != reference.EndLine {
+				return nil, classified(KindConflict, fmt.Errorf("pinned Citation %q changed or is unavailable", reference.CitationID))
+			}
+			result = append(result, employee.CompactKnowledge{
+				SourceID: source.ID, SourceDigest: source.Digest,
+				CitationID: citation.ID, Digest: citation.Digest, Title: source.Title,
+				Path: citation.Path, StartLine: citation.StartLine, EndLine: citation.EndLine,
+				Snippet: citation.Snippet,
+			})
+		}
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].SourceID == result[right].SourceID {
+			return result[left].CitationID < result[right].CitationID
+		}
+		return result[left].SourceID < result[right].SourceID
+	})
+	return result, nil
+}
+
+func (s *Service) prepareTaskMemory(task employee.EmployeeTask) ([]employee.CompactMemory, error) {
+	if len(task.MemoryFacts) == 0 {
+		return []employee.CompactMemory{}, nil
+	}
+	facts, err := s.employees.Memory(task.EmployeeID)
+	if err != nil {
+		return nil, classifyMemoryStore(err)
+	}
+	available := make(map[string]employeememory.Fact, len(facts))
+	for _, fact := range facts {
+		available[fact.ID] = fact
+	}
+	result := make([]employee.CompactMemory, 0, len(task.MemoryFacts))
+	for _, pinned := range task.MemoryFacts {
+		fact, exists := available[pinned.FactID]
+		if !exists || fact.EmployeeID != task.EmployeeID || fact.Digest != pinned.Digest {
+			return nil, classified(KindConflict, fmt.Errorf("accepted Memory Fact %q changed or is unavailable", pinned.FactID))
+		}
+		provenance, marshalErr := json.Marshal(fact.Provenance)
+		if marshalErr != nil {
+			return nil, classified(KindInternal, marshalErr)
+		}
+		result = append(result, employee.CompactMemory{
+			FactID: fact.ID, Digest: fact.Digest, Category: fact.Category,
+			Value: fact.Value, Provenance: string(provenance),
+		})
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].FactID < result[right].FactID })
+	return result, nil
+}
+
+func stableEmployeeSessionID(task employee.EmployeeTask, workspace string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		"employee-task-session-v1", task.EmployeeID, task.ID, task.SnapshotDigest,
+		filepath.Clean(workspace),
+	}, "\x00")))
+	return "employee-" + hex.EncodeToString(sum[:16])
+}
+
+func preparedSessionMatches(
+	value *session.Session, task employee.EmployeeTask, compact employee.CompactSnapshot,
+	workspaceRealPath, sessionWorkspace, configDigest string, selection session.Selection,
+) bool {
+	return value != nil && value.SchemaVersion == session.SchemaVersion &&
+		value.ID == stableEmployeeSessionID(task, workspaceRealPath) &&
+		value.EmployeeID == task.EmployeeID && value.EmployeeTaskID == task.ID &&
+		value.EmployeeRevision == task.EmployeeRevision &&
+		value.EmployeeTaskSnapshotDigest == task.SnapshotDigest &&
+		value.EmployeeContextSnapshot != nil &&
+		value.EmployeeContextSnapshot.Digest == compact.Digest &&
+		value.Workspace == sessionWorkspace && value.ConfigDigest == configDigest &&
+		value.Selection == selection && value.Goal == task.Prompt &&
+		value.Status == session.Open && len(value.Runs) == 0 && value.ActiveRunID == ""
+}
+
+func (s *Service) callPrepareStageHook(stage string) error {
+	if s.prepareStageHook == nil {
+		return nil
+	}
+	return s.prepareStageHook(stage)
+}
 
 type EmployeeTaskSkillSelection struct {
 	SkillID string `json:"skill_id"`

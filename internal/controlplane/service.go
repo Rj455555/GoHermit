@@ -78,28 +78,30 @@ func classified(kind Kind, err error) *Error {
 // event journal; transports wrap it with request parsing and response
 // writing.
 type Service struct {
-	Workspace     string
-	ConfigPath    string
-	active        atomic.Bool
-	store         *session.Store
-	runMu         sync.Mutex
-	activeSession string
-	activeRun     string
-	cancelRun     context.CancelFunc
-	publish       Publisher
-	credentials   *modelauth.Store
-	owner         *owner.Store
-	logins        *modelauth.LoginManager
-	build         func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error)
-	codexModelsMu sync.Mutex
-	codexModels   []config.ModelOption
-	codexModelsAt time.Time
-	teamWorker    team.Worker
-	teamTemplates *teamtemplate.Store
-	loopStore     *loopstore.Store
-	employees     *employeestore.Store
-	skills        *skill.Catalog
-	knowledge     *knowledge.Catalog
+	Workspace        string
+	ConfigPath       string
+	active           atomic.Bool
+	store            *session.Store
+	runMu            sync.Mutex
+	prepareMu        sync.Mutex
+	activeSession    string
+	activeRun        string
+	cancelRun        context.CancelFunc
+	publish          Publisher
+	credentials      *modelauth.Store
+	owner            *owner.Store
+	logins           *modelauth.LoginManager
+	build            func(context.Context, string, string, config.RuntimeSelection, string, []config.ModelOption) (*app.Runtime, error)
+	codexModelsMu    sync.Mutex
+	codexModels      []config.ModelOption
+	codexModelsAt    time.Time
+	teamWorker       team.Worker
+	teamTemplates    *teamtemplate.Store
+	loopStore        *loopstore.Store
+	employees        *employeestore.Store
+	skills           *skill.Catalog
+	knowledge        *knowledge.Catalog
+	prepareStageHook func(string) error
 	// approvals is the single in-process rendezvous between parked runners
 	// and DecideApproval for the whole service lifetime (ADR 0011, C3).
 	approvals *approvalBroker

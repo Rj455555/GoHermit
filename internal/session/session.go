@@ -17,17 +17,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Rj455555/GoHermit/internal/approval"
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/model"
-	"github.com/Rj455555/GoHermit/internal/storage"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
 )
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 const commitJournalVersion = 1
 
@@ -188,6 +189,14 @@ type Session struct {
 	// (ADR 0011) inside the session checkpoint — no second persistence
 	// mechanism. Decisions travel the commit.json durable-before-visible path.
 	ApprovalRequests []approval.Request `json:"approval_requests,omitempty"`
+	// Employee preparation metadata is additive in schema v6. Legacy and
+	// ordinary sessions leave every field empty. The compact snapshot is
+	// independently capped at 64 KiB and never embeds a full Employee revision.
+	EmployeeID                 string                    `json:"employee_id,omitempty"`
+	EmployeeTaskID             string                    `json:"employee_task_id,omitempty"`
+	EmployeeRevision           int                       `json:"employee_revision,omitempty"`
+	EmployeeTaskSnapshotDigest string                    `json:"employee_task_snapshot_digest,omitempty"`
+	EmployeeContextSnapshot    *employee.CompactSnapshot `json:"employee_context_snapshot,omitempty"`
 }
 
 func New(goal, workspace, configDigest string) (*Session, error) {
@@ -197,6 +206,40 @@ func New(goal, workspace, configDigest string) (*Session, error) {
 	}
 	now := time.Now().UTC()
 	return &Session{SchemaVersion: SchemaVersion, ID: id, Title: clipTitle(goal), Goal: goal, Status: Open, CreatedAt: now, UpdatedAt: now, Workspace: workspace, ConfigDigest: configDigest, ModifiedFiles: map[string]string{}}, nil
+}
+
+// NewPrepared constructs a schema-v6 EmployeeTask Session with a caller-stable
+// ID and no Run. Runtime Preparation is the only caller; execution remains in
+// the existing Phase 7 Run lifecycle.
+func NewPrepared(
+	id, goal, workspace, configDigest, employeeID, taskID string,
+	revision int, taskSnapshotDigest string, compact employee.CompactSnapshot,
+) (*Session, error) {
+	if _, err := sessionIDPath(id); err != nil {
+		return nil, err
+	}
+	if err := employee.ValidateCompactSnapshot(compact); err != nil {
+		return nil, fmt.Errorf("compact Employee context snapshot: %w", err)
+	}
+	if compact.EmployeeID != employeeID || compact.EmployeeRevision != revision ||
+		compact.TaskID != taskID || compact.TaskSnapshotDigest != taskSnapshotDigest {
+		return nil, errors.New("compact Employee context snapshot identity mismatch")
+	}
+	now := time.Now().UTC()
+	copy := compact.Clone()
+	value := &Session{
+		SchemaVersion: SchemaVersion, ID: id, Title: clipTitle(goal), Goal: goal,
+		Status: Open, CreatedAt: now, UpdatedAt: now, Workspace: workspace,
+		ConfigDigest: configDigest, ModifiedFiles: map[string]string{},
+		Runs: []Run{}, RecentMessages: []model.Message{}, ToolCalls: []ToolRecord{},
+		CompletedSteps: []string{}, PendingSteps: []string{}, TestResults: []TestResult{},
+		EmployeeID: employeeID, EmployeeTaskID: taskID, EmployeeRevision: revision,
+		EmployeeTaskSnapshotDigest: taskSnapshotDigest, EmployeeContextSnapshot: &copy,
+	}
+	if err := validateSessionCheckpoint(value); err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 func NewConversation(title, workspace, configDigest string, selection Selection) (*Session, error) {
@@ -281,37 +324,58 @@ type commitJournal struct {
 }
 
 func NewStore(workspace, directory string) (*Store, error) {
-	abs, err := filepath.Abs(workspace)
+	if err := validateStoreDirectory(directory); err != nil {
+		return nil, err
+	}
+	workspaceRoot, err := canonicalWorkspaceRoot(workspace)
 	if err != nil {
 		return nil, err
 	}
-	root := filepath.Join(abs, directory)
-	rel, err := filepath.Rel(abs, root)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, errors.New("session directory escapes workspace")
+	root := filepath.Join(workspaceRoot, directory)
+	if err = ensureSessionContained(workspaceRoot, root); err != nil {
+		return nil, err
 	}
-	return &Store{workspace: abs, root: root, pending: map[string][]event.Event{}, sequences: map[string]uint64{}}, nil
+	if _, err = ensureDirectoryChain(workspaceRoot, root, false); err != nil {
+		return nil, fmt.Errorf("validate Session Store root: %w", err)
+	}
+	sessions := filepath.Join(root, "sessions")
+	if _, err = ensureDirectoryChain(workspaceRoot, sessions, false); err != nil {
+		return nil, fmt.Errorf("validate Session Store sessions directory: %w", err)
+	}
+	return &Store{workspace: workspaceRoot, root: root, pending: map[string][]event.Event{}, sequences: map[string]uint64{}}, nil
 }
 func (s *Store) sessionDir(id string) (string, error) {
-	if id == "" || strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
+	return sessionIDPathWithRoot(s.root, id)
+}
+
+func sessionIDPath(id string) (string, error) {
+	return sessionIDPathWithRoot("", id)
+}
+
+func sessionIDPathWithRoot(root, id string) (string, error) {
+	if id == "" || len(id) > 128 || strings.ContainsAny(id, "/\\%") ||
+		strings.Contains(id, "..") || filepath.IsAbs(id) {
 		return "", errors.New("invalid session ID")
 	}
-	return filepath.Join(s.root, "sessions", id), nil
+	for _, character := range id {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || strings.ContainsRune("._-", character) {
+			continue
+		}
+		return "", errors.New("invalid session ID")
+	}
+	return filepath.Join(root, "sessions", id), nil
 }
 
 func (s *Store) Has(id string) bool {
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(filepath.Join(dir, "session.json"))
-	return err == nil
+	exists, err := s.CheckTarget(id)
+	return err == nil && exists
 }
 func (s *Store) Save(ctx context.Context, session *Session) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := validateSessionPlans(session); err != nil {
+	if err := validateSessionCheckpoint(session); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -320,6 +384,39 @@ func (s *Store) Save(ctx context.Context, session *Session) error {
 		return err
 	}
 	delete(s.pending, session.ID)
+	return nil
+}
+
+func validateSessionCheckpoint(value *Session) error {
+	if err := validateSessionPlans(value); err != nil {
+		return err
+	}
+	emptyPreparation := value.EmployeeID == "" && value.EmployeeTaskID == "" &&
+		value.EmployeeRevision == 0 && value.EmployeeTaskSnapshotDigest == "" &&
+		value.EmployeeContextSnapshot == nil
+	if value.SchemaVersion != SchemaVersion {
+		if value.SchemaVersion >= 1 && value.SchemaVersion <= 5 && emptyPreparation {
+			return nil
+		}
+		return fmt.Errorf("unsupported session schema version %d", value.SchemaVersion)
+	}
+	if emptyPreparation {
+		return nil
+	}
+	if value.EmployeeID == "" || value.EmployeeTaskID == "" || value.EmployeeRevision < 1 ||
+		value.EmployeeTaskSnapshotDigest == "" || value.EmployeeContextSnapshot == nil {
+		return errors.New("incomplete Employee preparation metadata")
+	}
+	if err := employee.ValidateCompactSnapshot(*value.EmployeeContextSnapshot); err != nil {
+		return fmt.Errorf("invalid compact Employee context snapshot: %w", err)
+	}
+	compact := value.EmployeeContextSnapshot
+	if compact.EmployeeID != value.EmployeeID ||
+		compact.EmployeeRevision != value.EmployeeRevision ||
+		compact.TaskID != value.EmployeeTaskID ||
+		compact.TaskSnapshotDigest != value.EmployeeTaskSnapshotDigest {
+		return errors.New("Employee preparation metadata mismatch")
+	}
 	return nil
 }
 
@@ -341,7 +438,7 @@ func (s *Store) CommitEvents(ctx context.Context, session *Session, runtimeEvent
 	if session == nil || len(runtimeEvents) == 0 {
 		return nil, errors.New("session and at least one event are required")
 	}
-	if err := validateSessionPlans(session); err != nil {
+	if err := validateSessionCheckpoint(session); err != nil {
 		return nil, err
 	}
 	for _, runtimeEvent := range runtimeEvents {
@@ -374,18 +471,17 @@ func (s *Store) CommitDetachedEvent(ctx context.Context, sessionID string, runti
 	if runtimeEvent.SessionID != sessionID {
 		return event.Event{}, errors.New("event session does not match checkpoint")
 	}
-	dir, err := s.sessionDir(sessionID)
-	if err != nil {
-		return event.Event{}, err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err = s.recoverJournalLocked(dir, sessionID); err != nil {
+	if err := s.recoverJournalLocked(sessionID); err != nil {
 		return event.Event{}, err
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "session.json"))
+	raw, err := s.readSessionFile(sessionID, "session.json", maxSessionStoreFileBytes)
 	if err != nil {
 		return event.Event{}, fmt.Errorf("read parent checkpoint: %w", err)
+	}
+	if !utf8.Valid(raw) {
+		return event.Event{}, errors.New("parent checkpoint is invalid UTF-8")
 	}
 	var checkpoint Session
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
@@ -393,7 +489,7 @@ func (s *Store) CommitDetachedEvent(ctx context.Context, sessionID string, runti
 	if err = decoder.Decode(&checkpoint); err != nil || checkpoint.SchemaVersion != SchemaVersion || checkpoint.ID != sessionID {
 		return event.Event{}, errors.New("parent checkpoint is corrupt or unsupported")
 	}
-	if err = validateSessionPlans(&checkpoint); err != nil {
+	if err = validateSessionCheckpoint(&checkpoint); err != nil {
 		return event.Event{}, err
 	}
 	runtimeEvent = s.sequenceEventLocked(sessionID, runtimeEvent)
@@ -433,16 +529,12 @@ func (s *Store) commitLocked(ctx context.Context, session *Session, events []eve
 		s.sequences[session.ID] = session.NextEventSequence
 	}
 	session.UpdatedAt = time.Now().UTC()
-	dir, err := s.sessionDir(session.ID)
-	if err != nil {
-		return err
-	}
 	journal := commitJournal{Version: commitJournalVersion, Session: session, Events: events}
 	data, err := json.MarshalIndent(journal, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err = storage.AtomicWrite(filepath.Join(dir, "commit.json"), append(data, '\n'), 0600); err != nil {
+	if err = s.atomicWriteSessionFile(session.ID, "commit.json", append(data, '\n')); err != nil {
 		return fmt.Errorf("write commit journal: %w", err)
 	}
 	if s.commitStageHook != nil {
@@ -450,21 +542,24 @@ func (s *Store) commitLocked(ctx context.Context, session *Session, events []eve
 			return err
 		}
 	}
-	return s.applyJournalLocked(dir, journal)
+	return s.applyJournalLocked(session.ID, journal)
 }
 
-func (s *Store) applyJournalLocked(dir string, journal commitJournal) error {
+func (s *Store) applyJournalLocked(sessionID string, journal commitJournal) error {
 	if journal.Version != commitJournalVersion || journal.Session == nil {
 		return errors.New("corrupt commit journal")
+	}
+	if journal.Session.ID != sessionID {
+		return errors.New("commit journal session mismatch")
 	}
 	data, err := json.MarshalIndent(journal.Session, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err = storage.AtomicWrite(filepath.Join(dir, "session.json"), append(data, '\n'), 0600); err != nil {
+	if err = s.atomicWriteSessionFile(sessionID, "session.json", append(data, '\n')); err != nil {
 		return fmt.Errorf("write checkpoint: %w", err)
 	}
-	if err = storage.AtomicWrite(filepath.Join(dir, "summary.md"), []byte(journal.Session.Summary), 0600); err != nil {
+	if err = s.atomicWriteSessionFile(sessionID, "summary.md", []byte(journal.Session.Summary)); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
 	if s.commitStageHook != nil {
@@ -472,7 +567,7 @@ func (s *Store) applyJournalLocked(dir string, journal commitJournal) error {
 			return err
 		}
 	}
-	if err = appendEventsIdempotent(filepath.Join(dir, "events.jsonl"), journal.Events); err != nil {
+	if err = s.appendEventsIdempotent(sessionID, journal.Events); err != nil {
 		return err
 	}
 	if s.commitStageHook != nil {
@@ -480,17 +575,17 @@ func (s *Store) applyJournalLocked(dir string, journal commitJournal) error {
 			return err
 		}
 	}
-	if err = os.Remove(filepath.Join(dir, "commit.json")); err != nil && !os.IsNotExist(err) {
+	if err = s.removeSessionFile(sessionID, "commit.json"); err != nil {
 		return fmt.Errorf("remove commit journal: %w", err)
 	}
 	return nil
 }
 
-func appendEventsIdempotent(path string, events []event.Event) error {
+func (s *Store) appendEventsIdempotent(sessionID string, events []event.Event) error {
 	if len(events) == 0 {
 		return nil
 	}
-	last, err := lastEventSequence(path)
+	last, err := s.lastEventSequence(sessionID)
 	if err != nil {
 		return err
 	}
@@ -506,11 +601,11 @@ func appendEventsIdempotent(path string, events []event.Event) error {
 	if len(pending) == 0 {
 		return nil
 	}
-	return appendEvents(path, pending)
+	return s.appendEvents(sessionID, pending)
 }
 
-func lastEventSequence(path string) (uint64, error) {
-	f, err := os.Open(path)
+func (s *Store) lastEventSequence(sessionID string) (uint64, error) {
+	f, err := s.openSessionFile(sessionID, "events.jsonl")
 	if os.IsNotExist(err) {
 		return 0, nil
 	}
@@ -532,11 +627,8 @@ func lastEventSequence(path string) (uint64, error) {
 	}
 	return last, scanner.Err()
 }
-func appendEvents(path string, events []event.Event) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+func (s *Store) appendEvents(sessionID string, events []event.Event) error {
+	f, err := s.openSessionFileAppend(sessionID, "events.jsonl")
 	if err != nil {
 		return err
 	}
@@ -585,19 +677,18 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return nil, err
-	}
 	s.mu.Lock()
-	if err = s.recoverJournalLocked(dir, id); err != nil {
+	if err := s.recoverJournalLocked(id); err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
 	s.mu.Unlock()
-	b, err := os.ReadFile(filepath.Join(dir, "session.json"))
+	b, err := s.readSessionFile(id, "session.json", maxSessionStoreFileBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint: %w", err)
+	}
+	if !utf8.Valid(b) {
+		return nil, errors.New("corrupt checkpoint: invalid UTF-8")
 	}
 	var header struct {
 		SchemaVersion int `json:"schema_version"`
@@ -605,7 +696,8 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	if err = json.Unmarshal(b, &header); err != nil {
 		return nil, fmt.Errorf("corrupt checkpoint: %w", err)
 	}
-	if header.SchemaVersion != 1 && header.SchemaVersion != 2 && header.SchemaVersion != 3 && header.SchemaVersion != 4 && header.SchemaVersion != SchemaVersion {
+	if header.SchemaVersion != 1 && header.SchemaVersion != 2 && header.SchemaVersion != 3 &&
+		header.SchemaVersion != 4 && header.SchemaVersion != 5 && header.SchemaVersion != SchemaVersion {
 		return nil, fmt.Errorf("unsupported session schema version %d", header.SchemaVersion)
 	}
 	var out Session
@@ -622,6 +714,8 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 		migrateV3(&out)
 	} else if out.SchemaVersion == 4 {
 		migrateV4(&out)
+	} else if out.SchemaVersion == 5 {
+		migrateV5(&out)
 	}
 	mode, modeErr := NormalizePlanMode(string(out.PlanMode))
 	if modeErr != nil {
@@ -641,8 +735,14 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 			return nil, fmt.Errorf("corrupt run plan: %w", err)
 		}
 	}
-	current, _ := filepath.Abs(s.workspace)
-	saved, _ := filepath.Abs(out.Workspace)
+	if err = validateSessionCheckpoint(&out); err != nil {
+		return nil, fmt.Errorf("corrupt checkpoint: %w", err)
+	}
+	current := s.workspace
+	saved, workspaceErr := canonicalWorkspaceRoot(out.Workspace)
+	if workspaceErr != nil {
+		return nil, fmt.Errorf("resolve saved workspace: %w", workspaceErr)
+	}
 	if current != saved {
 		return nil, fmt.Errorf("workspace mismatch: saved %s, current %s", saved, current)
 	}
@@ -655,16 +755,16 @@ func (s *Store) Load(ctx context.Context, id string) (*Session, error) {
 	return &out, nil
 }
 
-func (s *Store) recoverJournalLocked(dir, sessionID string) error {
-	data, err := os.ReadFile(filepath.Join(dir, "commit.json"))
+func (s *Store) recoverJournalLocked(sessionID string) error {
+	data, err := s.readSessionFile(sessionID, "commit.json", maxSessionStoreFileBytes)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read commit journal: %w", err)
 	}
-	if len(data) > 8<<20 {
-		return errors.New("commit journal exceeds size limit")
+	if !utf8.Valid(data) {
+		return errors.New("corrupt commit journal: invalid UTF-8")
 	}
 	var journal commitJournal
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
@@ -675,10 +775,10 @@ func (s *Store) recoverJournalLocked(dir, sessionID string) error {
 	if journal.Session == nil || journal.Session.ID != sessionID {
 		return errors.New("commit journal session mismatch")
 	}
-	if err = validateSessionPlans(journal.Session); err != nil {
+	if err = validateSessionCheckpoint(journal.Session); err != nil {
 		return fmt.Errorf("corrupt commit journal: %w", err)
 	}
-	return s.applyJournalLocked(dir, journal)
+	return s.applyJournalLocked(sessionID, journal)
 }
 
 func (s *Store) Recover(ctx context.Context, id string) (*Session, error) {
@@ -753,11 +853,14 @@ func (s *Store) Clean(ctx context.Context, olderThan time.Duration) (int, error)
 	if olderThan <= 0 {
 		return 0, errors.New("older-than must be positive")
 	}
-	base := filepath.Join(s.root, "sessions")
-	entries, err := os.ReadDir(base)
-	if os.IsNotExist(err) {
+	base, exists, err := s.sessionsDir(false)
+	if err != nil {
+		return 0, err
+	}
+	if !exists {
 		return 0, nil
 	}
+	entries, err := os.ReadDir(base)
 	if err != nil {
 		return 0, err
 	}
@@ -767,37 +870,48 @@ func (s *Store) Clean(ctx context.Context, olderThan time.Duration) (int, error)
 		if err := ctx.Err(); err != nil {
 			return count, err
 		}
-		if !entry.IsDir() {
-			continue
+		target, targetExists, targetErr := s.safeSessionDir(entry.Name(), false)
+		if targetErr != nil {
+			return count, targetErr
+		}
+		if !targetExists || !entry.IsDir() {
+			return count, errors.New("Session Store contains an unsafe session entry")
 		}
 		info, err := entry.Info()
 		if err == nil && info.ModTime().Before(cutoff) {
-			target := filepath.Join(base, entry.Name())
-			rel, _ := filepath.Rel(base, target)
-			if rel == entry.Name() {
-				if err = os.RemoveAll(target); err != nil {
-					return count, err
-				}
-				count++
+			if err = ensureSessionContained(base, target); err != nil {
+				return count, err
 			}
+			if err = os.RemoveAll(target); err != nil {
+				return count, err
+			}
+			count++
 		}
 	}
 	return count, nil
 }
 func (s *Store) List() ([]string, error) {
-	base := filepath.Join(s.root, "sessions")
-	entries, err := os.ReadDir(base)
-	if os.IsNotExist(err) {
+	base, exists, err := s.sessionsDir(false)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
 		return nil, nil
 	}
+	entries, err := os.ReadDir(base)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() {
-			out = append(out, e.Name())
+		_, targetExists, targetErr := s.safeSessionDir(e.Name(), false)
+		if targetErr != nil {
+			return nil, targetErr
 		}
+		if !targetExists || !e.IsDir() {
+			return nil, errors.New("Session Store contains an unsafe session entry")
+		}
+		out = append(out, e.Name())
 	}
 	sort.Strings(out)
 	return out, nil
@@ -860,6 +974,15 @@ func migrateV4(s *Session) {
 	}
 }
 
+// migrateV5 bumps v5 checkpoints to v6. Employee preparation metadata is
+// additive and remains absent on ordinary legacy Sessions.
+func migrateV5(s *Session) {
+	s.SchemaVersion = SchemaVersion
+	if s.ModifiedFiles == nil {
+		s.ModifiedFiles = map[string]string{}
+	}
+}
+
 func (s *Store) AppendMessage(id string, message MessageRecord) error {
 	if strings.TrimSpace(message.Content) == "" || (message.Role != model.RoleUser && message.Role != model.RoleAssistant) {
 		return errors.New("only visible user or assistant messages may be persisted")
@@ -874,30 +997,17 @@ func (s *Store) AppendMessage(id string, message MessageRecord) error {
 	if message.CreatedAt.IsZero() {
 		message.CreatedAt = time.Now().UTC()
 	}
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return appendJSONLines(filepath.Join(dir, "messages.jsonl"), []MessageRecord{message})
-}
-
-func appendJSONLines[T any](path string, records []T) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := s.openSessionFileAppend(id, "messages.jsonl")
 	if err != nil {
 		return err
 	}
 	w := bufio.NewWriterSize(f, 32<<10)
 	enc := json.NewEncoder(w)
-	for _, record := range records {
-		if err = enc.Encode(record); err != nil {
-			_ = f.Close()
-			return err
-		}
+	if err = enc.Encode(message); err != nil {
+		_ = f.Close()
+		return err
 	}
 	if err = w.Flush(); err == nil {
 		err = f.Sync()
@@ -909,11 +1019,7 @@ func appendJSONLines[T any](path string, records []T) error {
 }
 
 func (s *Store) Messages(id string) ([]MessageRecord, error) {
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.Open(filepath.Join(dir, "messages.jsonl"))
+	f, err := s.openSessionFile(id, "messages.jsonl")
 	if os.IsNotExist(err) {
 		loaded, loadErr := s.Load(context.Background(), id)
 		if loadErr != nil {
@@ -945,11 +1051,7 @@ func (s *Store) Messages(id string) ([]MessageRecord, error) {
 }
 
 func (s *Store) Events(id string, after uint64) ([]event.Event, error) {
-	dir, err := s.sessionDir(id)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.Open(filepath.Join(dir, "events.jsonl"))
+	f, err := s.openSessionFile(id, "events.jsonl")
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -984,7 +1086,7 @@ func (s *Store) ListSummaries(ctx context.Context, limit int) ([]SessionSummary,
 	for _, id := range ids {
 		loaded, loadErr := s.Load(ctx, id)
 		if loadErr != nil {
-			continue
+			return nil, loadErr
 		}
 		if loaded.Hidden {
 			continue

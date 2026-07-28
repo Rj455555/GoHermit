@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,11 +13,122 @@ import (
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/approval"
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
 	"github.com/Rj455555/GoHermit/internal/team"
 )
+
+func TestSchemaV5MigrationAddsOptionalEmployeePreparation(t *testing.T) {
+	root := t.TempDir()
+	store, _ := NewStore(root, ".gohermit")
+	value, _ := New("v5 goal", root, "digest")
+	if err := store.Save(context.Background(), value); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".gohermit", "sessions", value.ID, "session.json")
+	raw, _ := os.ReadFile(path)
+	var document map[string]any
+	_ = json.Unmarshal(raw, &document)
+	document["schema_version"] = float64(5)
+	delete(document, "employee_id")
+	delete(document, "employee_task_id")
+	delete(document, "employee_revision")
+	delete(document, "employee_task_snapshot_digest")
+	delete(document, "employee_context_snapshot")
+	raw, _ = json.Marshal(document)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), value.ID)
+	if err != nil || loaded.SchemaVersion != SchemaVersion || loaded.EmployeeContextSnapshot != nil {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+}
+
+func TestPreparedSessionUsesStableIDAndCompactSnapshot(t *testing.T) {
+	root := t.TempDir()
+	snapshot := preparedCompactSnapshot()
+	value, err := NewPrepared(
+		"employee-session-123", "Review the workspace.", root, "config-digest",
+		"employee-a", "task-a", 7, strings.Repeat("a", 64), snapshot,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.ID != "employee-session-123" || len(value.Runs) != 0 || value.ActiveRunID != "" {
+		t.Fatalf("prepared Session = %#v", value)
+	}
+	store, _ := NewStore(root, ".gohermit")
+	if err := store.Save(context.Background(), value); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), value.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.EmployeeTaskID != "task-a" ||
+		loaded.EmployeeTaskSnapshotDigest != strings.Repeat("a", 64) ||
+		loaded.EmployeeContextSnapshot == nil ||
+		loaded.EmployeeContextSnapshot.Digest != snapshot.Digest {
+		t.Fatalf("loaded prepared Session = %#v", loaded)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".gohermit", "sessions", value.ID, "session.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"employee_snapshot"`)) ||
+		bytes.Contains(raw, []byte(`"project_bindings"`)) {
+		t.Fatalf("full Employee revision leaked into Session checkpoint: %s", raw)
+	}
+}
+
+func TestPreparedSessionRejectsOversizedOrMismatchedCompactSnapshot(t *testing.T) {
+	root := t.TempDir()
+	snapshot := preparedCompactSnapshot()
+	snapshot.Identity.Charter = strings.Repeat("x", employee.MaxCompactSnapshotBytes)
+	snapshot.Digest = ""
+	if err := employee.SealCompactSnapshot(&snapshot); err == nil {
+		t.Fatal("expected 64 KiB compact snapshot limit")
+	}
+
+	snapshot = preparedCompactSnapshot()
+	if _, err := NewPrepared(
+		"employee-session-123", "Review.", root, "config-digest",
+		"employee-b", "task-a", 7, strings.Repeat("a", 64), snapshot,
+	); err == nil {
+		t.Fatal("expected compact snapshot identity mismatch")
+	}
+}
+
+func preparedCompactSnapshot() employee.CompactSnapshot {
+	value := employee.CompactSnapshot{
+		SchemaVersion:      employee.CompactSnapshotSchemaVersion,
+		EmployeeID:         "employee-a",
+		EmployeeRevision:   7,
+		TaskID:             "task-a",
+		TaskSnapshotDigest: strings.Repeat("a", 64),
+		Identity: employee.CompactIdentity{
+			Name: "Alice", JobTitle: "Reviewer", Charter: "Review bounded changes.",
+		},
+		EffectivePolicy: employee.EffectivePolicy{AllowedCapabilities: []string{"read"}},
+		Budget: employee.BudgetPolicy{
+			MaxModelCalls: 1, MaxTokens: 1000, TimeoutSeconds: 60,
+		},
+		Project: employee.CompactProject{
+			BindingID: "project-a", WorkspaceFingerprint: strings.Repeat("b", 64),
+			ReadAllowed: true,
+		},
+		Skills:    []employee.CompactSkill{},
+		Knowledge: []employee.CompactKnowledge{},
+		Memory:    []employee.CompactMemory{},
+	}
+	if err := employee.SealCompactSnapshot(&value); err != nil {
+		panic(err)
+	}
+	return value
+}
 
 func TestSaveLoadAndExternalChange(t *testing.T) {
 	root := t.TempDir()
@@ -73,6 +185,10 @@ func TestSchemaVersionAndCorruptCheckpoint(t *testing.T) {
 	_ = os.WriteFile(path, []byte("{"), 0600)
 	if _, err := store.Load(context.Background(), s.ID); err == nil || !strings.Contains(err.Error(), "corrupt") {
 		t.Fatalf("error=%v", err)
+	}
+	_ = os.WriteFile(path, []byte("{\"schema_version\":6,\"title\":\"\xff\"}"), 0o600)
+	if _, err := store.Load(context.Background(), s.ID); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Fatalf("invalid UTF-8 error=%v", err)
 	}
 }
 func TestClean(t *testing.T) {

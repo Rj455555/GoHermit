@@ -64,6 +64,67 @@ func TestBuildEmployeeRunUsesStableBoundedOrder(t *testing.T) {
 	}
 }
 
+func TestEmployeeContextFromCompactPreservesLayerOrder(t *testing.T) {
+	snapshot := employee.CompactSnapshot{
+		SchemaVersion: employee.CompactSnapshotSchemaVersion,
+		EmployeeID:    "employee-a", EmployeeRevision: 3, TaskID: "task-a",
+		TaskSnapshotDigest: strings.Repeat("a", 64),
+		Identity: employee.CompactIdentity{
+			Name: "Alice", JobTitle: "Reviewer", Charter: "Review changes.",
+			Responsibilities: []string{"Inspect"}, BehaviorBoundaries: []string{"Stay bounded"},
+		},
+		EffectivePolicy: employee.EffectivePolicy{AllowedCapabilities: []string{"read"}},
+		Budget:          employee.BudgetPolicy{MaxModelCalls: 1, MaxTokens: 1000, TimeoutSeconds: 60},
+		Project: employee.CompactProject{
+			BindingID: "project-a", WorkspaceFingerprint: strings.Repeat("b", 64),
+			ReadAllowed: true, WorkspaceSummary: "Current service workspace",
+		},
+		Skills: []employee.CompactSkill{{
+			SkillID: "review", Version: "1", Digest: strings.Repeat("c", 64),
+			Instructions: "Review instructions.",
+			References:   []employee.CompactSkillReference{{Path: "references/guide.md", Content: "Guide"}},
+		}},
+		Knowledge: []employee.CompactKnowledge{{
+			SourceID: "source-a", SourceDigest: strings.Repeat("d", 64),
+			CitationID: "citation-a", Digest: strings.Repeat("e", 64),
+			Title: "Handbook", Path: "handbook.md", StartLine: 1, EndLine: 1, Snippet: "Bounded citation.",
+		}},
+		Memory: []employee.CompactMemory{{
+			FactID: "memory-a", Digest: strings.Repeat("f", 64), Category: "preference",
+			Value: "Prefer small changes.", Provenance: "owner:note",
+		}},
+	}
+	if err := employee.SealCompactSnapshot(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	context, err := EmployeeContextFromCompact(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, _ := New(Config{MaxTokens: 8192, CompressionThreshold: .8, HardLimitThreshold: .95, ReserveOutputTokens: 512})
+	messages, _, err := manager.BuildEmployeeRun(t.TempDir(), context, "Goal", "", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := make([]string, len(messages))
+	for index := range messages {
+		joined[index] = messages[index].Content
+	}
+	all := strings.Join(joined, "\n")
+	positions := []int{
+		strings.Index(all, "[source:employee:"),
+		strings.Index(all, "[source:policy:"),
+		strings.Index(all, "[source:skill:"),
+		strings.Index(all, "[source:knowledge:"),
+		strings.Index(all, "[source:employee-memory:"),
+	}
+	for index := range positions {
+		if positions[index] < 0 || index > 0 && positions[index] <= positions[index-1] {
+			t.Fatalf("compact layer order = %v", positions)
+		}
+	}
+}
+
 func TestBuildEmployeeRunRejectsUnsafeOrUnboundedContext(t *testing.T) {
 	manager, _ := New(Config{MaxTokens: 8192, CompressionThreshold: .8, HardLimitThreshold: .95, ReserveOutputTokens: 512})
 	tests := []struct {
