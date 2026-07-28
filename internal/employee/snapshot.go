@@ -166,7 +166,7 @@ func cloneProjectBindings(bindings []ProjectBinding) []ProjectBinding {
 	out := make([]ProjectBinding, len(bindings))
 	for i, binding := range bindings {
 		out[i] = binding
-		out[i].AllowedToolCapabilities = append([]string(nil), binding.AllowedToolCapabilities...)
+		out[i].AllowedToolCapabilities = cloneStrings(binding.AllowedToolCapabilities)
 		if binding.BudgetOverride != nil {
 			override := *binding.BudgetOverride
 			out[i].BudgetOverride = &override
