@@ -6,11 +6,12 @@
 
 - Revised plan: Owner-approved on 2026-07-28.
 - Phase 1: Owner-approved on 2026-07-28.
-- Phase 2: containment Gate revision implemented and verified after Owner
-  rejection; waiting for Owner reapproval.
-- Phase 3 and every later product-code change remain blocked.
+- Phase 2: Owner-approved on 2026-07-28 after both security Gate revisions.
+- Phase 3: implementation and verification complete on 2026-07-28; waiting
+  for Owner approval.
+- Phase 4 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_2_REAPPROVAL`.
+  `WAITING_FOR_PHASE_3_APPROVAL`.
 
 ### Fixed invariants
 
@@ -54,8 +55,8 @@
 | Phase | Scope | Gate state |
 |---|---|---|
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` |
-| 2 | Employee Store, Control Plane, and CRUD API | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `BLOCKED_BY_GATE` |
+| 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` |
+| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `COMPLETE_WAITING_FOR_OWNER` |
 | 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` |
@@ -66,20 +67,20 @@
 
 ### Current phase scope
 
-- Phase 1 is Owner-approved and closed to further implementation.
-- Review the Phase 2 owner-scoped Employee Store, immutable revision
-  persistence, bounded Activity, Control Plane, Dry Run, current-Workspace
-  Projects endpoint, CRUD API, tests, and recorded evidence.
-- Keep Phase 3 and all later phases blocked until the next explicit Owner Gate.
+- Phases 1 and 2 are Owner-approved and closed to further implementation.
+- Review the Phase 3 explicit-root Skill Catalog, native Manifest and
+  SKILL.md-only Adapter, exact capability intersection, immutable binding
+  pins, bounded binding APIs/Activity references, and optional bounded
+  Employee/Skill context contract.
+- Keep Phase 4 and all later phases blocked until the next explicit Owner Gate.
 
 ### Current prohibited work
 
-- No Skill Catalog or execution, SKILL.md Adapter, Knowledge, Memory,
-  EmployeeTask, Session schema v6, Task Runtime, UI, Team Role Mapping,
-  version, or release change.
-- No Phase 3 implementation.
-- No commit, push, Draft PR mutation, deployment, model call, or generated
-  repository artifact after the Phase 2 closeout is pushed.
+- No Skill execution, Knowledge, Memory, EmployeeTask, Session schema v6,
+  Task Runtime, UI, Team Role Mapping, version, or release change.
+- No Phase 4 implementation.
+- No additional product-code commit, deployment, model call, or generated
+  repository artifact after the Phase 3 closeout is pushed.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -88,7 +89,8 @@
 ```bash
 git branch --show-current
 git status --short
-go test ./internal/employee ./internal/employeestore ./internal/controlplane ./internal/web -count=1
+go test ./internal/skill ./internal/employee ./internal/contextmgr ./internal/controlplane ./internal/web -count=1
+go test ./internal/tool ./internal/tool/builtin ./internal/policy ./internal/approval -count=1
 go test ./... -count=1
 go test -race ./... -count=1
 go vet ./...
@@ -99,32 +101,32 @@ git diff --check
 
 ### Next Gate
 
-Phase 3 may start only after the Owner explicitly accepts Phase 2,
+Phase 4 may start only after the Owner explicitly accepts Phase 3,
 for example:
 
 ```text
-批准 Phase 2，开始 Phase 3
+批准 Phase 3，开始 Phase 4
 ```
 
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_2_REAPPROVAL
+STATUS: WAITING_FOR_PHASE_3_APPROVAL
 ```
 
 ---
 
-Plan status: `WAITING_FOR_PHASE_2_REAPPROVAL`
+Plan status: `WAITING_FOR_PHASE_3_APPROVAL`
 Baseline: `origin/main@b2a187fbcb6c79faaa368977fef40d6ec1786e6c`
 Feature branch: `agent/electronic-employees-v0.7`
 Last audited: 2026-07-28
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
-authorized phase section is the minimum required reading path. Phase 1 is
-Owner-approved and Phase 2 is complete; Phase 3 must not start until the Owner
-explicitly accepts the Phase 2 gate. Each Owner approval authorizes exactly one
-phase.
+authorized phase section is the minimum required reading path. Phases 1 and 2
+are Owner-approved and Phase 3 is complete; Phase 4 must not start until the
+Owner explicitly accepts the Phase 3 gate. Each Owner approval authorizes
+exactly one phase.
 
 ## 1. Current-state evidence
 
@@ -1130,9 +1132,9 @@ push, and Draft PR evidence, then stops for Owner approval.
 
 | Phase | Name | Status | Commit / PR / evidence |
 |---|---|---|---|
-| 1 | Employee Domain and ADR | `COMPLETE_WAITING_FOR_OWNER` | Implemented and verified 2026-07-28 |
-| 2 | Employee Store, Control Plane, and CRUD API | `BLOCKED_BY_GATE` | Not started |
-| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `BLOCKED_BY_GATE` | Not started |
+| 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
+| 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28 after implementation and two security Gate revisions |
+| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `COMPLETE_WAITING_FOR_OWNER` | Implementation `76906a2b42e49efd27320a866e474339ef61c625`; verified and pushed 2026-07-28; Draft PR #35 |
 | 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` | Not started |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
@@ -1445,6 +1447,120 @@ Exit: native manifest and SKILL.md Adapter path/frontmatter/synthetic
 version/digest/zero-capability tests pass; scripts and dependencies are never
 executed; policy formulas prove Skills can only remove capabilities; legacy
 context ordering regresses cleanly.
+
+Phase 3 execution record (2026-07-28):
+
+- Status: `COMPLETE_WAITING_FOR_OWNER`; Phases 1 and 2 are
+  `OWNER_APPROVED`; Phase 4 and later remain `BLOCKED_BY_GATE`.
+- Implementation commit:
+  `76906a2b42e49efd27320a866e474339ef61c625`
+  (`feat(employees): add phase 3 skill catalog`), pushed to
+  `origin/agent/electronic-employees-v0.7`; Draft PR #35 remains open and
+  Draft.
+- Actual product files:
+  - `internal/skill/catalog.go`,
+    `internal/skill/configuration.go`, and their four test files;
+  - `internal/employee/policy.go` and
+    `internal/employee/policy_phase3_test.go`;
+  - `internal/contextmgr/employee_context.go` and its test;
+  - `internal/controlplane/employee_skills.go`,
+    `internal/controlplane/employee_skills_test.go`, plus the minimal
+    `Service` Catalog dependency wiring;
+  - `internal/web/employee_skills.go`,
+    `internal/web/employee_skills_test.go`, plus the three route
+    registrations in `internal/web/server.go`;
+  - `compose.yaml` read-only Catalog mount/configuration.
+- Catalog root is only the explicit `GOHERMIT_SKILL_CATALOG` value (or an
+  explicit constructor argument). Empty configuration discovers nothing.
+  It never scans Home, accesses the network, installs dependencies, or reads
+  and executes scripts. The Catalog is read-only, capped at 512 Skills, and
+  canonicalizes one real root before discovery.
+- Native Skills require strict schema-v1 `manifest.json` plus `SKILL.md` and
+  explicitly allowlisted `references/` files. Manifest, instruction,
+  aggregate reference, identifier, capability, and configuration limits are
+  respectively 64 KiB, 256 KiB, 2 MiB, 128 bytes, 64 entries, and 32 KiB.
+  Unknown JSON/schema fields, unsupported paths/capabilities, missing or
+  non-regular files, symlinks, duplicate values, and Digest drift fail
+  closed. Digest input is the normalized manifest with its Digest blanked,
+  followed by sorted allowlisted content.
+- The compatibility Adapter reads only bounded `name` and `description`
+  frontmatter from one configured-root `<skill-id>/SKILL.md`, plus regular
+  bounded `references/` files. Its synthetic version and Digest are
+  deterministic over content, its requested capability set is always empty,
+  and scripts/package metadata are ignored without execution or dependency
+  installation.
+- Exact permission calculation is implemented and tested:
+
+  ```text
+  base =
+      Global Policy
+    ∩ AgentProfile ToolPolicy
+    ∩ Employee Policy
+    ∩ Project Policy
+    ∩ Task Policy
+
+  no enabled Skill: effective = base
+
+  enabled Skills:
+  effective =
+      base
+    ∩ union(enabled native Skill requested capabilities)
+  ```
+
+  Adapter Skills contribute an empty set, disabled Skills are ignored, all
+  network ceilings remain conjunctive, and unknown/duplicate capabilities or
+  an unknown AgentProfile ToolPolicy fail closed.
+- `GET /api/skills`, `GET /api/employees/{id}/skills`, and
+  `PUT /api/employees/{id}/skills` provide metadata discovery, binding
+  status, and optimistic-revision updates. PUT requires an active Employee
+  and exact Catalog ID/version/Digest, validates the bounded JSON Schema
+  subset and secret-free configuration, persists the pin in a new immutable
+  Employee revision, and records only a bounded `skill_binding_changed`
+  Activity reference. It creates no Task, Session, Run, model call, tool
+  execution, or recovery state.
+- The optional `BuildEmployeeRun` contract is isolated from legacy
+  `BuildRun`. It gives stable source headings and ordering for system/Owner,
+  compact Employee identity, effective policy/budget/current Project,
+  bounded regular non-symlink AGENTS/Project Memory, sorted pinned Skills,
+  recovered state, goal, and recent messages. Employee identity is capped at
+  16 KiB, policy/project summaries at 16 KiB combined, each Skill context at
+  64 KiB and all Skills at 256 KiB, persistent Project inputs at 256 KiB
+  each, recovered inputs at 64 KiB, and the goal at 16 KiB. Private reasoning,
+  raw tool arguments, full/hidden prompt markers, credential-shaped values,
+  source-ID injection, symlink escape, and an over-budget protected base
+  context fail closed. There is no Session schema or runtime integration.
+- Verification evidence:
+  - `go test ./internal/skill ./internal/employee ./internal/contextmgr ./internal/controlplane ./internal/web -count=1`: pass;
+  - `go test ./internal/tool ./internal/tool/builtin ./internal/policy ./internal/approval -count=1`: pass;
+  - `go test ./... -count=1`: pass;
+  - `go test -race ./... -count=1`: pass;
+  - `go vet ./...`: pass;
+  - `go build ./cmd/hermit` and `go build ./cmd/hermit-web`: pass;
+  - `gofmt` and `git diff --check`: pass;
+  - credential-shaped secret-pattern scan: pass;
+  - `compose.yaml` independent YAML parse: pass;
+  - `internal/skill` statement coverage: 73.4%;
+  - real macOS symlink tests executed without a skip.
+- Structural deviations: the optional Employee context contract is in a new
+  `internal/contextmgr/employee_context.go` file so legacy `context.go` stays
+  behaviorally unchanged; `controlplane/service.go` and `web/server.go` have
+  minimal dependency/route wiring. These are necessary Phase 3 integration
+  points and do not expand product scope. No Employee Store code change was
+  necessary because Phase 1/2 already persist Skill bindings in immutable
+  revision snapshots.
+- Validation-environment note: Docker CLI is not installed on the macOS
+  verifier, so the non-required Phase 10 `docker compose config` command
+  could not run; the changed Compose file passed an independent YAML parse.
+  Full Docker acceptance remains Phase 10.
+- Remaining risks: Activity append follows the immutable Employee revision as
+  a separate atomic file operation under the already accepted no-cross-file-
+  transaction boundary. Catalog discovery deliberately rereads and rehashes
+  the bounded explicit root so Digest drift is immediately visible; caching
+  is deferred. The configuration schema subset and capability vocabulary are
+  intentionally conservative and require an explicit future contract change
+  to expand. Cross-process Employee Store locking/sharing semantics remain
+  deferred. No second Event, Run, Approval, Verification, or recovery state
+  machine was introduced.
 
 ### Phase 4: Knowledge Base and Employee Memory
 
