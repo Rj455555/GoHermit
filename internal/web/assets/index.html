@@ -11,6 +11,8 @@
     <aside class="icon-rail" aria-label="工具栏">
       <button id="brand-button" class="rail-button brand-button" aria-label="新建任务"><span>G</span></button>
       <button id="dashboard-button" class="rail-button" data-testid="nav-dashboard" aria-label="Dashboard"><span>⌂</span></button>
+      <button id="employees-button" class="rail-button" data-testid="nav-employees" aria-label="Employees"><span>人</span></button>
+      <button id="employee-tasks-button" class="rail-button" data-testid="nav-employee-tasks" aria-label="Tasks"><span>✓</span></button>
       <button id="tasks-button" class="rail-button active" data-testid="nav-agent" aria-label="Agent"><span>●</span></button>
       <button id="loops-button" class="rail-button" data-testid="nav-loops" aria-label="Loops"><span>↻</span></button>
       <div class="rail-spacer"></div>
@@ -168,6 +170,195 @@
         </div>
       </section>
 
+      <section id="employees-view" class="page-view employees-view hidden" data-testid="employees-view">
+        <header class="page-header">
+          <div><span class="eyebrow">ELECTRONIC EMPLOYEES</span><h1>Employees</h1><p>为长期职责配置身份、知识与工作边界</p></div>
+          <button id="employee-new" class="small-button primary" data-testid="employee-new">Create Employee</button>
+        </header>
+        <div class="employee-workbench">
+          <aside class="employee-list-pane">
+            <div class="resource-filter">
+              <label><span>状态</span><select id="employee-state-filter"><option value="">All</option><option value="active">Active</option><option value="disabled">Disabled</option><option value="archived">Archived</option></select></label>
+              <button id="employee-list-refresh" class="icon-button" type="button" aria-label="刷新员工">↻</button>
+            </div>
+            <div id="employee-list" class="resource-list" aria-live="polite"></div>
+          </aside>
+          <section class="employee-main-pane">
+            <div id="employee-empty" class="resource-empty">
+              <div class="welcome-mark">人</div>
+              <h2>建立一个可审计的电子员工</h2>
+              <p>每个 Employee 拥有隔离的 Skills、Knowledge、Memory、Projects 与 Task Inbox。</p>
+            </div>
+            <section id="employee-wizard" class="employee-wizard hidden" aria-labelledby="employee-wizard-title">
+              <header class="resource-head">
+                <div><span id="employee-wizard-progress" class="eyebrow">STEP 1 / 9</span><h2 id="employee-wizard-title">Create Employee</h2></div>
+                <button id="employee-wizard-close" class="icon-button" aria-label="关闭创建向导">×</button>
+              </header>
+              <form id="employee-wizard-form" novalidate>
+                <section class="wizard-step" data-wizard-step="0">
+                  <h3>Identity</h3><p>使用稳定 ID、名称与职责称谓。</p>
+                  <div class="form-grid">
+                    <label>Employee ID<input id="employee-id" data-testid="employee-id" maxlength="128" required placeholder="employee-ada"></label>
+                    <label>Name<input id="employee-name" data-testid="employee-name" maxlength="8192" required></label>
+                    <label>Job title<input id="employee-job-title" data-testid="employee-job-title" maxlength="8192" required></label>
+                    <label>Avatar<select id="employee-avatar-kind"><option value="initials">Generated initials</option><option value="emoji">Emoji</option></select></label>
+                    <label id="employee-avatar-value-field" class="hidden">Emoji<input id="employee-avatar-value" maxlength="64" placeholder="🧭"></label>
+                  </div>
+                </section>
+                <section class="wizard-step hidden" data-wizard-step="1">
+                  <h3>Provider and Agent</h3><p>只显示当前已配置或登录有效的模型。</p>
+                  <div class="form-grid four">
+                    <label>Company<select id="employee-company" data-testid="employee-company"></select></label>
+                    <label>Access<select id="employee-access"></select></label>
+                    <label>Model<select id="employee-model" data-testid="employee-model"></select></label>
+                    <label>Agent<select id="employee-agent"></select></label>
+                  </div>
+                  <div id="employee-provider-note" class="inline-note"></div>
+                </section>
+                <section class="wizard-step hidden" data-wizard-step="2">
+                  <h3>Charter</h3><p>说明目标、责任与明确禁止事项。</p>
+                  <label class="block-field">Charter<textarea id="employee-charter" maxlength="8192">Deliver bounded, verifiable work for the Owner.</textarea></label>
+                  <div class="form-grid">
+                    <label>Responsibilities<textarea id="employee-responsibilities" maxlength="8192" placeholder="One item per line"></textarea></label>
+                    <label>Behavior boundaries<textarea id="employee-boundaries" maxlength="8192" placeholder="Never publish automatically"></textarea></label>
+                  </div>
+                </section>
+                <section class="wizard-step hidden" data-wizard-step="3">
+                  <h3>Skills</h3><p>Skill 只能收窄能力；SKILL.md Adapter 只提供指令。</p>
+                  <div id="employee-wizard-skills" class="selection-list"></div>
+                </section>
+                <section class="wizard-step hidden" data-wizard-step="4">
+                  <h3>Knowledge</h3><p>创建后可从显式配置的本地 Catalog 添加来源。不会扫描 Home 或访问网络。</p>
+                  <div class="review-empty">Knowledge 初始为空，可在 Employee 详情中添加 Manual Text 或本地路径。</div>
+                </section>
+                <section class="wizard-step hidden" data-wizard-step="5">
+                  <h3>Memory</h3><p>只有 Owner 接受的 Candidate 才会成为长期记忆。</p>
+                  <div class="toggle-grid"><label><input id="employee-memory-candidates" type="checkbox" checked><span>Generate verified candidates</span></label></div>
+                  <div class="form-grid">
+                    <label>Context facts<input id="employee-memory-facts" type="number" min="0" max="512" value="16"></label>
+                    <label>Context bytes<input id="employee-memory-bytes" type="number" min="0" max="262144" value="32768"></label>
+                  </div>
+                </section>
+                <section class="wizard-step hidden" data-wizard-step="6">
+                  <h3>Project</h3><p>v0.7 只绑定当前服务 Workspace。</p>
+                  <div id="employee-wizard-project" class="selection-list"></div>
+                </section>
+                <section class="wizard-step hidden" data-wizard-step="7">
+                  <h3>Policy and budget</h3><p>Employee、Project 与 Task 都只能继续收窄权限。</p>
+                  <div class="form-grid">
+                    <label>Capabilities<input id="employee-capabilities" value="read" maxlength="8192"></label>
+                    <label>Max model calls<input id="employee-max-calls" type="number" min="1" max="1000" value="8"></label>
+                    <label>Max tokens<input id="employee-max-tokens" type="number" min="1" max="10000000" value="100000"></label>
+                    <label>Timeout seconds<input id="employee-timeout" type="number" min="1" max="86400" value="3600"></label>
+                    <label class="toggle-field"><input id="employee-network" type="checkbox"><span>Network allowed</span></label>
+                  </div>
+                </section>
+                <section class="wizard-step hidden" data-wizard-step="8">
+                  <h3>Review</h3><p>创建只保存 Employee，不会创建 Session、Run 或自动执行 Task。</p>
+                  <pre id="employee-wizard-review" class="bounded-preview"></pre>
+                </section>
+                <div id="employee-wizard-error" class="form-errors hidden" role="alert"></div>
+                <footer class="wizard-actions">
+                  <button id="wizard-back" class="small-button" type="button">Back</button>
+                  <span>9-step bounded setup</span>
+                  <button id="wizard-next" class="small-button primary" data-testid="wizard-next" type="button">Next</button>
+                  <button id="employee-create" class="small-button primary hidden" data-testid="employee-create" type="submit">Create Employee</button>
+                </footer>
+              </form>
+            </section>
+            <section id="employee-detail" class="employee-detail hidden">
+              <header class="resource-head">
+                <div class="employee-title"><span id="employee-detail-avatar" class="employee-avatar"></span><div><h2 id="employee-detail-name"></h2><p id="employee-detail-meta"></p></div></div>
+                <div class="resource-actions">
+                  <span id="employee-status" class="status-pill" data-testid="employee-status"></span>
+                  <button id="employee-dry-run" class="small-button">Readiness</button>
+                  <button id="employee-disable" class="small-button">Disable</button>
+                  <button id="employee-enable" class="small-button hidden">Enable</button>
+                  <button id="employee-archive" class="small-button danger-text">Archive</button>
+                </div>
+              </header>
+              <div class="resource-tabs" role="tablist" aria-label="Employee resources">
+                <button role="tab" aria-selected="true" data-employee-tab="overview">Overview</button>
+                <button role="tab" aria-selected="false" data-employee-tab="skills">Skills</button>
+                <button role="tab" aria-selected="false" data-employee-tab="knowledge">Knowledge</button>
+                <button role="tab" aria-selected="false" data-employee-tab="memory">Memory</button>
+                <button role="tab" aria-selected="false" data-employee-tab="projects">Projects</button>
+                <button role="tab" aria-selected="false" data-employee-tab="tasks">Tasks</button>
+                <button role="tab" aria-selected="false" data-employee-tab="activity">Activity</button>
+              </div>
+              <div id="employee-detail-error" class="inline-error hidden" role="alert"></div>
+              <div id="employee-detail-content" class="resource-content" aria-live="polite"></div>
+            </section>
+          </section>
+        </div>
+      </section>
+
+      <section id="employee-tasks-view" class="page-view employee-tasks-view hidden" data-testid="employee-tasks-view">
+        <header class="page-header">
+          <div><span class="eyebrow">EMPLOYEE TASK INBOX</span><h1>Tasks</h1><p>明确创建、显式 Start；执行真相来自 Session 与 Run</p></div>
+          <button id="task-new" class="small-button primary" data-testid="task-new">New Task</button>
+        </header>
+        <div class="task-workbench">
+          <aside class="task-list-pane">
+            <div class="resource-filter">
+              <label><span>Employee</span><select id="task-employee-filter"></select></label>
+              <label><span>状态</span><select id="task-state-filter"><option value="">All</option><option value="queued">Queued</option><option value="prepared">Prepared</option><option value="waiting_owner">Waiting Owner</option><option value="running">Running</option><option value="verifying">Verifying</option><option value="interrupted">Interrupted</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></label>
+            </div>
+            <div id="employee-task-list" class="resource-list" aria-live="polite"></div>
+          </aside>
+          <section class="task-main-pane">
+            <div id="task-empty" class="resource-empty"><div class="welcome-mark">✓</div><h2>选择或创建 Task</h2><p>一个 Employee 可拥有多个 Task；只有 Owner 点击 Start 才会执行。</p></div>
+            <form id="task-create-panel" class="task-create-panel hidden" novalidate>
+              <header class="resource-head"><div><span class="eyebrow">QUEUED ONLY</span><h2>Create Employee Task</h2></div><button id="task-create-close" class="icon-button" type="button" aria-label="关闭">×</button></header>
+              <div class="resource-content">
+                <div class="form-grid">
+                  <label>Employee<select id="task-create-employee"></select></label>
+                  <label>Project<select id="task-project"></select></label>
+                  <label class="wide">Goal / prompt<textarea id="task-prompt" data-testid="task-prompt" maxlength="16384" required></textarea></label>
+                  <label>Capabilities<input id="task-capabilities" value="read" maxlength="8192"></label>
+                  <label>Max model calls<input id="task-max-calls" type="number" min="1" max="1000" value="4"></label>
+                  <label>Max tokens<input id="task-max-tokens" type="number" min="1" max="10000000" value="4000"></label>
+                  <label>Timeout seconds<input id="task-timeout" type="number" min="1" max="86400" value="600"></label>
+                  <label class="toggle-field"><input id="task-network" type="checkbox"><span>Network allowed</span></label>
+                </div>
+                <fieldset class="selection-fieldset"><legend>Pinned Skills</legend><div id="task-skill-selection" class="selection-list"></div></fieldset>
+                <fieldset class="selection-fieldset"><legend>Knowledge citations</legend><div id="task-knowledge-selection" class="selection-list"></div></fieldset>
+                <fieldset class="selection-fieldset"><legend>Accepted Memory</legend><div id="task-memory-selection" class="selection-list"></div></fieldset>
+                <div id="task-create-error" class="form-errors hidden" role="alert"></div>
+              </div>
+              <footer class="resource-footer"><span>创建后保持 queued，不自动运行</span><button id="task-create" class="small-button primary" data-testid="task-create" type="submit">Create queued Task</button></footer>
+            </form>
+            <section id="task-detail" class="task-detail hidden">
+              <header class="resource-head">
+                <div><span id="task-detail-employee" class="eyebrow"></span><h2 id="task-detail-title"></h2><p id="task-detail-meta"></p></div>
+                <div class="resource-actions">
+                  <span id="task-status" class="status-pill" data-testid="task-status"></span>
+                  <button id="task-refresh" class="small-button" data-testid="task-refresh">Refresh</button>
+                  <button id="task-open-agent" class="small-button hidden">Open Agent</button>
+                  <button id="task-start" class="small-button primary hidden" data-testid="task-start">Start</button>
+                  <button id="task-resume" class="small-button primary hidden" data-testid="task-resume">Resume</button>
+                  <button id="task-cancel" class="small-button danger-text hidden" data-testid="task-cancel">Stop</button>
+                </div>
+              </header>
+              <div id="task-error" class="inline-error hidden" data-testid="task-error" role="alert"></div>
+              <div class="task-detail-grid">
+                <main class="task-timeline">
+                  <section class="timeline-card"><header><strong>Plan</strong><span>实时 Session Plan，仅只读投影</span></header><ol id="task-plan" class="task-plan"></ol></section>
+                  <section class="timeline-card"><header><strong>Tools</strong><span>来自现有 Tool lifecycle</span></header><div id="task-tools" class="task-tools"></div></section>
+                  <section class="timeline-card"><header><strong>Verification</strong><span>现有 Verification 结果</span></header><div id="task-verification" data-testid="task-verification" class="timeline-empty"></div></section>
+                  <section class="timeline-card"><header><strong>Timeline</strong><span>Session SSE + checkpoint refresh</span></header><ol id="task-events" class="timeline-events"></ol></section>
+                </main>
+                <aside class="task-context">
+                  <section class="review-card"><header><div><strong>Approvals</strong><span>现有 scoped approval</span></div></header><div id="task-approvals"></div></section>
+                  <section class="review-card"><header><div><strong>Pinned context</strong><span>不可变 Snapshot metadata</span></div></header><div id="task-context"></div></section>
+                  <section class="review-card"><header><div><strong>Artifacts</strong><span>bounded metadata only</span></div></header><div id="task-artifacts"></div></section>
+                </aside>
+              </div>
+            </section>
+          </section>
+        </div>
+      </section>
+
       <div id="agent-view" class="page-view agent-view">
       <header class="thread-header">
         <button id="sidebar-open" class="icon-button mobile-only" aria-label="打开任务列表">☰</button>
@@ -257,5 +448,7 @@
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="/app.js" defer></script>
   <script src="/loops.js" defer></script>
+  <script src="/employees.js" defer></script>
+  <script src="/tasks.js" defer></script>
 </body>
 </html>

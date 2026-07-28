@@ -16,7 +16,8 @@ async function request(url, options) {
   try {
     const response = await fetch(url, options);
     setConnectivity('online');
-    const data = await response.json();
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : {};
     if (!response.ok) {
       const error = new Error(data.error || '请求失败');
       error.status = response.status;

@@ -40,6 +40,42 @@ func testServer(t *testing.T) *Server {
 	return server
 }
 
+func TestPhase8AssetsAndNavigationAreServed(t *testing.T) {
+	handler := testServer(t).Handler()
+	tests := []struct {
+		path     string
+		contains []string
+	}{
+		{path: "/", contains: []string{
+			`data-testid="nav-dashboard"`,
+			`data-testid="nav-employees"`,
+			`data-testid="nav-employee-tasks"`,
+			`data-testid="nav-agent"`,
+			`data-testid="nav-loops"`,
+			`data-testid="nav-settings"`,
+			`<script src="/employees.js" defer></script>`,
+			`<script src="/tasks.js" defer></script>`,
+		}},
+		{path: "/employees.js", contains: []string{"loadEmployees", "employeeCreatePayload", "/api/employees"}},
+		{path: "/tasks.js", contains: []string{"loadEmployeeTaskWorkbench", "openEmployeeTask", "/api/sessions/"}},
+	}
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, body = %s", test.path, response.Code, response.Body.String())
+			}
+			for _, expected := range test.contains {
+				if !strings.Contains(response.Body.String(), expected) {
+					t.Errorf("GET %s response does not contain %q", test.path, expected)
+				}
+			}
+		})
+	}
+}
+
 // freshStore opens a second store over the server's workspace so HTTP-level
 // tests can seed and inspect durable state without touching service
 // internals — the store is file-backed, so both instances see the same data.
