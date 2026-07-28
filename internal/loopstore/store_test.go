@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/loop"
+	"github.com/Rj455555/GoHermit/internal/owner"
 )
 
 func validDefinition(id string) loop.Definition {
@@ -518,4 +519,30 @@ func TestImportDefinition(t *testing.T) {
 			t.Fatal("generic validation failure reported as ErrImportSecret")
 		}
 	})
+}
+
+func TestDocumentMaintenanceExampleImportsWithoutCredentials(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "loops", "document-maintenance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, err := ImportDefinition(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if definition.ID != "document-maintenance" || !definition.WorkspacePolicy.ReadOnly {
+		t.Fatalf("definition=%+v", definition)
+	}
+	if len(definition.VerificationRecipe.Checks) != 1 {
+		t.Fatalf("checks=%+v", definition.VerificationRecipe.Checks)
+	}
+	check := definition.VerificationRecipe.Checks[0]
+	if !check.Required || len(check.Command) != 3 || check.Command[0] != "git" {
+		t.Fatalf("check=%+v", check)
+	}
+	for _, field := range loop.SecretFields(definition) {
+		if owner.LooksSecret(field.Value) {
+			t.Fatalf("example contains secret marker in %s", field.Label)
+		}
+	}
 }

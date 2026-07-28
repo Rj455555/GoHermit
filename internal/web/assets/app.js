@@ -170,6 +170,7 @@ async function loadInfo() {
   $('#health-dot').title = catalog.active ? 'Agent 运行中' : '服务正常';
   renderCatalog();
   renderSettings();
+  document.dispatchEvent(new CustomEvent('gohermit:catalog'));
 }
 
 async function loadSessions(openSelected = true) {

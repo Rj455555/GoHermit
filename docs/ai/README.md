@@ -25,7 +25,8 @@ This is the preferred low-token path. Do not preload every ADR or topic document
 - `team.md`: compact Owner Profile and Personal Agent Team domain, workflow, recovery, API, and code map.
 - `plan-mode.md`: compact Live Plan state machine, lifecycle mappings, persistence/events, and code map.
 - `next-development-plan.md`: ordered work after the provider/Web milestone, with acceptance criteria.
-- `handoff-v0.5.md`: exact implementation, verification, repository, and deployment state for the current milestone.
+- `handoff-v0.6-loop-workbench.md`: current Loop Workbench implementation, verification, repository, and deployment state.
+- `handoff-v0.5.md`: frozen adaptive Plan/Team milestone handoff.
 - `handoff-v0.4.md`: historical durable Live Plan milestone handoff.
 - `handoff-v0.3.md`: historical Personal Agent Team milestone handoff.
 - `handoff-template.md`: compact factual format for ending an AI development session.

@@ -1,0 +1,55 @@
+{
+  "id": "document-maintenance",
+  "schema_version": 1,
+  "name": "Documentation maintenance",
+  "description": "Check canonical AI and product documentation for drift from the current code and version.",
+  "workspace_identity": "/absolute/path/to/your/repository",
+  "enabled": true,
+  "task_source": {
+    "type": "fixed_prompt",
+    "prompt": "Inspect AGENTS.md, docs/ai/context.md, docs/ai/next-development-plan.md, docs/roadmap.md, and CHANGELOG.md. Compare their version, completed capabilities, known boundaries, and next milestone with the current code. Report concrete drift and bounded documentation fixes. Do not commit, push, open a pull request, merge, deploy, or change non-documentation files."
+  },
+  "agent_selection": {
+    "company": "configured-company",
+    "access": "configured-access",
+    "model": "configured-model",
+    "agent": "team"
+  },
+  "team_template_ref": "default",
+  "plan_mode": "review",
+  "verification_recipe": {
+    "checks": [
+      {
+        "id": "diff-check",
+        "command": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "required": true,
+        "timeout_seconds": 60
+      }
+    ],
+    "independent_verifier": true,
+    "max_repair_attempts": 0
+  },
+  "budget": {
+    "max_model_calls": 12,
+    "max_tokens": 120000,
+    "timeout_seconds": 1200
+  },
+  "approval_policy": {
+    "require_for_mutation": false
+  },
+  "workspace_policy": {
+    "read_only": true,
+    "require_clean_git": false
+  },
+  "output_policy": {
+    "include_diff": false,
+    "max_report_bytes": 65536
+  },
+  "created_at": "0001-01-01T00:00:00Z",
+  "updated_at": "0001-01-01T00:00:00Z",
+  "revision": 0
+}

@@ -378,6 +378,61 @@ func TestListAndGetLoops(t *testing.T) {
 	}
 }
 
+func TestCreateAndUpdateLoopOwnsRevision(t *testing.T) {
+	svc := newTestService(t)
+	injectLoopStore(t, svc)
+	definition := loopTestDefinition(svc.Workspace)
+
+	created, err := svc.CreateLoop(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Revision != 1 || created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
+		t.Fatalf("created=%+v", created)
+	}
+	definition.Name = "updated review"
+	definition.Revision = 999
+	updated, err := svc.UpdateLoop(definition.ID, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Revision != 2 || updated.Name != "updated review" || !updated.CreatedAt.Equal(created.CreatedAt) {
+		t.Fatalf("updated=%+v created=%+v", updated, created)
+	}
+
+	var serviceErr *Error
+	if _, err = svc.CreateLoop(definition); !errors.As(err, &serviceErr) || serviceErr.Kind != KindConflict {
+		t.Fatalf("duplicate create err=%v", err)
+	}
+	definition.ID = "other"
+	if _, err = svc.UpdateLoop("loop-1", definition); !errors.As(err, &serviceErr) || serviceErr.Kind != KindInvalid {
+		t.Fatalf("id mismatch err=%v", err)
+	}
+	missing := loopTestDefinition(svc.Workspace)
+	missing.ID = "missing"
+	if _, err = svc.UpdateLoop("missing", missing); !errors.As(err, &serviceErr) || serviceErr.Kind != KindNotFound {
+		t.Fatalf("missing update err=%v", err)
+	}
+}
+
+func TestCreateLoopRejectsInvalidWithoutWriting(t *testing.T) {
+	svc := newTestService(t)
+	injectLoopStore(t, svc)
+	definition := loopTestDefinition(svc.Workspace)
+	definition.Name = ""
+	var serviceErr *Error
+	if _, err := svc.CreateLoop(definition); !errors.As(err, &serviceErr) || serviceErr.Kind != KindInvalid {
+		t.Fatalf("err=%v", err)
+	}
+	definitions, err := svc.ListLoops()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(definitions) != 0 {
+		t.Fatalf("invalid definition was persisted: %+v", definitions)
+	}
+}
+
 func TestImportLoop(t *testing.T) {
 	svc := newTestService(t)
 	injectLoopStore(t, svc)
