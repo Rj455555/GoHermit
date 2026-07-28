@@ -1135,7 +1135,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28; now in `origin/main` via squash merge `9a75e8f` |
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
-| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `f5d24b0`; Gate fix `75ee1a3`; replacement Draft PR pending |
+| 4 | Knowledge Base and Employee Memory | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Clean implementation `f5d24b0`; Gate fix `75ee1a3`; evidence `fa127a0`; Draft PR #37; CI green |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
@@ -1579,8 +1579,12 @@ Knowledge and Memory context layers are bounded and Employee-isolated.
 - Gate fix:
   `75ee1a39abd90233a36dc2e768b55d2f2ebc6fea`
   (`fix(employees): harden phase 4 persistence gate`).
-- Evidence commit and replacement Draft PR: pending until this record is
-  committed and the clean branch is pushed.
+- Evidence commit:
+  `fa127a02b23a379eb0c706fca4f5644089be7d98`
+  (`docs(plan): record phase 4 gate revision`).
+- Replacement review: Draft PR
+  [#37](https://github.com/Rj455555/GoHermit/pull/37), targeting `main`.
+  It was verified Open, Draft, unmerged, and without auto-merge after push.
 - Persisted Knowledge validation now treats the stored representation as
   untrusted. `ValidateSource(..., true)` applies file-independent canonical
   relative-path validation and rejects absolute/URL/scheme/host, `%`,
@@ -1644,7 +1648,11 @@ PASS credential-shaped secret-pattern scan
 PASS compose.yaml parse
 PASS macOS real symlink/executable-bit tests; executable marker never created
 PASS Knowledge package coverage 84.4%; Employee Memory coverage 91.1%
-PENDING Docker/Compose/Web E2E GitHub CI after push
+PASS GitHub CI runs 30348124269 and 30348130054
+PASS CI go jobs (gofmt, tests, race, vet, builds, and cross-platform checks)
+PASS CI docker jobs (Compose configuration and Docker build)
+PASS CI web-e2e jobs
+EXPECTED SKIP live-smoke jobs
 ```
 
 - Persistence retains the accepted single-file atomic/no-cross-file-transaction
