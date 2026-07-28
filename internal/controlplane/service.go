@@ -22,6 +22,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/approval"
 	modelauth "github.com/Rj455555/GoHermit/internal/auth"
 	"github.com/Rj455555/GoHermit/internal/config"
+	"github.com/Rj455555/GoHermit/internal/employeestore"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/loopstore"
 	"github.com/Rj455555/GoHermit/internal/owner"
@@ -94,6 +95,7 @@ type Service struct {
 	teamWorker    team.Worker
 	teamTemplates *teamtemplate.Store
 	loopStore     *loopstore.Store
+	employees     *employeestore.Store
 	// approvals is the single in-process rendezvous between parked runners
 	// and DecideApproval for the whole service lifetime (ADR 0011, C3).
 	approvals *approvalBroker
@@ -123,6 +125,10 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 	}
 	teamTemplates, teamTemplatesErr := teamtemplate.NewStore("")
 	loopStore, loopStoreErr := loopstore.NewStore("")
+	employeeStore, err := employeestore.NewStore("")
+	if err != nil {
+		return nil, err
+	}
 	store, err := session.NewStore(workspace, conf.Storage.Directory)
 	if err != nil {
 		return nil, err
@@ -142,6 +148,7 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		logins:        modelauth.NewLoginManager(credentials),
 		teamTemplates: teamTemplates, teamTemplatesErr: teamTemplatesErr,
 		loopStore: loopStore, loopStoreErr: loopStoreErr,
+		employees: employeeStore,
 		approvals: broker,
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
 			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: broker}, nil)
