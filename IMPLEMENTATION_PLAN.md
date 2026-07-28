@@ -1134,7 +1134,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 |---|---|---|---|
 | 1 | Employee Domain and ADR | `OWNER_APPROVED` | Owner-approved 2026-07-28 |
 | 2 | Employee Store, Control Plane, and CRUD API | `OWNER_APPROVED` | Owner-approved 2026-07-28 after implementation and two security Gate revisions |
-| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `COMPLETE_WAITING_FOR_OWNER` | Implementation `76906a2b42e49efd27320a866e474339ef61c625`; verified and pushed 2026-07-28; Draft PR #35 |
+| 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `COMPLETE_WAITING_FOR_OWNER` | Implementation `76906a2b42e49efd27320a866e474339ef61c625`; verified and pushed 2026-07-28; replacement Draft PR requires Owner direction because #35 was already merged |
 | 4 | Knowledge Base and Employee Memory | `BLOCKED_BY_GATE` | Not started |
 | 5 | Employee Task Inbox persistence and API | `BLOCKED_BY_GATE` | Not started |
 | 6 | Runtime Preparation | `BLOCKED_BY_GATE` | Not started |
@@ -1455,8 +1455,15 @@ Phase 3 execution record (2026-07-28):
 - Implementation commit:
   `76906a2b42e49efd27320a866e474339ef61c625`
   (`feat(employees): add phase 3 skill catalog`), pushed to
-  `origin/agent/electronic-employees-v0.7`; Draft PR #35 remains open and
-  Draft.
+  `origin/agent/electronic-employees-v0.7`.
+- External PR state: PR #35 had already been merged at
+  `2026-07-28T07:30:24Z` as merge commit
+  `9a75e8f021b2bd5de1522d93e7463b313318c99d`, before the Phase 3
+  implementation push. Its immutable head is the Phase 2 closeout
+  `973ba3411861ad63046dcf8f85d9beb690e54b24`; it cannot receive Phase 3
+  commits. This execution did not merge it and did not create a replacement
+  PR without Owner authorization. Phase 3 review therefore requires Owner
+  direction to create a new Draft PR from the existing feature branch.
 - Actual product files:
   - `internal/skill/catalog.go`,
     `internal/skill/configuration.go`, and their four test files;
