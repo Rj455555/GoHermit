@@ -1785,6 +1785,9 @@ Session/Run/model side effects.
   `ac01dce4c7bc49b2a196869b419230d9022fb500`
   (`feat-phase5-employee-task-inbox`).
 - Evidence commit: `eac7ca13b622ad0311cbb77ee20cc5c883d5897d`.
+- Snapshot Digest Gate revision commit:
+  `6fa05473b602c2d6af962f0cf78b7876a1b23d3e`
+  (`fix(phase5): decouple task snapshot digest from execution bindings`).
 - Review target:
   Draft PR [#38](https://github.com/Rj455555/GoHermit/pull/38), base `main`,
   head `agent/electronic-employees-v0.7-phase5`. Creation is deliberately the
@@ -1891,6 +1894,22 @@ PASS scoped package coverage: employee 82.6%, employeestore 77.8%,
 PASS push CI run 30356141023
 PASS CI go, web-e2e, and docker jobs
 EXPECTED SKIP CI live-smoke job
+```
+
+- Final Phase 5 Snapshot Digest Gate validation on 2026-07-28:
+
+```text
+PASS targeted forward-compatibility digest tests (after an expected RED)
+PASS Phase 5 Employee/Store/Control Plane/Web scoped tests
+PASS Loop/LoopStore/Session regressions
+PASS go test ./... -count=1
+PASS go test -race ./... -count=1
+PASS go vet ./...
+PASS CLI and Web builds to /tmp
+PASS gofmt and git diff --check
+PASS credential-shaped secret-pattern scan
+PASS independent compose.yaml YAML parse
+PASS macOS real symlink/non-regular/containment tests with no skip
 ```
 
 - Deliberate Phase 5 deviation: JSON round-trip testing exposed that the
