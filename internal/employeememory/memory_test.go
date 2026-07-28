@@ -44,6 +44,7 @@ func TestMemoryRejectsSensitiveOversizedAndTamperedValues(t *testing.T) {
 		"oversized":   strings.Repeat("x", MaxValueBytes+1),
 		"raw_tools":   "raw tool arguments: sensitive input",
 		"full_prompt": "full system prompt: hidden input",
+		"replacement": "invalid \uFFFD value",
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := base

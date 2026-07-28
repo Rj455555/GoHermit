@@ -218,6 +218,33 @@ func TestKnowledgeStoreRejectsInvalidUTF8Text(t *testing.T) {
 	}
 }
 
+func TestDecodeStrictRejectsRawInvalidUTF8BeforeJSONDecode(t *testing.T) {
+	var target map[string]string
+	raw := append([]byte(`{"value":"bad`), 0xff)
+	raw = append(raw, []byte(`text"}`)...)
+	if err := decodeStrict(raw, &target); err == nil {
+		t.Fatalf("decodeStrict accepted invalid UTF-8 as %#v", target)
+	}
+}
+
+func TestKnowledgeStoreRejectsInvalidUTF8InNonDigestSourceError(t *testing.T) {
+	store, root := seedStoredKnowledge(t, false)
+	path := filepath.Join(root, "employee-a", "knowledge", "sources.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := append([]byte(`"status": "ready",`+"\n"+`      "error": "bad`), 0xff)
+	replacement = append(replacement, []byte(`error"`)...)
+	raw = bytes.Replace(raw, []byte(`"status": "ready"`), replacement, 1)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Knowledge("employee-a"); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("invalid UTF-8 Source Error = %v", err)
+	}
+}
+
 func TestKnowledgeStoreRejectsPersistedIndexCorruption(t *testing.T) {
 	mutations := map[string]func(*knowledgeIndexFile){
 		"snippet": func(file *knowledgeIndexFile) {

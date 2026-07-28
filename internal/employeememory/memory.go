@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Rj455555/GoHermit/internal/owner"
@@ -174,6 +175,7 @@ func validateProvenance(value Provenance) error {
 
 func validValue(value string) bool {
 	if value == "" || len(value) > MaxValueBytes || !utf8.ValidString(value) || strings.ContainsRune(value, '\x00') ||
+		strings.ContainsRune(value, unicode.ReplacementChar) ||
 		owner.LooksSecret(value) {
 		return false
 	}

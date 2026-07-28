@@ -1,11 +1,13 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/Rj455555/GoHermit/internal/knowledge"
 )
@@ -98,7 +100,16 @@ func requirePhase4EmptyBody(w http.ResponseWriter, r *http.Request, label string
 }
 
 func decodeBoundedPhase4(w http.ResponseWriter, r *http.Request, maximum int64, target any, label string) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maximum))
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maximum))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid " + label + " request: body exceeds its size limit"})
+		return false
+	}
+	if !utf8.Valid(raw) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid " + label + " request: body is not valid UTF-8"})
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid " + label + " request: " + err.Error()})

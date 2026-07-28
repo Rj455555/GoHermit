@@ -203,13 +203,16 @@ func TestValidateSourceRejectsUnsafePersistedTextAndStaticPaths(t *testing.T) {
 	textCases := map[string]func(*Source){
 		"title NUL":          func(value *Source) { value.Title = "bad\x00title" },
 		"title invalid UTF8": func(value *Source) { value.Title = string([]byte{0xff}) },
+		"title replacement":  func(value *Source) { value.Title = "bad\uFFFDtitle" },
 		"title secret":       func(value *Source) { value.Title = "authorization: bearer hidden-value" },
 		"title private":      func(value *Source) { value.Title = "Hidden system prompt: internal" },
 		"manual NUL":         func(value *Source) { value.ManualText = "bad\x00manual" },
 		"manual invalid UTF8": func(value *Source) {
 			value.ManualText = string([]byte{0xff})
 		},
-		"manual private": func(value *Source) { value.ManualText = "raw tool arguments: hidden" },
+		"manual replacement": func(value *Source) { value.ManualText = "bad\uFFFDmanual" },
+		"manual private":     func(value *Source) { value.ManualText = "raw tool arguments: hidden" },
+		"error replacement":  func(value *Source) { value.Error = "bad\uFFFDerror" },
 	}
 	for name, mutate := range textCases {
 		t.Run(name, func(t *testing.T) {
@@ -353,10 +356,12 @@ func TestValidateIndexRejectsUnsafeCitationTextWithRecomputedDigest(t *testing.T
 	mutations := map[string]func(*Citation){
 		"heading NUL":          func(value *Citation) { value.Heading = "bad\x00heading" },
 		"heading invalid UTF8": func(value *Citation) { value.Heading = string([]byte{0xff}) },
+		"heading replacement":  func(value *Citation) { value.Heading = "bad\uFFFDheading" },
 		"heading secret":       func(value *Citation) { value.Heading = "authorization: bearer hidden-value" },
 		"heading private":      func(value *Citation) { value.Heading = "hidden system prompt: internal" },
 		"snippet NUL":          func(value *Citation) { value.Snippet = "bad\x00snippet" },
 		"snippet invalid UTF8": func(value *Citation) { value.Snippet = string([]byte{0xff}) },
+		"snippet replacement":  func(value *Citation) { value.Snippet = "bad\uFFFDsnippet" },
 		"snippet secret":       func(value *Citation) { value.Snippet = "api_key=abcdefghijklmnopqrstuvwxyz123456" },
 		"snippet private":      func(value *Citation) { value.Snippet = "raw tool arguments: hidden" },
 	}

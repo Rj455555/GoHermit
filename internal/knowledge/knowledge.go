@@ -572,8 +572,9 @@ func validateRelativePath(relative string) error {
 
 func validateKnowledgeText(name, value string, maximum int, allowEmpty bool) error {
 	if !allowEmpty && strings.TrimSpace(value) == "" || len(value) > maximum ||
-		!utf8.ValidString(value) || strings.ContainsRune(value, '\x00') {
-		return fmt.Errorf("%w: %s is empty, oversized, contains NUL, or is invalid UTF-8", ErrInvalid, name)
+		!utf8.ValidString(value) || strings.ContainsRune(value, '\x00') ||
+		strings.ContainsRune(value, unicode.ReplacementChar) {
+		return fmt.Errorf("%w: %s is empty, oversized, contains NUL or U+FFFD, or is invalid UTF-8", ErrInvalid, name)
 	}
 	if owner.LooksSecret(value) {
 		return fmt.Errorf("%w: %s contains secret-like data", ErrInvalid, name)
@@ -586,7 +587,8 @@ func validateKnowledgeText(name, value string, maximum int, allowEmpty bool) err
 
 func validTerm(value string) bool {
 	if len(value) < 2 || len(value) > 64 || !utf8.ValidString(value) ||
-		value != strings.ToLower(value) || strings.ContainsRune(value, '\x00') {
+		value != strings.ToLower(value) || strings.ContainsRune(value, '\x00') ||
+		strings.ContainsRune(value, unicode.ReplacementChar) {
 		return false
 	}
 	for _, character := range value {
