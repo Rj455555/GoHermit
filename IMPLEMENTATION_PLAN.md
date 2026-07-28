@@ -12,11 +12,11 @@
   `origin/main@e65bc1196e73e0b8962b012be76c0852f48e8c3c`.
 - Phase 5: `OWNER_APPROVED`; squash-merged through PR #38 into
   `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`.
-- Phase 6: `GATE_COMPLETE_WAITING_FOR_OWNER` on clean branch
+- Phase 6: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
   `agent/electronic-employees-v0.7-phase6`.
 - Phase 7 and every later product-code change remain blocked.
 - Required terminal status:
-  `WAITING_FOR_PHASE_6_APPROVAL`.
+  `WAITING_FOR_PHASE_6_REAPPROVAL`.
 
 ### Fixed invariants
 
@@ -64,7 +64,7 @@
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, context contract | `OWNER_APPROVED` |
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` |
-| 6 | Runtime Preparation | `GATE_COMPLETE_WAITING_FOR_OWNER` |
+| 6 | Runtime Preparation | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` |
@@ -73,10 +73,12 @@
 ### Current phase scope
 
 - Phases 1 through 5 are Owner-approved and closed to further implementation.
-- Runtime Preparation implementation and local Gate verification are complete:
-  readiness revalidation, bounded compact context snapshot, Session schema v6,
-  stable Session ID, bounded dispatch journal, and idempotent prepared-state
-  reconciliation all stop with zero execution.
+- Runtime Preparation implementation and its final Gate revision are complete:
+  readiness revalidation now uses the existing live Codex account model
+  catalog, while the Session Store fixes a canonical real Workspace/Store root
+  and fails closed on unsafe parent/final paths before dispatch. Bounded compact
+  context, schema v6, stable Session ID, dispatch reconciliation, and every
+  revised readiness path still stop with zero execution.
 - Make no further product-code change while Phase 6 awaits Owner review.
 - Keep Phase 7 and all later phases blocked until the next explicit Owner Gate.
 
@@ -119,12 +121,12 @@ for example:
 Until then, stop with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_6_APPROVAL
+STATUS: WAITING_FOR_PHASE_6_REAPPROVAL
 ```
 
 ---
 
-Plan status: `PHASE_6_GATE_COMPLETE_WAITING_FOR_OWNER`
+Plan status: `PHASE_6_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
 Baseline: `origin/main@ad31d63364aebc8b7eef8b2041d27d049c1c846f`
 Feature branch: `agent/electronic-employees-v0.7-phase6`
 Last audited: 2026-07-28
@@ -132,8 +134,9 @@ Last audited: 2026-07-28
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phases 1 through
-5 are Owner-approved. Phase 6 implementation and Gate verification are
-complete and awaiting Owner approval; Phase 7 through Phase 10 remain blocked.
+5 are Owner-approved. Phase 6 implementation and Gate revision verification
+are complete and awaiting Owner reapproval; Phase 7 through Phase 10 remain
+blocked.
 Each Owner approval authorizes exactly one phase.
 
 ## 1. Current-state evidence
@@ -1148,7 +1151,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 3 | Skill Catalog, SKILL.md Adapter, policy intersection, and context contract | `OWNER_APPROVED` | Squash-merged through PR #36 as `d31bcf3` |
 | 4 | Knowledge Base and Employee Memory | `OWNER_APPROVED` | PR #37 externally squash-merged as `e65bc119`; full Phase 4 is in `origin/main` |
 | 5 | Employee Task Inbox persistence and API | `OWNER_APPROVED` | PR #38 squash-merged as `ad31d633`; full Phase 5 is in `origin/main` |
-| 6 | Runtime Preparation | `GATE_COMPLETE_WAITING_FOR_OWNER` | Implementation `bcb291bc6712ea74792a75db33c08ad414ba8664`; clean branch `agent/electronic-employees-v0.7-phase6` from `origin/main@ad31d633` |
+| 6 | Runtime Preparation | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `bcb291bc6712ea74792a75db33c08ad414ba8664`; Gate revision `fc38fff`; clean branch `agent/electronic-employees-v0.7-phase6` from `origin/main@ad31d633` |
 | 7 | Manual Execution Lifecycle | `BLOCKED_BY_GATE` | Not started |
 | 8 | Employees and Tasks Web UI | `BLOCKED_BY_GATE` | Not started |
 | 9 | Team Role to Employee mapping | `BLOCKED_BY_GATE` | Not started |
@@ -2023,7 +2026,7 @@ Exit:
 
 Completion evidence (2026-07-28):
 
-- Status: `GATE_COMPLETE_WAITING_FOR_OWNER`. Phase 7 through Phase 10 remain
+- Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 7 through Phase 10 remain
   `BLOCKED_BY_GATE`; Phase 7 has not started.
 - Implementation commit:
   `bcb291bc6712ea74792a75db33c08ad414ba8664`
@@ -2032,6 +2035,8 @@ Completion evidence (2026-07-28):
   - `internal/employee/snapshot.go`;
   - `internal/session/session.go`;
   - `internal/session/session_test.go`;
+  - `internal/session/safe_store.go`;
+  - `internal/session/store_security_test.go`;
   - `internal/employeestore/dispatch.go`;
   - `internal/employeestore/dispatch_test.go`;
   - `internal/employeestore/tasks.go`;
@@ -2116,6 +2121,67 @@ Completion evidence (2026-07-28):
     dispatch journal plus matching zero-Run Session proves `prepared`; Phase 7
     alone may bind mutable Session/Run projection fields and implement
     cancel/resume/execution.
+
+Final Phase 6 Gate revision evidence (2026-07-28):
+
+- Gate revision implementation commit:
+  `fc38fff` (`fix(phase6): harden runtime readiness and session paths`).
+- Root cause 1: `PrepareEmployeeTask` used `config.ResolveSelection`, which
+  consulted the static model list even for `openai-codex`; `AccessStatus`
+  established login readiness but did not establish that the pinned model was
+  in the account's current model catalog.
+- Fix 1: preparation now reuses the existing `validateSelection`,
+  five-minute `codexCatalog`, and `ResolveSelectionWithModels` path. Codex
+  account-model discovery is readiness-only: no Runtime, Run, provider
+  inference, or model inference is constructed or invoked. Non-Codex API
+  access continues to use static model configuration plus API-key readiness.
+  Catalog failure or a missing pinned model returns a conflict before any
+  dispatch journal or Session write.
+- Root cause 2: the Session Store validated only lexical `Abs/Rel/Join`
+  containment. `os.Stat`, `os.ReadFile`, `os.OpenFile`, and
+  `storage.AtomicWrite` could follow a pre-positioned Store-root, sessions,
+  Session-directory, or final-file symlink outside the Workspace.
+- Fix 2: the Store fixes a canonical real Workspace root and a lexically
+  contained Store root at construction. Every existing directory component is
+  inspected with `Lstat`; missing directories are created one component at a
+  time; symlink and non-directory parents are rejected. Checkpoint, commit
+  journal, summary, event, and message targets reject final symlinks and
+  non-regular files on readiness, open, append, atomic write, recovery, and
+  removal. `CheckTarget` returns `(exists, error)` so Phase 6 validates the
+  entire stable Session target and non-nil Store before writing its dispatch
+  journal; `Save`, `Load`, `Recover`, and journal apply repeat the checks.
+- The Store continues to use the existing durable `commit.json` recovery
+  protocol. This revision adds no Task/Run/Event/Approval/Verification state
+  machine and no second recovery journal.
+- New deterministic tests:
+  - `TestPrepareEmployeeTaskUsesLiveCodexModelCatalog`;
+  - `TestPrepareEmployeeTaskNonCodexKeepsStaticReadiness`;
+  - `TestPrepareEmployeeTaskRejectsUnsafeSessionTargetBeforeDispatch`;
+  - `TestPrepareEmployeeTaskRejectsUnavailableSessionStoreBeforeDispatch`;
+  - `TestSessionStoreRejectsStoreRootAndSessionsSymlinks`;
+  - `TestSessionStoreRejectsUnsafeSessionTargets`;
+  - `TestSessionStoreCheckTargetDistinguishesMissingAndUnsafe`.
+- The Codex tests preload the existing five-minute catalog cache and use an
+  isolated local login token, so they exercise live-catalog selection
+  deterministically without a real account or network. They prove both removal
+  drift and a live-only account model that is absent from the static list.
+- macOS tests create real symlinks without skip for `.gohermit`, `sessions`,
+  stable Session directories, `session.json`, and `commit.json`, plus a
+  non-regular final target. External marker files remain byte-for-byte
+  unchanged. Unsafe/unavailable targets leave no dispatch journal and produce
+  no Session, Run, runtime/model/provider call, Tool, lease, or Workspace
+  mutation.
+- PASS Phase 6 scoped tests, Session migration/recovery regressions,
+  `go test ./... -count=1`, `go test -race ./... -count=1`, `go vet ./...`,
+  CLI/Web builds, gofmt, `git diff --check`, credential-shaped scan, and
+  independent Compose YAML validation. Push/PR CI evidence is recorded in the
+  Draft PR after the final evidence commit.
+- Remaining accepted boundary: path checks and writes are serialized by the
+  existing process-local Store mutex and use same-directory atomic rename, but
+  they are not an OS-wide cross-process lease or cross-file transaction.
+  Cross-process malicious path replacement remains outside v0.7's
+  single-service concurrency contract. The dispatch journal still handles only
+  bounded Task-to-Session preparation reconciliation.
 
 ### Phase 7: Manual Execution Lifecycle
 
@@ -2326,6 +2392,8 @@ v0.7 does not implement:
 | Employee edits alter historical Tasks/Team work. | Immutable revision/Skill/Knowledge/Project snapshots and deep-copy tests. |
 | Schema changes break old Sessions or TeamTemplates. | Explicit v5->v6 and Template v1->v2 migrations plus existing fixture regressions. |
 | Runtime preparation accidentally starts execution. | Phase 6 exit assertions require zero Runs, zero provider/runtime/model calls, and no lease acquisition; execution belongs only to Phase 7. |
+| Codex preparation accepts a stale static model or rejects a live account-only model. | Phase 6 Gate preparation reuses the cached live Codex account catalog and `ResolveSelectionWithModels`; deterministic removal/live-only tests fail before dispatch and never construct a Runtime. Non-Codex API access remains static plus API-key readiness. |
+| Session persistence follows a symlink outside the Workspace. | The Session Store fixes canonical Workspace/Store roots, validates every existing parent with `Lstat`, rejects final symlinks/non-regular files, repeats checks during readiness/read/write/recovery, and proves real macOS symlink targets remain unchanged. |
 | Compact snapshot grows into a repeated Employee copy. | Full revision remains in EmployeeTask/Employee Store; Session/hidden Worker snapshot hard-fails above 64 KiB; parent Team metadata has 16 KiB/64 KiB limits. |
 | Activity becomes a conflicting Event Store. | Activity accepts only enumerated lifecycle/reference records and is excluded from recovery, SSE, Run projection, and tool events. |
 | Future ProjectBinding shape is mistaken for multi-Workspace support. | Readiness requires canonical equality with `Service.Workspace`; projects API returns one Workspace; no dynamic Store manager exists. |
@@ -2412,4 +2480,4 @@ Owner explicitly approves Phase 6, for example:
 批准 Phase 6，开始 Phase 7
 ```
 
-STATUS: WAITING_FOR_PHASE_6_APPROVAL
+STATUS: WAITING_FOR_PHASE_6_REAPPROVAL
