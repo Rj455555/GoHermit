@@ -1,6 +1,7 @@
 import { ApiError } from './errors'
 
-const MAX_RESPONSE_BYTES = 1 << 20
+const DEFAULT_MAX_RESPONSE_BYTES = 1 << 20
+const SESSION_MAX_RESPONSE_BYTES = 16 << 20
 
 export type Decoder<T> = (value: unknown) => T
 
@@ -44,18 +45,36 @@ function validateApiPath(path: string): string {
   return `${parsed.pathname}${parsed.search}`
 }
 
-async function readBoundedText(response: Response): Promise<string> {
+function responseByteLimit(path: string, method: string): number {
+  const pathname = path.split('?', 1)[0] ?? ''
+  if (method === 'GET' && /^\/api\/sessions\/[^/]+$/u.test(pathname)) {
+    return SESSION_MAX_RESPONSE_BYTES
+  }
+  return DEFAULT_MAX_RESPONSE_BYTES
+}
+
+async function safelyCancel(
+  stream: { cancel(reason?: unknown): Promise<void> } | null | undefined,
+): Promise<void> {
+  try {
+    await stream?.cancel()
+  } catch {
+    // Cancellation is best-effort; the sanitized boundary error remains authoritative.
+  }
+}
+
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
   const declaredLength = response.headers.get('Content-Length')
   if (declaredLength !== null) {
     const length = Number(declaredLength)
-    if (!Number.isSafeInteger(length) || length < 0 || length > MAX_RESPONSE_BYTES) {
-      await response.body?.cancel()
+    if (!Number.isSafeInteger(length) || length < 0 || length > maxBytes) {
+      await safelyCancel(response.body)
       throw new ApiError('response_too_large', response.status)
     }
   }
   if (response.body === null) return ''
   const reader = response.body.getReader()
-  const decoder = new TextDecoder()
+  const decoder = new TextDecoder('utf-8', { fatal: true })
   let size = 0
   let text = ''
   try {
@@ -63,13 +82,23 @@ async function readBoundedText(response: Response): Promise<string> {
       const { done, value } = await reader.read()
       if (done) break
       size += value.byteLength
-      if (size > MAX_RESPONSE_BYTES) {
-        await reader.cancel()
+      if (size > maxBytes) {
+        await safelyCancel(reader)
         throw new ApiError('response_too_large', response.status)
       }
-      text += decoder.decode(value, { stream: true })
+      try {
+        text += decoder.decode(value, { stream: true })
+      } catch {
+        await safelyCancel(reader)
+        throw new ApiError('invalid_response', response.status)
+      }
     }
-    return text + decoder.decode()
+    try {
+      return text + decoder.decode()
+    } catch {
+      await safelyCancel(reader)
+      throw new ApiError('invalid_response', response.status)
+    }
   } finally {
     reader.releaseLock()
   }
@@ -94,15 +123,15 @@ export async function apiRequest<T>(
     }
     const response = await fetch(safePath, init)
     if (!response.ok) {
-      await response.body?.cancel()
+      await safelyCancel(response.body)
       throw new ApiError('http_error', response.status)
     }
     const contentType = response.headers.get('Content-Type')?.toLowerCase() ?? ''
     if (!contentType.startsWith('application/json')) {
-      await response.body?.cancel()
+      await safelyCancel(response.body)
       throw new ApiError('invalid_content_type', response.status)
     }
-    const text = await readBoundedText(response)
+    const text = await readBoundedText(response, responseByteLimit(safePath, method))
     let value: unknown
     try {
       value = JSON.parse(text) as unknown

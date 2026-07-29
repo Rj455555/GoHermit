@@ -168,20 +168,59 @@ describe('Session EventSource registry', () => {
     subscription.unsubscribe()
   })
 
-  it('fails closed on sequence-zero non-delta events and closes after bounded invalid input', async () => {
+  it('recovers a fatal connection once without losing high-water, subscribers, or Run filters', async () => {
+    const runOne: RuntimeEvent[] = []
+    const runTwo: RuntimeEvent[] = []
     const onFatalError = vi.fn()
-    const subscription = subscribeSessionEvents('session-1', 0, {
-      onEvent: vi.fn(),
+    const one = subscribeSessionEvents('session-1', 10, {
+      runId: 'run-1',
+      onEvent: (value) => runOne.push(value),
       onFatalError,
     })
+    const two = subscribeSessionEvents('session-1', 10, {
+      runId: 'run-2',
+      onEvent: (value) => runTwo.push(value),
+    })
+    source().emit('tool_completed', event({
+      type: 'tool_completed',
+      sequence: 3,
+      run_id: 'run-1',
+    }))
     for (let count = 0; count < 5; count += 1) {
       source().emit('task_started', event({ type: 'task_started', sequence: 0 }))
     }
 
     expect(onFatalError).toHaveBeenCalledOnce()
     expect(source().closed).toBe(true)
-    expect(getSessionEventDiagnostics('session-1')?.fatal).toBe(true)
-    subscription.unsubscribe()
+    expect(getSessionEventDiagnostics('session-1')).toMatchObject({
+      fatal: true,
+      highWater: 3,
+      subscribers: 2,
+    })
+
+    reconnectSessionEvents('session-1')
+    expect(sources).toHaveLength(2)
+    expect(source(1).url).toBe('/api/sessions/session-1/events?after=3')
+    expect(getSessionEventDiagnostics('session-1')).toMatchObject({
+      fatal: false,
+      highWater: 3,
+      subscribers: 2,
+    })
+    source(1).emit('tool_completed', event({
+      type: 'tool_completed',
+      sequence: 4,
+      run_id: 'run-2',
+    }))
+    source(1).emit('tool_completed', event({
+      type: 'tool_completed',
+      sequence: 5,
+      run_id: 'run-1',
+    }))
+    expect(runOne.map((value) => value.sequence)).toEqual([3, 5])
+    expect(runTwo.map((value) => value.sequence)).toEqual([4])
+
+    one.unsubscribe()
+    two.unsubscribe()
     await Promise.resolve()
   })
 })

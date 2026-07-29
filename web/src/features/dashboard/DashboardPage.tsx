@@ -6,6 +6,7 @@ import type { Info, InvocationSummary, LoopSummary, SessionSummary } from '../..
 import { ErrorState } from '../../components/ErrorState'
 import { PageHeader } from '../../components/PageHeader'
 import { useConnectivity } from '../../components/ConnectivityProvider'
+import { translatedEnum } from '../../i18n/enumLabel'
 
 interface DashboardProjection {
   info: Info
@@ -105,7 +106,7 @@ export function DashboardPage() {
       </section>
       <section className="projection-card">
         <h2>{t('dashboard.recent')}</h2>
-        {recent ? <p>{projection.loops.find((loop) => loop.id === recent.loop_id)?.name ?? recent.loop_id} · {recent.status}</p> : <p>{t('common.empty')}</p>}
+        {recent ? <p>{projection.loops.find((loop) => loop.id === recent.loop_id)?.name ?? recent.loop_id} · {translatedEnum(t, 'invocationStatus', recent.status)}</p> : <p>{t('common.empty')}</p>}
       </section>
       <section className="projection-card">
         <h2>{t('dashboard.activeSession')}</h2>

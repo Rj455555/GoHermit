@@ -93,9 +93,10 @@ describe('useSessionEvents projection', () => {
     expect(refresh).toHaveBeenCalledTimes(2)
   })
 
-  it('fails closed when the transient stream buffer exceeds 256 KiB and caps activity', () => {
+  it('truncates only the local transient stream and clears it from terminal truth', () => {
+    const refresh = vi.fn()
     const { result } = renderHook(() =>
-      useSessionEvents({ sessionId: 'session-1', frontier: 0, runId: 'run-1', onRefresh: vi.fn() }),
+      useSessionEvents({ sessionId: 'session-1', frontier: 0, runId: 'run-1', onRefresh: refresh }),
     )
     const chunk = 'x'.repeat(32 << 10)
     act(() => {
@@ -107,12 +108,34 @@ describe('useSessionEvents projection', () => {
       }
     })
 
-    expect(result.current.fatal).toBe(true)
-    expect(result.current.status).toBe('fatal')
+    expect(result.current.truncated).toBe(true)
+    expect(result.current.fatal).toBe(false)
+    expect(result.current.status).toBe('connected')
     expect(new TextEncoder().encode(result.current.streamingText).byteLength).toBe(256 << 10)
     expect(result.current.events).toHaveLength(100)
+    const truncatedText = result.current.streamingText
 
+    act(() => {
+      stream.options?.onEvent(event('model_delta', { message: 'ignored' }))
+      stream.options?.onEvent(event('model_completed', { sequence: 106 }))
+    })
+    expect(result.current.streamingText).toBe('')
+    expect(result.current.streamingText).not.toBe(`${truncatedText}ignored`)
+    expect(result.current.truncated).toBe(false)
+    expect(refresh).toHaveBeenCalledOnce()
+    expect(stream.reconnectSessionEvents).not.toHaveBeenCalled()
+  })
+
+  it('clears fatal UI when the user explicitly reconnects', () => {
+    const { result } = renderHook(() =>
+      useSessionEvents({ sessionId: 'session-1', frontier: 0, runId: 'run-1', onRefresh: vi.fn() }),
+    )
     act(() => stream.options?.onFatalError())
     expect(result.current.fatal).toBe(true)
+
+    act(() => result.current.reconnect())
+    act(() => stream.options?.onStatus('reconnecting'))
+    expect(result.current.fatal).toBe(false)
+    expect(result.current.status).toBe('reconnecting')
   })
 })

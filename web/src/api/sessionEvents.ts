@@ -176,8 +176,10 @@ export function subscribeSessionEvents(
 
 export function reconnectSessionEvents(sessionId: string) {
   const connection = registry.get(sessionId)
-  if (connection === undefined || connection.fatal) return
+  if (connection === undefined) return
   connection.source.close()
+  connection.fatal = false
+  connection.invalidEvents = 0
   connection.hadError = true
   notifyStatus(connection, 'reconnecting')
   connection.source = openSource(connection)

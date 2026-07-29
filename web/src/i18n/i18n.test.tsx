@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 
 import { flattenLeafKeys, translationResources } from './resources'
+import { RUNTIME_EVENT_TYPES } from '../api/decoders'
 import { renderApp } from '../test/renderApp'
 
 describe('i18n contract', () => {
@@ -42,6 +43,27 @@ describe('i18n contract', () => {
     expect(flattenLeafKeys(translationResources['en-US'].translation)).toEqual(
       flattenLeafKeys(translationResources['zh-CN'].translation),
     )
+  })
+
+  it('covers every backend metadata enum in both locales', () => {
+    const expected = {
+      invocationStatus: ['attached', 'blocked', 'cancelled', 'completed', 'dispatched', 'failed', 'prepared', 'skipped'],
+      messageRole: ['assistant', 'system', 'tool', 'user'],
+      runtimeEventType: [...RUNTIME_EVENT_TYPES],
+      toolStatus: ['completed', 'started', 'uncertain'],
+      workItemStatus: ['cancelled', 'completed', 'failed', 'interrupted', 'queued', 'running', 'skipped'],
+    }
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      const resources = translationResources[locale].translation as unknown as Record<
+        string,
+        Record<string, string>
+      >
+      for (const [namespace, values] of Object.entries(expected)) {
+        expect(Object.keys(resources[namespace] ?? {}).sort()).toEqual(
+          expect.arrayContaining([...values].sort()),
+        )
+      }
+    }
   })
 
   it('never exposes a raw missing translation key', () => {

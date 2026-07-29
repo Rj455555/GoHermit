@@ -75,7 +75,7 @@ export const getCodexLogin = (loginId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/settings/logins/${segment(loginId)}`, decodeCodexLogin, options)
 
 export const listSessions = (options: ReadOptions = {}) =>
-  apiRequest('/api/sessions?limit=200', decodeSessionList, options)
+  apiRequest('/api/sessions?limit=100', decodeSessionList, options)
 export const getSession = (sessionId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/sessions/${segment(sessionId)}`, decodeSessionDetail, options)
 export const createSession = (

@@ -79,6 +79,58 @@ test('Agent restores from URL, shares one Session EventSource, and streams model
   expect(state.urls.every((url: string) => /\/api\/sessions\/session-1\/events\?after=\d+$/u.test(url))).toBe(true)
 })
 
+test('queued Review Plan binds approval and cancellation to the active Run and disables Composer', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test__/queued-review')
+  await page.goto('/agent/sessions/session-1')
+
+  await expect(page.getByRole('heading', { name: 'Queued Review Session' })).toBeVisible()
+  await expect(page.getByLabel('消息')).toBeDisabled()
+  await expect(page.getByRole('button', { name: '批准计划' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '取消运行' })).toBeVisible()
+
+  await page.getByRole('button', { name: '批准计划' }).click()
+  await expect(page.getByRole('button', { name: '批准计划' })).toHaveCount(0)
+  const approved = await (await request.get('/api/sessions/session-1')).json()
+  expect(approved.session.runs[0].plan_approved).toBe(true)
+
+  await request.post('/__test__/queued-review')
+  await page.reload()
+  await page.getByRole('button', { name: '取消运行' }).click()
+  await expect(page.getByLabel('消息')).toBeEnabled()
+  const cancelled = await (await request.get('/api/sessions/session-1')).json()
+  expect(cancelled.session.active_run_id).toBeUndefined()
+  expect(cancelled.session.runs[0].status).toBe('cancelled')
+})
+
+test('terminal Run history never exposes mutation actions', async ({ page, request }) => {
+  await request.post('/__test__/terminal-history')
+  await page.goto('/agent/sessions/session-1')
+
+  await expect(page.getByRole('heading', { name: 'Terminal History Session' })).toBeVisible()
+  await expect(page.getByText('已完成').first()).toBeVisible()
+  await expect(page.getByRole('button', { name: '批准计划' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '取消运行' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '恢复运行' })).toHaveCount(0)
+  await expect(page.getByLabel('消息')).toBeEnabled()
+})
+
+test('Composer enforces the exact 16 KiB UTF-8 byte boundary', async ({ page }) => {
+  await page.goto('/agent/sessions/session-1')
+  const composer = page.getByLabel('消息')
+  const send = page.getByRole('button', { name: '发送' })
+
+  await composer.fill('a'.repeat(16 << 10))
+  await expect(page.getByText(`${16 << 10} / ${16 << 10}`)).toBeVisible()
+  await expect(send).toBeEnabled()
+
+  await composer.fill(`中${'a'.repeat((16 << 10) - 2)}`)
+  await expect(page.getByText(`${(16 << 10) + 1} / ${16 << 10}`)).toBeVisible()
+  await expect(send).toBeDisabled()
+})
+
 test('refresh resumes the Session high-water without creating Run-scoped EventSources', async ({
   page,
   request,

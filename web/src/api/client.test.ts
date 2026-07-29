@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { apiRequest } from './client'
+import { decodeSessionDetail } from './decoders'
 import { ApiError } from './errors'
 
 const decodeValue = (value: unknown) => value
+const now = '2026-07-29T08:00:00Z'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -114,5 +116,98 @@ describe('apiRequest', () => {
       }),
     ).rejects.toMatchObject({ code: 'network_error' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows a valid Session response above 1 MiB but below the 16 MiB endpoint limit', async () => {
+    const value = {
+      session: {
+        schema_version: 6,
+        id: 'session-1',
+        title: 'Long Session',
+        goal: '',
+        status: 'open',
+        selection: { company: 'openai', access: 'codex', model: 'gpt-5.6', agent: 'coding' },
+        created_at: now,
+        updated_at: now,
+        turns: 0,
+        runs: [],
+        summary: '',
+        tool_calls: [],
+        modified_files: {},
+        completed_steps: [],
+        pending_steps: [],
+        test_results: [],
+        workspace: '/workspace',
+        config_digest: 'digest',
+      },
+      messages: Array.from({ length: 18 }, (_, index) => ({
+        id: `message-${index}`,
+        run_id: 'run-1',
+        role: 'assistant',
+        content: '中'.repeat(21_845),
+        created_at: now,
+      })),
+    }
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(value), {
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await apiRequest('/api/sessions/session-1', decodeSessionDetail)
+    expect(result.messages).toHaveLength(18)
+    expect(result.messages[0]?.content).toBe(value.messages[0]?.content)
+  })
+
+  it('cancels a streamed Session response after the 16 MiB hard limit', async () => {
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(1 << 20).fill(0x20))
+      },
+      cancel,
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(body, { headers: { 'Content-Type': 'application/json' } }),
+    ))
+
+    await expect(apiRequest('/api/sessions/session-1', decodeValue)).rejects.toMatchObject({
+      code: 'response_too_large',
+    })
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('rejects invalid UTF-8 as a sanitized invalid_response', async () => {
+    const bytes = Uint8Array.from([
+      ...new TextEncoder().encode('{"value":"'),
+      0xc3,
+      0x28,
+      ...new TextEncoder().encode('"}'),
+    ])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(bytes, { headers: { 'Content-Type': 'application/json' } }),
+    ))
+
+    await expect(apiRequest('/api/health', decodeValue)).rejects.toMatchObject({
+      code: 'invalid_response',
+    })
+  })
+
+  it('decodes legal Chinese split across multibyte stream chunks', async () => {
+    const encoded = new TextEncoder().encode('{"value":"中文"}')
+    const splitAt = encoded.indexOf(0xe4) + 1
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoded.slice(0, splitAt))
+        controller.enqueue(encoded.slice(splitAt))
+        controller.close()
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(body, { headers: { 'Content-Type': 'application/json' } }),
+    ))
+
+    await expect(apiRequest('/api/health', decodeValue)).resolves.toEqual({ value: '中文' })
   })
 })

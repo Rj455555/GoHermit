@@ -32,12 +32,26 @@ import { ErrorState } from '../../components/ErrorState'
 import { PageHeader } from '../../components/PageHeader'
 import { StatusBadge } from '../../components/StatusBadge'
 import { useSessionEvents } from '../../hooks/useSessionEvents'
+import { translatedEnum } from '../../i18n/enumLabel'
+import { useUI } from '../../state/UIContext'
 import { useAgentData } from './AgentDataContext'
+import {
+  MAX_RUN_MESSAGE_BYTES,
+  normalizedRunMessage,
+  runMessageByteLength,
+} from './messageLimits'
 
-const MAX_MESSAGE_BYTES = 64 << 10
+function mutationErrorKey(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 409) return 'mutation.conflict'
+    if (error.code === 'network_error' || error.code === 'aborted') return 'mutation.offline'
+  }
+  return 'mutation.failed'
+}
 
 export function AgentLandingPage() {
   const { t } = useTranslation()
+  const { actions } = useUI()
   const navigate = useNavigate()
   const connectivity = useConnectivity()
   const { info, loading, error, refresh } = useAgentData()
@@ -90,9 +104,11 @@ export function AgentLandingPage() {
       })
       await refresh()
       void navigate(`/agent/sessions/${encodeURIComponent(created.id)}`)
-    } catch {
-      setSubmitting(false)
+    } catch (caught) {
+      actions.showToast({ messageKey: mutationErrorKey(caught), tone: 'error' })
+    } finally {
       submittingRef.current = false
+      setSubmitting(false)
     }
   }
 
@@ -165,6 +181,7 @@ export function AgentLandingPage() {
 
 export function AgentSessionPage() {
   const { t } = useTranslation()
+  const { actions } = useUI()
   const { sessionId } = useParams()
   const connectivity = useConnectivity()
   const { refresh: refreshSessions } = useAgentData()
@@ -218,26 +235,45 @@ export function AgentSessionPage() {
     return () => window.clearInterval(timer)
   }, [approvals])
 
-  const activeRun = useMemo<Run | undefined>(
-    () => projection?.session.runs.find((run) => run.id === projection.session.active_run_id)
-      ?? projection?.session.runs.at(-1),
+  const boundActiveRun = useMemo<Run | undefined>(
+    () => projection?.session.active_run_id
+      ? projection.session.runs.find((run) => run.id === projection.session.active_run_id)
+      : undefined,
     [projection],
   )
+  const latestRun = useMemo<Run | undefined>(
+    () => projection?.session.runs.at(-1),
+    [projection],
+  )
+  const displayedRun = boundActiveRun ?? latestRun
+  const canApprovePlan = Boolean(
+    boundActiveRun?.status === 'queued'
+      && boundActiveRun.plan_mode === 'review'
+      && boundActiveRun.plan
+      && !boundActiveRun.plan_approved,
+  )
+  const canCancelRun = Boolean(
+    boundActiveRun?.status === 'running'
+      || boundActiveRun?.status === 'verifying'
+      || canApprovePlan,
+  )
+  const canResumeRun = boundActiveRun?.status === 'interrupted'
   const eventState = useSessionEvents({
     sessionId: projection?.session.id,
     frontier: projection?.session.next_event_sequence ?? 0,
-    runId: activeRun?.id,
+    runId: boundActiveRun?.id,
     onRefresh: () => void refresh(),
   })
 
   async function submitRun() {
-    const message = composer.trim()
+    const message = normalizedRunMessage(composer)
     if (
       sessionId === undefined ||
       mutationInFlight.current ||
       !connectivity.canMutate ||
+      Boolean(projection?.session.active_run_id) ||
       message === '' ||
-      new TextEncoder().encode(message).byteLength > MAX_MESSAGE_BYTES
+      runMessageByteLength(composer) > MAX_RUN_MESSAGE_BYTES
     ) return
     mutationInFlight.current = true
     setMutating(true)
@@ -245,8 +281,8 @@ export function AgentSessionPage() {
       await startRun(sessionId, message)
       setComposer('')
       await refresh()
-    } catch {
-      // Keep the user's text for correction/retry; errors stay generic in UI.
+    } catch (caught) {
+      actions.showToast({ messageKey: mutationErrorKey(caught), tone: 'error' })
     } finally {
       mutationInFlight.current = false
       setMutating(false)
@@ -263,17 +299,24 @@ export function AgentSessionPage() {
   async function runAction(action: 'cancel' | 'resume' | 'approve') {
     if (
       sessionId === undefined ||
-      activeRun === undefined ||
+      boundActiveRun === undefined ||
       mutationInFlight.current ||
       !connectivity.canMutate
+    ) return
+    if (
+      (action === 'cancel' && !canCancelRun)
+      || (action === 'resume' && !canResumeRun)
+      || (action === 'approve' && !canApprovePlan)
     ) return
     mutationInFlight.current = true
     setMutating(true)
     try {
-      if (action === 'cancel') await cancelRun(sessionId, activeRun.id)
-      else if (action === 'resume') await resumeRun(sessionId, activeRun.id)
-      else await approvePlan(sessionId, activeRun.id)
+      if (action === 'cancel') await cancelRun(sessionId, boundActiveRun.id)
+      else if (action === 'resume') await resumeRun(sessionId, boundActiveRun.id)
+      else await approvePlan(sessionId, boundActiveRun.id)
       await refresh()
+    } catch (caught) {
+      actions.showToast({ messageKey: mutationErrorKey(caught), tone: 'error' })
     } finally {
       mutationInFlight.current = false
       setMutating(false)
@@ -291,7 +334,9 @@ export function AgentSessionPage() {
     try {
       await decideApproval(sessionId, request.request_id, decision)
     } catch (caught) {
-      if (!(caught instanceof ApiError && caught.status === 409)) return
+      if (!(caught instanceof ApiError && caught.status === 409)) {
+        actions.showToast({ messageKey: mutationErrorKey(caught), tone: 'error' })
+      }
     } finally {
       decisionInFlight.current.delete(request.request_id)
       await refresh()
@@ -301,7 +346,10 @@ export function AgentSessionPage() {
   if (loading && projection === null) return <p role="status">{t('common.loading')}</p>
   if (projection === null) return <ErrorState title={t('agent.sessionNotFound')} description={t('agent.sessionNotFoundDescription')} />
   const session = projection.session
-  const composerDisabled = mutating || !connectivity.canMutate || activeRun?.status === 'running' || activeRun?.status === 'verifying'
+  const composerBytes = runMessageByteLength(composer)
+  const composerDisabled = mutating
+    || !connectivity.canMutate
+    || Boolean(session.active_run_id)
 
   return (
     <article className="feature-page session-page">
@@ -309,27 +357,28 @@ export function AgentSessionPage() {
       {error || connectivity.status === 'offline' ? <p className="stale-notice">{t('connectivity.stale')}</p> : null}
       {eventState.status === 'reconnecting' ? <p role="status">{t('session.reconnecting')}</p> : null}
       {eventState.fatal ? <button type="button" className="button button--secondary" onClick={eventState.reconnect}>{t('session.reconnectEvents')}</button> : null}
+      {eventState.truncated ? <p className="stale-notice" role="status">{t('session.streamingTruncated')}</p> : null}
 
       <section className="projection-card run-card">
         <h2>{t('session.run')}</h2>
-        <p>{activeRun ? <StatusBadge tone={activeRun.status === 'failed' ? 'error' : 'info'}>{t(`runStatus.${activeRun.status}`)}</StatusBadge> : t('session.noActiveRun')}</p>
+        <p>{displayedRun ? <StatusBadge tone={displayedRun.status === 'failed' ? 'error' : 'info'}>{translatedEnum(t, 'runStatus', displayedRun.status)}</StatusBadge> : t('session.noActiveRun')}</p>
         <div className="action-row">
-          {activeRun?.status === 'running' || activeRun?.status === 'verifying' ? <button type="button" className="button button--danger" disabled={mutating || !connectivity.canMutate} onClick={() => void runAction('cancel')}>{t('session.cancelRun')}</button> : null}
-          {activeRun?.status === 'interrupted' ? <button type="button" className="button button--primary" disabled={mutating || !connectivity.canMutate} onClick={() => void runAction('resume')}>{t('session.resumeRun')}</button> : null}
-          {activeRun?.plan_mode === 'review' && !activeRun.plan_approved ? <button type="button" className="button button--primary" disabled={mutating || !connectivity.canMutate} onClick={() => void runAction('approve')}>{t('session.approvePlan')}</button> : null}
+          {canCancelRun ? <button type="button" className="button button--danger" disabled={mutating || !connectivity.canMutate} onClick={() => void runAction('cancel')}>{t('session.cancelRun')}</button> : null}
+          {canResumeRun ? <button type="button" className="button button--primary" disabled={mutating || !connectivity.canMutate} onClick={() => void runAction('resume')}>{t('session.resumeRun')}</button> : null}
+          {canApprovePlan ? <button type="button" className="button button--primary" disabled={mutating || !connectivity.canMutate} onClick={() => void runAction('approve')}>{t('session.approvePlan')}</button> : null}
         </div>
       </section>
 
       <section className="projection-card message-timeline">
         <h2>{t('session.messages')}</h2>
-        {projection.messages.map((message) => <article className={`message message--${message.role}`} key={message.id}><strong>{message.role}</strong><p>{message.content}</p></article>)}
-        {eventState.streamingText ? <article className="message message--assistant" data-testid="streaming-bubble"><strong>assistant</strong><p>{eventState.streamingText}</p></article> : null}
+        {projection.messages.map((message) => <article className={`message message--${message.role}`} key={message.id}><strong>{translatedEnum(t, 'messageRole', message.role)}</strong><p>{message.content}</p></article>)}
+        {eventState.streamingText ? <article className="message message--assistant" data-testid="streaming-bubble"><strong>{translatedEnum(t, 'messageRole', 'assistant')}</strong><p>{eventState.streamingText}</p></article> : null}
       </section>
 
-      {activeRun?.plan ? (
+      {displayedRun?.plan ? (
         <section className="projection-card">
-          <h2>{t('session.plan')} · r{activeRun.plan.revision}</h2>
-          <ol>{activeRun.plan.steps.map((step) => <li key={step.id}><StatusBadge tone="info">{t(`planStatus.${step.status}`)}</StatusBadge> {step.title}{step.detail ? <small>{step.detail}</small> : null}</li>)}</ol>
+          <h2>{t('session.plan')} · r{displayedRun.plan.revision}</h2>
+          <ol>{displayedRun.plan.steps.map((step) => <li key={step.id}><StatusBadge tone="info">{translatedEnum(t, 'planStatus', step.status)}</StatusBadge> {step.title}{step.detail ? <small>{step.detail}</small> : null}</li>)}</ol>
         </section>
       ) : null}
 
@@ -337,13 +386,13 @@ export function AgentSessionPage() {
         <section className="projection-card">
           <h2>{t('session.mission')}</h2>
           <p>{session.mission.goal}</p>
-          <ul>{session.mission.work_items.map((item) => <li key={item.id}>{item.title} · {item.status}</li>)}</ul>
+          <ul>{session.mission.work_items.map((item) => <li key={item.id}>{item.title} · {translatedEnum(t, 'workItemStatus', item.status)}</li>)}</ul>
         </section>
       ) : null}
 
       <section className="projection-card">
         <h2>{t('session.tools')}</h2>
-        {session.tool_calls.length === 0 ? <p>{t('common.empty')}</p> : <ul>{session.tool_calls.map((tool) => <li key={`${tool.call_id}-${tool.time}`}><strong>{tool.name}</strong> · {tool.status || 'completed'} · {tool.summary}</li>)}</ul>}
+        {session.tool_calls.length === 0 ? <p>{t('common.empty')}</p> : <ul>{session.tool_calls.map((tool) => <li key={`${tool.call_id}-${tool.time}`}><strong>{tool.name}</strong> · {translatedEnum(t, 'toolStatus', tool.status || 'completed')} · {tool.summary}</li>)}</ul>}
       </section>
 
       <section className="projection-card">
@@ -371,7 +420,7 @@ export function AgentSessionPage() {
 
       <section className="projection-card">
         <h2>{t('session.activity')}</h2>
-        <ul>{eventState.events.map((event, index) => <li key={`${event.sequence}-${event.type}-${index}`}>{event.type}{event.tool ? ` · ${event.tool}` : ''}</li>)}</ul>
+        <ul>{eventState.events.map((event, index) => <li key={`${event.sequence}-${event.type}-${index}`}>{translatedEnum(t, 'runtimeEventType', event.type)}{event.tool ? ` · ${event.tool}` : ''}</li>)}</ul>
       </section>
 
       <section className="projection-card composer">
@@ -380,8 +429,8 @@ export function AgentSessionPage() {
           {t('session.message')}
           <textarea value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={composerKeyDown} disabled={composerDisabled} />
         </label>
-        <small>{new TextEncoder().encode(composer).byteLength} / {MAX_MESSAGE_BYTES}</small>
-        <button type="button" className="button button--primary" disabled={composerDisabled || composer.trim() === '' || new TextEncoder().encode(composer).byteLength > MAX_MESSAGE_BYTES} onClick={() => void submitRun()}>{t('session.send')}</button>
+        <small>{composerBytes} / {MAX_RUN_MESSAGE_BYTES}</small>
+        <button type="button" className="button button--primary" disabled={composerDisabled || normalizedRunMessage(composer) === '' || composerBytes > MAX_RUN_MESSAGE_BYTES} onClick={() => void submitRun()}>{t('session.send')}</button>
       </section>
     </article>
   )

@@ -44,6 +44,7 @@ const MAX_TEXT = 64 << 10
 const MAX_STREAM_CHUNK = 32 << 10
 const MAX_COLLECTION = 500
 const MAX_SMALL_COLLECTION = 100
+const MAX_SESSION_RECORDS = 8_192
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
 
 function fail(): never {
@@ -120,9 +121,9 @@ function optionalArray<T>(
   return value === undefined || value === null ? [] : array(value, decode, max)
 }
 
-function stringRecord(value: unknown): Record<string, string> {
+function stringRecord(value: unknown, max = MAX_COLLECTION): Record<string, string> {
   const source = object(value)
-  if (Object.keys(source).length > MAX_COLLECTION) fail()
+  if (Object.keys(source).length > max) fail()
   const result: Record<string, string> = {}
   for (const [key, entry] of Object.entries(source)) {
     if (!ID_PATTERN.test(key) && key.length > 1024) fail()
@@ -546,8 +547,8 @@ function decodeMission(value: unknown): Mission {
     })(),
     usage: decodeMissionUsage(source.usage),
     usage_by_role: decodeRoleUsage(source.usage_by_role),
-    work_items: array(source.work_items, decodeWorkItem, MAX_SMALL_COLLECTION),
-    handoffs: array(source.handoffs, decodeHandoff, MAX_SMALL_COLLECTION),
+    work_items: array(source.work_items, decodeWorkItem, MAX_SESSION_RECORDS),
+    handoffs: array(source.handoffs, decodeHandoff, MAX_SESSION_RECORDS),
     created_at: time(source.created_at),
     updated_at: time(source.updated_at),
     error: optionalString(source.error, 4096),
@@ -590,22 +591,22 @@ function decodeSession(value: unknown): SessionDetail {
     created_at: time(source.created_at),
     updated_at: time(source.updated_at),
     turns: integer(source.turns),
-    runs: array(source.runs, decodeRun, MAX_COLLECTION),
+    runs: array(source.runs, decodeRun, MAX_SESSION_RECORDS),
     active_run_id: optionalID(source.active_run_id),
     next_event_sequence: optionalInteger(source.next_event_sequence),
     summary: string(source.summary),
-    tool_calls: array(source.tool_calls, decodeToolRecord, MAX_COLLECTION),
-    modified_files: stringRecord(source.modified_files),
-    completed_steps: array(source.completed_steps, (item) => string(item), MAX_COLLECTION),
-    pending_steps: array(source.pending_steps, (item) => string(item), MAX_COLLECTION),
-    test_results: array(source.test_results, decodeTestResult, MAX_COLLECTION),
+    tool_calls: array(source.tool_calls, decodeToolRecord, MAX_SESSION_RECORDS),
+    modified_files: stringRecord(source.modified_files, MAX_SESSION_RECORDS),
+    completed_steps: array(source.completed_steps, (item) => string(item), MAX_SESSION_RECORDS),
+    pending_steps: array(source.pending_steps, (item) => string(item), MAX_SESSION_RECORDS),
+    test_results: array(source.test_results, decodeTestResult, MAX_SESSION_RECORDS),
     last_error: optionalString(source.last_error, 4096),
     workspace: string(source.workspace, 4096),
     git_state: optionalString(source.git_state, 4096),
     config_digest: string(source.config_digest, 1024),
     workspace_changed: source.workspace_changed === undefined ? false : boolean(source.workspace_changed),
     mission: source.mission === undefined || source.mission === null ? undefined : decodeMission(source.mission),
-    approval_requests: optionalArray(source.approval_requests, decodeApproval, MAX_COLLECTION),
+    approval_requests: optionalArray(source.approval_requests, decodeApproval, MAX_SESSION_RECORDS),
   }
 }
 
@@ -613,7 +614,7 @@ export function decodeSessionDetail(value: unknown): SessionDetailResponse {
   const source = object(value)
   return {
     session: decodeSession(source.session),
-    messages: array(source.messages, decodeMessage, MAX_COLLECTION),
+    messages: array(source.messages, decodeMessage, MAX_SESSION_RECORDS),
   }
 }
 

@@ -1,11 +1,13 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18n } from '../../i18n/i18n'
 import { ApiError } from '../../api/errors'
+import { ToastRegion } from '../../components/ToastRegion'
+import { UIProvider } from '../../state/UIContext'
 import { AgentDataProvider } from './AgentDataContext'
 import { AgentLandingPage, AgentSessionPage } from './AgentPage'
 
@@ -21,16 +23,18 @@ const api = vi.hoisted(() => ({
   listApprovals: vi.fn(),
   decideApproval: vi.fn(),
 }))
+const sessionEventMock = vi.hoisted(() => ({
+  events: [] as Array<Record<string, unknown>>,
+  streamingText: '',
+  status: 'connected',
+  fatal: false,
+  truncated: false,
+  reconnect: vi.fn(),
+}))
 
 vi.mock('../../api/endpoints', () => api)
 vi.mock('../../hooks/useSessionEvents', () => ({
-  useSessionEvents: () => ({
-    events: [],
-    streamingText: '',
-    status: 'connected',
-    fatal: false,
-    reconnect: vi.fn(),
-  }),
+  useSessionEvents: () => sessionEventMock,
 }))
 vi.mock('../../components/ConnectivityProvider', () => ({
   useConnectivity: () => ({ status: 'online', generation: 0, canMutate: true, reconnect: vi.fn() }),
@@ -39,14 +43,17 @@ vi.mock('../../components/ConnectivityProvider', () => ({
 function renderAgent(path = '/agent') {
   return render(
     <I18nextProvider i18n={i18n}>
-      <MemoryRouter initialEntries={[path]}>
-        <AgentDataProvider active>
-          <Routes>
-            <Route path="/agent" element={<AgentLandingPage />} />
-            <Route path="/agent/sessions/:sessionId" element={<AgentSessionPage />} />
-          </Routes>
-        </AgentDataProvider>
-      </MemoryRouter>
+      <UIProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <AgentDataProvider active>
+            <Routes>
+              <Route path="/agent" element={<AgentLandingPage />} />
+              <Route path="/agent/sessions/:sessionId" element={<AgentSessionPage />} />
+            </Routes>
+          </AgentDataProvider>
+        </MemoryRouter>
+        <ToastRegion />
+      </UIProvider>
     </I18nextProvider>,
   )
 }
@@ -87,6 +94,14 @@ const pendingApproval = {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks()
+  window.localStorage.clear()
+  void i18n.changeLanguage('zh-CN')
+  sessionEventMock.events = []
+  sessionEventMock.streamingText = ''
+  sessionEventMock.status = 'connected'
+  sessionEventMock.fatal = false
+  sessionEventMock.truncated = false
   api.getInfo.mockResolvedValue({
     available_companies: [{
       id: 'openai',
@@ -103,11 +118,15 @@ beforeEach(() => {
   })
   api.listSessions.mockResolvedValue({ sessions: [] })
   api.listApprovals.mockResolvedValue({ approvals: [] })
+  api.getSession.mockResolvedValue(sessionDetail(undefined))
 })
 
 describe('Agent pages', () => {
   it('shows only ready Access and prevents duplicate Session creation', async () => {
-    api.createSession.mockResolvedValue({ id: 'session-new' })
+    let resolveCreation: (value: { id: string }) => void = () => undefined
+    api.createSession.mockReturnValue(new Promise((resolve) => {
+      resolveCreation = resolve
+    }))
     const user = userEvent.setup()
     renderAgent()
 
@@ -117,7 +136,7 @@ describe('Agent pages', () => {
     const submit = screen.getByRole('button', { name: /新建会话|Create Session/u })
     await Promise.all([user.click(submit), user.click(submit)])
 
-    await waitFor(() => expect(api.createSession).toHaveBeenCalledOnce())
+    expect(api.createSession).toHaveBeenCalledOnce()
     expect(api.createSession).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'New Session',
@@ -127,6 +146,25 @@ describe('Agent pages', () => {
         agent: 'coding',
       }),
     )
+    resolveCreation({ id: 'session-new' })
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Session' })).toBeVisible())
+  })
+
+  it('shows a sanitized Session creation failure and permits an explicit retry', async () => {
+    api.createSession
+      .mockRejectedValueOnce(new ApiError('http_error', 500))
+      .mockResolvedValueOnce({ id: 'session-new' })
+    const user = userEvent.setup()
+    renderAgent()
+
+    const submit = await screen.findByRole('button', { name: i18n.t('agent.createSession') })
+    await user.click(submit)
+    expect(await screen.findByRole('alert')).toHaveTextContent(i18n.t('mutation.failed'))
+    expect(screen.queryByText(/http_error|500/u)).not.toBeInTheDocument()
+    expect(submit).toBeEnabled()
+
+    await user.click(submit)
+    await waitFor(() => expect(api.createSession).toHaveBeenCalledTimes(2))
   })
 
   it('restores Session detail from the URL and preserves untranslated message content', async () => {
@@ -172,7 +210,7 @@ describe('Agent pages', () => {
       },
       messages: [],
     })
-    api.startRun.mockRejectedValueOnce(new Error('failure')).mockResolvedValueOnce({
+    api.startRun.mockRejectedValueOnce(new ApiError('network_error')).mockResolvedValueOnce({
       session_id: 'session-1',
       run_id: 'run-1',
     })
@@ -183,15 +221,33 @@ describe('Agent pages', () => {
     await user.type(composer, 'do not translate')
     await user.keyboard('{Control>}{Enter}{/Control}')
     await waitFor(() => expect(composer).toHaveValue('do not translate'))
+    expect(await screen.findByRole('alert')).toHaveTextContent(i18n.t('mutation.offline'))
     await user.keyboard('{Control>}{Enter}{/Control}')
     await waitFor(() => expect(composer).toHaveValue(''))
     expect(api.startRun).toHaveBeenCalledTimes(2)
   })
 
+  it('prevents repeated keyboard submission while a Run start is in flight', async () => {
+    let resolveRun: (value: { session_id: string; run_id: string }) => void = () => undefined
+    api.startRun.mockReturnValue(new Promise((resolve) => {
+      resolveRun = resolve
+    }))
+    const user = userEvent.setup()
+    renderAgent('/agent/sessions/session-1')
+    const composer = await screen.findByLabelText(i18n.t('session.message'))
+
+    await user.type(composer, 'single submission')
+    await user.keyboard('{Control>}{Enter}{/Control}{Control>}{Enter}{/Control}')
+    expect(api.startRun).toHaveBeenCalledOnce()
+    expect(composer).toBeDisabled()
+
+    resolveRun({ session_id: 'session-1', run_id: 'run-1' })
+    await waitFor(() => expect(composer).toHaveValue(''))
+  })
+
   it.each([
     ['running', 'auto', true, 'cancelRun', 'cancelRun'],
     ['interrupted', 'auto', true, 'resumeRun', 'resumeRun'],
-    ['queued', 'review', false, 'approvePlan', 'approvePlan'],
   ] as const)(
     'submits the authoritative %s Run action once',
     async (status, planMode, planApproved, translationKey, method) => {
@@ -212,6 +268,72 @@ describe('Agent pages', () => {
       expect(api[method]).toHaveBeenCalledWith('session-1', 'run-1')
     },
   )
+
+  it('binds queued Review Plan approval and cancellation to the true active Run and disables Composer', async () => {
+    api.getSession.mockResolvedValue(sessionDetail({
+      id: 'run-active',
+      status: 'queued',
+      plan_mode: 'review',
+      plan_approved: false,
+      plan: {
+        revision: 1,
+        steps: [{ id: 'step-1', status: 'pending', title: 'Literal plan', detail: '' }],
+      },
+    }))
+    api.approvePlan.mockResolvedValue({ session_id: 'session-1', run_id: 'run-active' })
+    api.cancelRun.mockResolvedValue({ session_id: 'session-1', run_id: 'run-active' })
+    const user = userEvent.setup()
+    renderAgent('/agent/sessions/session-1')
+
+    const approve = await screen.findByRole('button', { name: i18n.t('session.approvePlan') })
+    const cancel = screen.getByRole('button', { name: i18n.t('session.cancelRun') })
+    expect(screen.getByLabelText(i18n.t('session.message'))).toBeDisabled()
+
+    await user.click(approve)
+    await waitFor(() => expect(api.approvePlan).toHaveBeenCalledWith('session-1', 'run-active'))
+    await user.click(cancel)
+    await waitFor(() => expect(api.cancelRun).toHaveBeenCalledWith('session-1', 'run-active'))
+  })
+
+  it('shows latest terminal Run history without exposing mutation actions', async () => {
+    const detail = sessionDetail(undefined)
+    detail.session.runs = [{
+      id: 'run-history',
+      status: 'completed',
+      plan_mode: 'review',
+      plan_approved: false,
+      plan: {
+        revision: 1,
+        steps: [{ id: 'step-1', status: 'completed', title: 'Historical plan', detail: '' }],
+      },
+    }]
+    api.getSession.mockResolvedValue(detail)
+    renderAgent('/agent/sessions/session-1')
+
+    expect((await screen.findAllByText(i18n.t('runStatus.completed'))).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: i18n.t('session.approvePlan') })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: i18n.t('session.cancelRun') })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: i18n.t('session.resumeRun') })).not.toBeInTheDocument()
+    expect(screen.getByLabelText(i18n.t('session.message'))).toBeEnabled()
+  })
+
+  it('enforces the exact 16 KiB UTF-8 Composer boundary', async () => {
+    api.startRun.mockResolvedValue({ session_id: 'session-1', run_id: 'run-1' })
+    const user = userEvent.setup()
+    renderAgent('/agent/sessions/session-1')
+    const composer = await screen.findByLabelText(i18n.t('session.message'))
+    const send = screen.getByRole('button', { name: i18n.t('session.send') })
+
+    fireEvent.change(composer, { target: { value: 'a'.repeat(16 << 10) } })
+    expect(screen.getByText(`${16 << 10} / ${16 << 10}`)).toBeVisible()
+    expect(send).toBeEnabled()
+    await user.click(send)
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledOnce())
+
+    fireEvent.change(composer, { target: { value: `中${'a'.repeat((16 << 10) - 2)}` } })
+    expect(screen.getByText(`${(16 << 10) + 1} / ${16 << 10}`)).toBeVisible()
+    expect(send).toBeDisabled()
+  })
 
   it('renders Plan, Tool, and Verification data as authoritative text projections', async () => {
     const detail = sessionDetail({
@@ -253,6 +375,82 @@ describe('Agent pages', () => {
     expect(screen.getByText(/literal verification summary/u)).toBeVisible()
   })
 
+  it('translates dynamic status metadata while preserving authoritative content byte-for-byte', async () => {
+    const detail = sessionDetail(undefined)
+    const localizedDetail = {
+      ...detail,
+      messages: [{
+        id: 'message-1',
+        run_id: 'run-1',
+        role: 'user',
+        content: '用户 raw 😀 /workspace/file.go',
+        created_at: '2026-07-29T08:00:00Z',
+      }],
+    }
+    Object.assign(detail.session, {
+      mission: {
+        goal: 'Mission raw content',
+        work_items: [{ id: 'item-1', title: 'WorkItem raw content', status: 'running' }],
+        handoffs: [],
+      },
+      tool_calls: [{
+        call_id: 'call-1',
+        time: '2026-07-29T08:00:00Z',
+        name: 'literal_tool_name',
+        status: 'uncertain',
+        summary: 'Tool raw summary /workspace/file.go',
+      }],
+    })
+    sessionEventMock.events = [{
+      sequence: 1,
+      type: 'tool_started',
+      tool: 'literal_tool_name',
+    }]
+    api.getSession.mockResolvedValue(localizedDetail)
+    renderAgent('/agent/sessions/session-1')
+
+    expect(await screen.findByText('用户')).toBeVisible()
+    expect(screen.getByText(/WorkItem raw content/u)).toHaveTextContent('运行中')
+    expect(screen.getByText('literal_tool_name').closest('li')).toHaveTextContent('状态不确定')
+    expect(screen.getByText(/工具已开始/u)).toBeVisible()
+    await i18n.changeLanguage('en-US')
+    expect(await screen.findByText('User')).toBeVisible()
+    expect(screen.getByText(/WorkItem raw content/u)).toHaveTextContent('Running')
+    expect(screen.getByText('literal_tool_name').closest('li')).toHaveTextContent('Uncertain')
+    expect(screen.getByText(/Tool started/u)).toBeVisible()
+
+    for (const content of [
+      '用户 raw 😀 /workspace/file.go',
+      'Mission raw content',
+      'WorkItem raw content',
+      'literal_tool_name',
+      'Tool raw summary /workspace/file.go',
+    ]) {
+      expect(screen.getAllByText((_, element) => element?.textContent?.includes(content) === true).length).toBeGreaterThan(0)
+    }
+  })
+
+  it('surfaces a sanitized Run mutation conflict and releases the in-flight guard', async () => {
+    api.getSession.mockResolvedValue(sessionDetail({
+      id: 'run-1',
+      status: 'running',
+      plan_mode: 'auto',
+      plan_approved: true,
+    }))
+    api.cancelRun
+      .mockRejectedValueOnce(new ApiError('http_error', 409))
+      .mockResolvedValueOnce({ session_id: 'session-1', run_id: 'run-1' })
+    const user = userEvent.setup()
+    renderAgent('/agent/sessions/session-1')
+
+    const cancel = await screen.findByRole('button', { name: i18n.t('session.cancelRun') })
+    await user.click(cancel)
+    expect(await screen.findByRole('alert')).toHaveTextContent(i18n.t('mutation.conflict'))
+    expect(cancel).toBeEnabled()
+    await user.click(cancel)
+    await waitFor(() => expect(api.cancelRun).toHaveBeenCalledTimes(2))
+  })
+
   it('decides an Approval once and refreshes after a 409 conflict', async () => {
     api.getSession.mockResolvedValue(sessionDetail(undefined, [pendingApproval]))
     api.listApprovals.mockResolvedValue({ approvals: [pendingApproval] })
@@ -264,6 +462,23 @@ describe('Agent pages', () => {
     await waitFor(() => expect(api.decideApproval).toHaveBeenCalledOnce())
     expect(api.decideApproval).toHaveBeenCalledWith('session-1', 'approval-1', 'approve')
     await waitFor(() => expect(api.listApprovals).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows a sanitized non-conflict Approval failure and allows retry', async () => {
+    api.getSession.mockResolvedValue(sessionDetail(undefined, [pendingApproval]))
+    api.listApprovals.mockResolvedValue({ approvals: [pendingApproval] })
+    api.decideApproval
+      .mockRejectedValueOnce(new ApiError('network_error'))
+      .mockResolvedValueOnce({ request_id: 'approval-1', status: 'approved' })
+    const user = userEvent.setup()
+    renderAgent('/agent/sessions/session-1')
+
+    const approve = await screen.findByRole('button', { name: i18n.t('approval.approve') })
+    await user.click(approve)
+    expect(await screen.findByRole('alert')).toHaveTextContent(i18n.t('mutation.offline'))
+    await user.click(approve)
+    await waitFor(() => expect(api.decideApproval).toHaveBeenCalledTimes(2))
   })
 
   it('disables decisions for an expired Approval', async () => {

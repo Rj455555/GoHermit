@@ -35,10 +35,12 @@ export function useSessionEvents({
   onRefresh: () => void
 }) {
   const refreshRef = useRef(onRefresh)
+  const streamTruncatedRef = useRef(false)
   const [streamingText, setStreamingText] = useState('')
   const [events, setEvents] = useState<RuntimeEvent[]>([])
   const [status, setStatus] = useState<'connected' | 'reconnecting' | 'fatal'>('connected')
   const [fatal, setFatal] = useState(false)
+  const [truncated, setTruncated] = useState(false)
 
   useEffect(() => {
     refreshRef.current = onRefresh
@@ -48,6 +50,8 @@ export function useSessionEvents({
     setStreamingText('')
     setEvents([])
     setFatal(false)
+    setTruncated(false)
+    streamTruncatedRef.current = false
     setStatus('connected')
     if (sessionId === undefined) return
     const subscription = subscribeSessionEvents(sessionId, frontier, {
@@ -56,12 +60,15 @@ export function useSessionEvents({
         setEvents((current) => [...current.slice(-(MAX_ACTIVITY_EVENTS - 1)), event])
         if (event.type === 'model_started') {
           setStreamingText('')
+          setTruncated(false)
+          streamTruncatedRef.current = false
         } else if (event.type === 'model_delta') {
+          if (streamTruncatedRef.current) return
           setStreamingText((current) => {
             const next = current + (event.message ?? '')
             if (new TextEncoder().encode(next).byteLength > MAX_STREAM_BUFFER_BYTES) {
-              setFatal(true)
-              setStatus('fatal')
+              streamTruncatedRef.current = true
+              setTruncated(true)
               return current
             }
             return next
@@ -69,12 +76,22 @@ export function useSessionEvents({
         }
         if (REFRESH_EVENT_TYPES.has(event.type)) {
           refreshRef.current()
-          if (event.type !== 'approval_requested') setStreamingText('')
+          if (event.type !== 'approval_requested') {
+            setStreamingText('')
+            setTruncated(false)
+            streamTruncatedRef.current = false
+          }
         }
       },
-      onStatus: setStatus,
+      onStatus(nextStatus) {
+        setStatus(nextStatus)
+        if (nextStatus !== 'fatal') setFatal(false)
+      },
       onReconnect() {
         setStreamingText('')
+        setTruncated(false)
+        streamTruncatedRef.current = false
+        setFatal(false)
         refreshRef.current()
       },
       onFatalError() {
@@ -86,8 +103,12 @@ export function useSessionEvents({
   }, [frontier, runId, sessionId])
 
   const reconnect = useCallback(() => {
-    if (sessionId !== undefined) reconnectSessionEvents(sessionId)
+    if (sessionId !== undefined) {
+      setFatal(false)
+      setStatus('reconnecting')
+      reconnectSessionEvents(sessionId)
+    }
   }, [sessionId])
 
-  return { streamingText, events, status, fatal, reconnect }
+  return { streamingText, events, status, fatal, truncated, reconnect }
 }

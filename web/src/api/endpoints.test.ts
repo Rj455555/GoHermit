@@ -72,6 +72,8 @@ describe('Phase 3 endpoint map', () => {
     expect(paths).toHaveLength(21)
     expect(paths.every((path) => path.startsWith('/api/'))).toBe(true)
     expect(paths).not.toContain('/api/run')
+    expect(paths).toContain('/api/sessions?limit=100')
+    expect(paths).not.toContain('/api/sessions?limit=200')
     expect(paths).toContain('/api/sessions/session%20one/runs/run%20one/cancel')
     expect(paths).toContain('/api/settings/providers/openai%20api/api-key')
   })

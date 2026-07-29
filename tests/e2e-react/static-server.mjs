@@ -149,6 +149,59 @@ function makeSession(id, title = 'Phase 3 Session') {
     messages: [],
   }
 }
+
+function makeQueuedReviewSession() {
+  const session = makeSession('session-1', 'Queued Review Session')
+  const run = {
+    id: 'run-active-review',
+    message: 'Review this plan',
+    status: 'queued',
+    started_at: now,
+    updated_at: now,
+    start_turn: 1,
+    plan_mode: 'review',
+    plan_approved: false,
+    plan: {
+      schema_version: 1,
+      id: 'plan-1',
+      status: 'active',
+      revision: 1,
+      allow_parallel: false,
+      created_at: now,
+      updated_at: now,
+      steps: [{
+        id: 'step-1',
+        title: 'Literal review step',
+        status: 'pending',
+        detail: '',
+        updated_at: now,
+      }],
+    },
+  }
+  session.plan_mode = 'review'
+  session.status = 'running'
+  session.runs = [run]
+  session.active_run_id = run.id
+  return session
+}
+
+function makeTerminalHistorySession() {
+  const session = makeSession('session-1', 'Terminal History Session')
+  session.status = 'completed'
+  session.runs = [{
+    id: 'run-terminal',
+    message: 'Historical request',
+    status: 'completed',
+    started_at: now,
+    updated_at: now,
+    completed_at: now,
+    start_turn: 1,
+    plan_mode: 'review',
+    plan_approved: false,
+    final_message: 'Historical response',
+  }]
+  return session
+}
 sessions.set('session-1', makeSession('session-1'))
 eventJournals.set('session-1', [])
 
@@ -600,6 +653,18 @@ const server = createServer(async (request, response) => {
       codexConfigured = false
       loginSession = null
       json(response, 200, { configured: false })
+      return
+    }
+    if (pathname === '/__test__/queued-review' && request.method === 'POST') {
+      sessions.set('session-1', makeQueuedReviewSession())
+      eventJournals.set('session-1', [])
+      json(response, 200, { fixture: 'queued-review' })
+      return
+    }
+    if (pathname === '/__test__/terminal-history' && request.method === 'POST') {
+      sessions.set('session-1', makeTerminalHistorySession())
+      eventJournals.set('session-1', [])
+      json(response, 200, { fixture: 'terminal-history' })
       return
     }
     const disconnectMatch = pathname.match(/^\/__test__\/disconnect\/([^/]+)$/u)

@@ -93,10 +93,18 @@ describe('endpoint decoders', () => {
     expect(() =>
       decodeSessionDetail({ session: session({ status: 'invented' }), messages: [] }),
     ).toThrow()
+    const messages = Array.from({ length: 8_192 }, (_, index) => ({
+      id: `message-${index}`,
+      run_id: 'run-1',
+      role: 'assistant',
+      content: 'bounded',
+      created_at: now,
+    }))
+    expect(decodeSessionDetail({ session: session(), messages }).messages).toHaveLength(8_192)
     expect(() =>
       decodeSessionDetail({
-        session: session({ runs: Array.from({ length: 501 }, () => ({})) }),
-        messages: [],
+        session: session(),
+        messages: [...messages, messages[0]],
       }),
     ).toThrow()
   })
