@@ -18,7 +18,7 @@
   `origin/main@d8194df88c474d43d0576e26d61d304df74ecefb`.
 - Phase 8: `OWNER_APPROVED`; squash-merged through PR #41 into
   `origin/main@01cfe8c26324708b806d7cd1f946adbbea0306f2`.
-- Phase 9: `COMPLETE_WAITING_FOR_OWNER` on clean branch
+- Phase 9: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
   `agent/electronic-employees-v0.7-phase9`.
 - Phase 10 and every later product-code change remain blocked.
 - Required terminal status:
@@ -73,7 +73,7 @@
 | 6 | Runtime Preparation | `OWNER_APPROVED` |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` |
-| 9 | Team Role to Employee mapping | `COMPLETE_WAITING_FOR_OWNER` |
+| 9 | Team Role to Employee mapping | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
 
 ### Current phase scope
@@ -124,7 +124,7 @@ STATUS: WAITING_FOR_PHASE_9_APPROVAL
 
 ---
 
-Plan status: `PHASE_9_COMPLETE_WAITING_FOR_OWNER`
+Plan status: `PHASE_9_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
 Baseline: `origin/main@01cfe8c26324708b806d7cd1f946adbbea0306f2`
 Feature branch: `agent/electronic-employees-v0.7-phase9`
 Last audited: 2026-07-29
@@ -1151,7 +1151,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` | Recovery Gate approved and PR #40 squash-merged as `d8194df`; full Phase 7 is in `origin/main` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` | Gate implementation `47d413b`; evidence `00d724a`; PR #41 squash-merged as `01cfe8c26324708b806d7cd1f946adbbea0306f2` |
-| 9 | Team Role to Employee mapping | `COMPLETE_WAITING_FOR_OWNER` | Implementation `9bb56fc`; Draft PR #42; implementation-Head Push/PR CI green |
+| 9 | Team Role to Employee mapping | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `9bb56fc`; security Gate `bc66781`; Draft PR #42; Gate-Head Push/PR CI green |
 | 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
 
 ### Phase 1: Employee Domain and ADR
@@ -2717,7 +2717,8 @@ Phase 8 Web UI Gate revision evidence (2026-07-29):
 
 ### Phase 9: Team Role to Employee mapping
 
-Status: `COMPLETE_WAITING_FOR_OWNER`. Phase 10 remains `BLOCKED_BY_GATE`.
+Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 10 remains
+`BLOCKED_BY_GATE`.
 
 Independent value:
 
@@ -2812,7 +2813,8 @@ Phase 9 implementation evidence (2026-07-29):
     Event/recovery kernel.
 - Isolation and recovery:
   - WorkItem runtimes receive only their assigned Employee context; hidden
-    compact context is removed from the public Session API projection;
+    Worker Sessions are absent from every public Session API while internal
+    TeamWorker Store/Runner paths remain available;
   - Employee Memory is absent from public Assignment metadata, other Employee
     contexts, parent Mission state and normal Handoffs. A provider echo of an
     exact private Memory value fails closed before the Handoff can be
@@ -2836,8 +2838,9 @@ Phase 9 implementation evidence (2026-07-29):
     zero-side-effect failures, stale Skill failure, immutable recovery and
     dynamic WorkItem inheritance;
   - 64 KiB hidden Session snapshot validation and corruption rejection;
-  - per-Employee model-context isolation, public API redaction, Memory Forget
-    recovery, public-Handoff exclusion, and provider-echo fail-closed;
+  - per-Employee model-context isolation, hidden Session public-API denial,
+    Memory Forget recovery, public-Handoff exclusion, and provider-echo
+    fail-closed;
   - Playwright Role mapping, exact revision, explicit override, and Employee
     default-model paths while all existing Web E2E remains green.
 - Local validation:
@@ -2872,6 +2875,105 @@ Phase 9 implementation evidence (2026-07-29):
     #42 rather than creating a self-referential evidence commit chain;
   - protected untracked user files were not modified, moved, staged, or
     cleaned, and Phase 10 is completely unstarted.
+
+Phase 9 hidden-Session and wire-migration Gate revision evidence
+(2026-07-29):
+
+- Root causes:
+  - the first Phase 9 implementation treated a hidden Worker checkpoint as a
+    redacted public projection and only removed
+    `TeamEmployeeContextSnapshot`; this did not protect provider output already
+    persisted in `Run.FinalMessage`, `RecentMessages`, `messages.jsonl`, and
+    `events.jsonl`;
+  - public Run, Plan, Approval, message, and SSE methods loaded the Session
+    Store directly, so a caller who guessed a deterministic Worker Session ID
+    could bypass the Team Coordinator;
+  - the TeamTemplate decoder used the v2 `RoleSelection` structure for both
+    schema versions, so a wire document claiming schema v1 could carry the
+    v2-only `employee_id`.
+- Formal public/hidden Session boundary:
+  - `loadPublicSession`, `recoverPublicSession`, and
+    `requirePublicSession` in `internal/controlplane/service.go` are the single
+    reusable Control Plane boundary;
+  - an absent or `Hidden` Session returns the identical generic
+    `KindNotFound("session not found")`; no response reveals whether the
+    hidden ID exists;
+  - `GetSession` checks the boundary before reading messages;
+    `SessionEvents` checks it before reading `events.jsonl`;
+    SSE checks it before registering a subscriber;
+  - Start, Resume/Recover, Cancel, Plan approval, Approval list, and Approval
+    decide all check it before validation, broker interaction, mutation,
+    Runtime/Provider construction, or event commit;
+  - internal TeamWorker execution, recovery, and dynamic WorkItem creation
+    continue to use the existing safe Session Store directly and remain
+    unaffected.
+- TeamTemplate wire migration:
+  - schema v1 now decodes through dedicated `templateV1` and
+    `roleSelectionV1` wire structures that do not define `employee_id`;
+  - strict unknown-field handling therefore rejects v1 documents containing
+    any v2-only Employee binding instead of silently dropping or accepting it;
+  - valid v1 provider/model and per-role budget values migrate exactly to v2
+    with empty Employee IDs;
+  - schema v2 Employee bindings load normally; unknown schema/fields, invalid
+    raw UTF-8, corrupt JSON, and multiple JSON values remain fail closed.
+- Actual Gate files:
+  - `internal/controlplane/service.go`,
+    `internal/controlplane/runs.go`,
+    `internal/controlplane/approvals.go`;
+  - `internal/teamtemplate/template.go`;
+  - `internal/controlplane/hidden_sessions_test.go`,
+    `internal/controlplane/team_employees_test.go`,
+    `internal/teamtemplate/template_test.go`,
+    `internal/app/team_worker_test.go`,
+    `internal/web/server_test.go`.
+- Gate implementation commit:
+  `bc667818c8be1f07d55626e8294c21d5f4e14980`.
+- New security and migration tests:
+  - `TestHiddenSessionControlPlaneAccessFailsClosedWithoutSideEffects`;
+  - `TestHiddenTeamWorkerSessionIsAbsentFromEveryPublicSessionAPI`;
+  - `TestTeamWorkerPrivateMemoryEchoPersistsOnlyInHiddenSession`;
+  - `TestSchemaV1MigratesWithoutInventingEmployeeAssignment`;
+  - `TestSchemaV1RejectsV2OnlyEmployeeID`;
+  - `TestSchemaV2LoadsEmployeeBinding`;
+  - `TestDecodeRejectsInvalidUTF8AndMultipleJSONValues`.
+- Sentinel and zero-side-effect evidence:
+  - a Fake Provider returns
+    `PRIVATE_EMPLOYEE_MEMORY_PHASE9_SENTINEL` verbatim; the existing Handoff
+    check refuses it after the hidden Worker checkpoint/messages/events prove
+    the output was durably written;
+  - all public detail/message/event/SSE/Run/Plan/Approval calls return 404
+    without the sentinel or the word `hidden`;
+  - no subscriber is registered, no Runtime/Provider build occurs, and the
+    hidden checkpoint, messages, events, parent Session and Workspace marker
+    remain byte-for-byte unchanged after every rejected operation;
+  - internal TeamWorker execution/reuse, recovery, dynamic WorkItems, Team,
+    Loop, Session, Approval, and Verification regressions remain green.
+- Gate validation:
+  - Phase 9 scoped and hidden-Session/migration tests: PASS;
+  - `go test ./... -count=1`: PASS;
+  - `go test -race ./... -count=1`: PASS;
+  - `go vet ./...`: PASS;
+  - CLI/Web builds, `gofmt`, `git diff --check`, JavaScript syntax checks,
+    credential-shaped added-line scan, and Compose YAML parse: PASS;
+  - Playwright full suite: 13/13 PASS;
+  - Employees/Loops/Tasks repeat suite: 90/90 PASS (`--repeat-each=10`);
+  - Gate implementation-Head Push CI
+    [30420144482](https://github.com/Rj455555/GoHermit/actions/runs/30420144482)
+    and PR CI
+    [30420146387](https://github.com/Rj455555/GoHermit/actions/runs/30420146387)
+    both PASS for Go normal/race/vet/build/cross-platform,
+    Docker/Compose/image build, and Web E2E; `live-smoke` is skipped by
+    workflow design.
+- Remaining bounded risks:
+  - hidden Worker output remains durable in its private Session for internal
+    recovery; the security boundary is complete public non-addressability,
+    not deletion of recovery evidence;
+  - exact private-Memory echo detection remains deliberately conservative and
+    may reject a public Handoff when a short Memory value appears verbatim;
+  - paid-provider inference remains outside deterministic default CI;
+  - the evidence-only commit SHA and its final Push/PR CI are recorded in PR
+    #42 rather than creating a self-referential evidence chain;
+  - Phase 10 remains completely unstarted.
 
 ### Phase 10: Evals, Docker, docs, and v0.7 release closeout
 
