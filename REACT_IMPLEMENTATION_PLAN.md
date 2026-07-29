@@ -846,6 +846,8 @@ Required SSE connection/sequence tests:
 | Generated assets drift | commit `dist`, rebuild in CI, fail on diff |
 | Embedded React artifact becomes a hidden second UI before cutover | Phase 1 keeps `Server.New()` on legacy `assets/`, exposes no React URL, and tests `dist` through the embedded FS only; the serving-root switch is Phase 4 |
 | Mac mini frontend commands depend on a non-login SSH environment | Phase 1 installed only Homebrew Node 22, activated pnpm 11.9.0 through Corepack, recorded real paths/versions, and explicitly sets the non-interactive PATH |
+| A persisted collapsed Session sidebar steals focus on load, navigation, refresh, or breakpoint changes | arm focus transfer only inside the user's current-page expanded-to-collapsed action, consume the pending transfer before focusing, and test initialization, navigation, refresh, breakpoint, and StrictMode lifecycles |
+| ConfirmDialog leaves background controls operable or leaks `inert`/scroll locking | isolate the App Shell while either the dialog or mobile drawer is open, keep the Toast live region outside that isolation, restore prior body overflow and trigger focus in effect cleanup, and test every close path |
 | Dependency expansion | use only the dependency table above; any addition requires evidence and Owner approval |
 
 ## 11. Phase ledger and approval gate
@@ -854,7 +856,7 @@ Required SSE connection/sequence tests:
 |---|---|---|---|
 | Plan Gate | Owner reapproval at `c4074a2963e0b210804d08b2bfcab5b1e010762f` | complete | SSE ownership, SPA fallback, CodeGraph, temporary Embed boundary, and toolchain plan approved |
 | Phase 1 | `APPROVAL: REACT_PHASE_1_APPROVED` at `4f06a1e970923ba9c8b981c5fb151ef324f56e65` | complete; approved | minimal React/TypeScript/Vite workspace, committed deterministic Embed artifact, old UI boundary, and validations below |
-| Phase 2 | `AUTHORIZED_PHASE: PHASE_2_ONLY` | complete; awaiting approval | BrowserRouter shell, zh-CN/en-US i18n, UI Context/Reducer, desktop/mobile navigation and Session sidebars, shared feedback primitives, deterministic Embed artifact, and independent React E2E |
+| Phase 2 | `AUTHORIZED_PHASE: PHASE_2_ONLY` | complete; Gate revision awaiting reapproval | BrowserRouter shell, zh-CN/en-US i18n, corrected action-scoped Session sidebar focus, isolated ConfirmDialog, shared feedback primitives, deterministic Embed artifact, and independent React E2E |
 | Phases 3–5 | not authorized | not started | no business API/SSE integration, feature migration, React serving-root cutover, Docker/CI migration, or legacy deletion |
 
 ### 11.1 Phase 1 execution evidence
@@ -886,3 +888,15 @@ Required SSE connection/sequence tests:
 - Hygiene: authorized-path review, Markdown structure, `git diff --check`, credential-shaped scan, single-lockfile check, alternate-lockfile check, production-sourcemap check, and generated-artifact scan passed. Excluding authorized Phase 2 additions, the protected untracked path-list SHA-256 remains `530153626b098db04ebade3e1ff76660b58d7d6a0243b4b060b986f7a533b223`; those files remain unmodified and unstaged.
 
 `STATUS: WAITING_FOR_REACT_PHASE_2_APPROVAL`
+
+### 11.3 Phase 2 Gate revision evidence
+
+- Session sidebar focus contract: focus transfer is armed only by the user's current-page expanded-to-collapsed action and is consumed before the restore button is focused. A collapsed value loaded from storage, Agent route entry, browser refresh/remount, and mobile-to-desktop breakpoint restoration only reveal the restore button and never request focus. The pending ref is not timer-based and produces one focus transfer under React StrictMode.
+- Dialog isolation contract: while ConfirmDialog is present, the App Shell is `inert`; keyboard and assistive-technology interaction therefore cannot reach its navigation or page controls. The Toast live region remains a sibling outside the isolated shell. Dialog setup locks body scrolling, and cleanup restores the previous body overflow value plus trigger focus for Escape, cancel, confirm, and overlay close. The shell isolation is the logical union of mobile drawer and dialog state, preventing either lifecycle from leaving residual `inert` or scroll locking.
+- Regression coverage: Vitest passed 50/50 assertions, including stored collapse, cross-route navigation, refresh/remount, mobile-to-desktop restoration, active collapse, StrictMode focus count, shell isolation, Toast availability, focus return, and all dialog close paths. Coverage passed at 99.38% statements/lines, 94.70% branches, and 96.22% functions.
+- Browser coverage: React Playwright passed 11/11. The critical Agent sidebar and real ConfirmDialog cases passed 40/40 with `--repeat-each=10`; legacy Playwright remained 13/13. The dialog harness is test-only, built into an operating-system temporary directory by the loopback React test server, removed on shutdown, and never exposed by Go or included in production `dist`.
+- Deterministic build: two clean builds produced the same three-file set and byte-identical SHA-256 manifest: CSS `d8266ec659c74b48ab0e9e2555b633ef9f50804439e6b5c69339afa0673ade19`, JS `06a71cc7f11fd171cc8d15c5b07cd03c3444b589b4970cb9046f992b461bdd36`, and `index.html` `0b5ccaa60f5ffcf710637cdfbfa9e03cf59b3a30d7815425bcfae68579375b18`. `git diff --exit-code -- internal/web/assets/dist` passed after the second build.
+- Validation: `pnpm install --frozen-lockfile`, typecheck, zero-warning lint, unit tests, coverage, production build, React E2E, repeated critical E2E, legacy E2E, `go test ./internal/web -count=1`, `go test ./... -count=1`, `go test -race ./... -count=1`, and `go vet ./...` passed. Existing Go tests continue to prove that `GET /` serves the legacy UI and `/dist` plus `/dist/**` return 404.
+- Scope and hygiene: no business API, SSE, Session, Run, Go Server, Docker, CI workflow, Phase 3 page, or legacy frontend code changed. Credential-shaped data, absolute machine paths, production sourcemaps, timestamps, random Build IDs, and unexpected generated files were not introduced. The protected untracked path-list SHA-256 remains `530153626b098db04ebade3e1ff76660b58d7d6a0243b4b060b986f7a533b223`, and those files remain unmodified and unstaged.
+
+`STATUS: WAITING_FOR_REACT_PHASE_2_REAPPROVAL`

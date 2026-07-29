@@ -28,6 +28,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const agentRoute = isAgentRoute(location.pathname)
   const restoreSidebarRef = useRef<HTMLButtonElement>(null)
   const drawerTriggerRef = useRef<HTMLButtonElement>(null)
+  const pendingSidebarFocusRef = useRef(false)
 
   const closeDrawer = useCallback(
     () => actions.setMobileSessionDrawerOpen(false),
@@ -43,20 +44,31 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [closeDrawer, location.pathname, mobile])
 
   useLayoutEffect(() => {
-    if (agentRoute && !mobile && state.sessionSidebarCollapsed) {
+    if (
+      pendingSidebarFocusRef.current &&
+      agentRoute &&
+      !mobile &&
+      state.sessionSidebarCollapsed
+    ) {
+      pendingSidebarFocusRef.current = false
       restoreSidebarRef.current?.focus()
     }
   }, [agentRoute, mobile, state.sessionSidebarCollapsed])
 
-  const drawerOpen =
-    agentRoute && mobile && state.mobileSessionDrawerOpen
+  const drawerOpen = agentRoute && mobile && state.mobileSessionDrawerOpen
+  const shellIsolated = drawerOpen || state.dialog !== null
+
+  const collapseSessionSidebar = useCallback(() => {
+    pendingSidebarFocusRef.current = true
+    actions.setSessionSidebarCollapsed(true)
+  }, [actions])
 
   return (
     <div className="app-shell" data-testid="react-bootstrap">
       <div
         className="app-shell__background"
         data-testid="shell-background"
-        inert={drawerOpen}
+        inert={shellIsolated}
       >
         <NavigationRail />
         <div className="app-shell__workspace">
@@ -77,9 +89,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           ) : null}
           <main className="app-shell__content">{children}</main>
           {agentRoute && !mobile && !state.sessionSidebarCollapsed ? (
-            <SessionSidebar
-              onCollapse={() => actions.setSessionSidebarCollapsed(true)}
-            />
+            <SessionSidebar onCollapse={collapseSessionSidebar} />
           ) : null}
           {agentRoute && !mobile && state.sessionSidebarCollapsed ? (
             <button

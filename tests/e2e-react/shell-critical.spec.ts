@@ -27,8 +27,37 @@ test('Agent Session sidebar has an independent persisted desktop preference', as
   await expect(page.getByRole('button', { name: '展开会话栏' })).toBeFocused()
   await page.reload()
   await expect(page.getByRole('button', { name: '展开会话栏' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '展开会话栏' })).not.toBeFocused()
   await page.goto('/settings')
   await expect(page.getByRole('complementary', { name: '会话' })).toHaveCount(0)
+})
+
+test('stored collapsed state never steals focus on entry or refresh', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('gohermit.ui.sessionSidebarCollapsed', 'true')
+  })
+  await page.goto('/settings')
+  const agentLink = page.getByRole('link', { name: '智能体' })
+  await agentLink.click()
+  await expect(page.getByRole('button', { name: '展开会话栏' })).toBeVisible()
+  await expect(agentLink).toBeFocused()
+
+  await page.reload()
+  await expect(page.getByRole('button', { name: '展开会话栏' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '展开会话栏' })).not.toBeFocused()
+})
+
+test('returning to desktop restores collapsed state without stealing focus', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('gohermit.ui.sessionSidebarCollapsed', 'true')
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/agent')
+  await expect(page.getByRole('button', { name: '打开会话抽屉' })).toBeVisible()
+
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await expect(page.getByRole('button', { name: '展开会话栏' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '展开会话栏' })).not.toBeFocused()
 })
 
 test('mobile Session drawer traps focus, closes safely, and has no horizontal overflow', async ({

@@ -49,6 +49,45 @@ function FeedbackHarness({ onConfirm }: { onConfirm: () => void }) {
   )
 }
 
+function ShellFeedbackActions({ onConfirm }: { onConfirm: () => void }) {
+  const { actions } = useUI()
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => actions.showToast({ messageKey: 'toast.saved', tone: 'success' })}
+      >
+        shell toast
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          actions.openDialog({
+            titleKey: 'dialog.sampleTitle',
+            descriptionKey: 'dialog.sampleDescription',
+            confirmKey: 'actions.confirm',
+            onConfirm,
+          })
+        }
+      >
+        shell dialog
+      </button>
+    </>
+  )
+}
+
+function renderShellFeedback(onConfirm = vi.fn()) {
+  return render(
+    <MemoryRouter initialEntries={['/dashboard']}>
+      <AppProviders>
+        <AppShell>
+          <ShellFeedbackActions onConfirm={onConfirm} />
+        </AppShell>
+      </AppProviders>
+    </MemoryRouter>,
+  )
+}
+
 describe('shared shell components', () => {
   it('keeps shell navigation usable when a route boundary fails and retries safely', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -103,27 +142,62 @@ describe('shared shell components', () => {
     const cancel = screen.getByRole('button', { name: '取消' })
     const confirm = screen.getByRole('button', { name: '确认' })
     expect(cancel).toHaveFocus()
+    expect(document.body.style.overflow).toBe('hidden')
     await user.tab({ shift: true })
     expect(confirm).toHaveFocus()
     await user.keyboard('{Escape}')
     expect(dialog).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
+    expect(document.body.style.overflow).toBe('')
   })
 
-  it('confirms through the Context dialog without window.confirm', async () => {
+  it('isolates the App Shell while leaving the toast live region operable', async () => {
+    const user = userEvent.setup()
+    renderShellFeedback()
+
+    await user.click(screen.getByRole('button', { name: 'shell toast' }))
+    await user.click(screen.getByRole('button', { name: 'shell dialog' }))
+
+    expect(screen.getByTestId('shell-background')).toHaveAttribute('inert')
+    expect(document.body.style.overflow).toBe('hidden')
+    const toast = screen.getByRole('status')
+    expect(toast).toHaveTextContent('已保存')
+    expect(toast.closest('[inert]')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.getByTestId('shell-background')).not.toHaveAttribute('inert')
+    expect(document.body.style.overflow).toBe('')
+    expect(screen.getByRole('button', { name: 'shell dialog' })).toHaveFocus()
+  })
+
+  it('cleans isolation and restores focus after overlay dismissal', async () => {
+    const user = userEvent.setup()
+    renderShellFeedback()
+
+    const trigger = screen.getByRole('button', { name: 'shell dialog' })
+    await user.click(trigger)
+    await user.click(screen.getByTestId('confirm-dialog-overlay'))
+
+    expect(screen.queryByRole('dialog', { name: '确认操作' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('shell-background')).not.toHaveAttribute('inert')
+    expect(document.body.style.overflow).toBe('')
+    expect(trigger).toHaveFocus()
+  })
+
+  it('confirms through the Context dialog and cleans isolation without window.confirm', async () => {
     const onConfirm = vi.fn()
     const nativeConfirm = vi.spyOn(window, 'confirm')
     const user = userEvent.setup()
-    render(
-      <AppProviders>
-        <FeedbackHarness onConfirm={onConfirm} />
-      </AppProviders>,
-    )
+    renderShellFeedback(onConfirm)
 
-    await user.click(screen.getByRole('button', { name: 'dialog' }))
+    const trigger = screen.getByRole('button', { name: 'shell dialog' })
+    await user.click(trigger)
     await user.click(screen.getByRole('button', { name: '确认' }))
     expect(onConfirm).toHaveBeenCalledOnce()
     expect(nativeConfirm).not.toHaveBeenCalled()
+    expect(screen.getByTestId('shell-background')).not.toHaveAttribute('inert')
+    expect(document.body.style.overflow).toBe('')
+    expect(trigger).toHaveFocus()
   })
 
   it('renders the reusable state and header primitives', () => {

@@ -78,6 +78,64 @@ describe('desktop shell preferences', () => {
     expect(screen.queryByRole('button', { name: '展开会话栏' })).not.toBeInTheDocument()
   })
 
+  it('does not focus the restore button when collapsed is initialized from storage', () => {
+    localStorage.setItem(STORAGE_KEYS.sessionSidebarCollapsed, 'true')
+    renderApp('/agent')
+
+    const restore = screen.getByRole('button', { name: '展开会话栏' })
+    expect(restore).toBeVisible()
+    expect(restore).not.toHaveFocus()
+  })
+
+  it('does not steal focus when entering an already-collapsed Agent route', async () => {
+    localStorage.setItem(STORAGE_KEYS.sessionSidebarCollapsed, 'true')
+    const user = userEvent.setup()
+    renderApp('/settings')
+
+    const agentLink = screen.getByRole('link', { name: '智能体' })
+    await user.click(agentLink)
+
+    expect(screen.getByRole('button', { name: '展开会话栏' })).toBeVisible()
+    expect(agentLink).toHaveFocus()
+  })
+
+  it('does not focus the stored restore button after an application remount', () => {
+    localStorage.setItem(STORAGE_KEYS.sessionSidebarCollapsed, 'true')
+    const firstRender = renderApp('/agent')
+    firstRender.unmount()
+
+    renderApp('/agent')
+
+    expect(screen.getByRole('button', { name: '展开会话栏' })).not.toHaveFocus()
+  })
+
+  it('transfers focus exactly once after an active collapse under StrictMode', async () => {
+    const restoreFocuses: Element[] = []
+    const recordFocus = (event: FocusEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.getAttribute('aria-label') === '展开会话栏'
+      ) {
+        restoreFocuses.push(event.target)
+      }
+    }
+    document.addEventListener('focusin', recordFocus)
+    const user = userEvent.setup()
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/agent']}>
+          <App />
+        </MemoryRouter>
+      </StrictMode>,
+    )
+
+    await user.click(screen.getByRole('button', { name: '收起会话栏' }))
+
+    expect(screen.getByRole('button', { name: '展开会话栏' })).toHaveFocus()
+    expect(restoreFocuses).toHaveLength(1)
+    document.removeEventListener('focusin', recordFocus)
+  })
+
   it('persists a single preference side effect under StrictMode', async () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem')
     const user = userEvent.setup()
@@ -141,7 +199,9 @@ describe('mobile Session drawer', () => {
 
     expect(screen.getByRole('button', { name: '打开会话抽屉' })).toBeInTheDocument()
     act(() => viewport.setMobile(false))
-    expect(await screen.findByRole('button', { name: '展开会话栏' })).toBeInTheDocument()
+    const restore = await screen.findByRole('button', { name: '展开会话栏' })
+    expect(restore).toBeInTheDocument()
+    expect(restore).not.toHaveFocus()
     expect(localStorage.getItem(STORAGE_KEYS.sessionSidebarCollapsed)).toBe('true')
   })
 })

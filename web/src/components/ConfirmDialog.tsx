@@ -12,10 +12,15 @@ export function ConfirmDialog() {
 
   useEffect(() => {
     if (state.dialog === null) return
+    const previousOverflow = document.body.style.overflow
     returnFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null
+    document.body.style.overflow = 'hidden'
     cancelRef.current?.focus()
-    return () => returnFocusRef.current?.focus()
+    return () => {
+      document.body.style.overflow = previousOverflow
+      returnFocusRef.current?.focus()
+    }
   }, [state.dialog])
 
   if (state.dialog === null) return null
@@ -30,6 +35,7 @@ export function ConfirmDialog() {
     <div className="modal-layer">
       <button
         className="modal-overlay"
+        data-testid="confirm-dialog-overlay"
         type="button"
         aria-label={t('actions.dismiss')}
         onClick={close}
