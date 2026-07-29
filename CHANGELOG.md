@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0-dev
+
+- Added first-class owner-scoped Electronic Employees with immutable revision
+  snapshots, explicit lifecycle, ProjectBindings, policy/budget/concurrency,
+  strict fail-closed persistence, and CRUD/Dry Run APIs.
+- Added exact version/digest-pinned local Skills, deterministic cited local
+  Knowledge, and private Employee Memory with verified Candidates and explicit
+  Owner acceptance, edit, and Forget.
+- Added a persistent Employee Task Inbox. Task creation queues only; Runtime
+  Preparation creates one stable schema-v6 Session and no Run; explicit Start
+  persists and starts at most one existing Run.
+- Added Task status projection, cancellation/resume/restart reconciliation,
+  canonical completed-Tool recovery, bounded verified Artifacts and Memory
+  Candidates, and conservative Employee/Workspace concurrency gates.
+- Added Employees and Tasks Web UI with real server readiness, exact Skill
+  identity/configuration, current-Workspace Projects, explicit Start, existing
+  Session/Run Timeline/Approval/Verification, and sequenced SSE recovery.
+- Added optional Team Role-to-Employee assignment with strict TeamTemplate
+  v1→v2 migration, immutable bounded assignment/context snapshots, model
+  precedence, private per-Worker context, and fail-closed hidden Worker Session
+  public access.
+- Added deterministic cross-module v0.7 evals and Docker CI acceptance that
+  builds, starts, health-checks, rebuilds, and byte-compares persistent
+  Employee, Task, Knowledge, Memory, Session, and Loop data.
+- Kept the service single-owner, loopback-only, single-Workspace, manually
+  started, and free of automatic Git, PR, publish, deploy, scheduler, or paid
+  model behavior in default tests.
+
 ## 0.6.0-dev
 
 - Added the Codex-style Loop Workbench with Dashboard/Agent/Loops/Settings navigation, Definition create/import/edit forms, configured provider/model selection, argv verification editing, revision display, Dry Run Review, manual start, bounded history, cancellation, and refresh recovery.

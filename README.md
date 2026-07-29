@@ -6,7 +6,7 @@ GoHermit is not a hosted service, a general-purpose multi-agent platform, an unb
 
 ## Status
 
-The current development version is `0.5.0-dev`. Every Run exposes a durable task-specific Live Plan that survives refresh and recovery. New Sessions can execute automatically or wait for explicit Plan approval. Personal Agent Team Runs select a bounded topology from task intent, parallelize read-only preflight, keep one writer, and retry repair/verification within fixed limits. The service remains single-owner, local-only, foreground, and free of telemetry or automatic Git push.
+The current development version is `0.7.0-dev`. Electronic Employees add owner-scoped revisioned identities, pinned local Skill/Knowledge/Memory/Project context, a persistent Task Inbox with zero-execution Prepare and explicit Start, Employees/Tasks Web UI, and optional Team Role assignments. Every Task still reuses the existing Session/Run, Live Plan, Approval, Verification, Tool, SSE, and recovery kernel. The service remains single-owner, loopback-only, foreground, one-Workspace, manually started, and free of telemetry or automatic Git/publish actions.
 
 ## Build and install
 

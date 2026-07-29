@@ -18,11 +18,15 @@
   `origin/main@d8194df88c474d43d0576e26d61d304df74ecefb`.
 - Phase 8: `OWNER_APPROVED`; squash-merged through PR #41 into
   `origin/main@01cfe8c26324708b806d7cd1f946adbbea0306f2`.
-- Phase 9: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
-  `agent/electronic-employees-v0.7-phase9`.
-- Phase 10 and every later product-code change remain blocked.
+- Phase 9: `OWNER_APPROVED`; security Gate Head
+  `0739329024adeb38fb703cda9d51747ea9910d7d` squash-merged through PR #42
+  into `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`.
+- Phase 10: `OWNER_APPROVED`; Owner approval is based on reviewed Head
+  `d91740c27a567711e6e6779239a1ca02f9282df9`.
+- Phases 1 through 10 are `OWNER_APPROVED`; v0.7 development implementation
+  and acceptance are complete.
 - Required terminal status:
-  `WAITING_FOR_PHASE_9_APPROVAL`.
+  `V0.7_DEVELOPMENT_COMPLETE_AWAITING_RELEASE_AUTHORIZATION`.
 
 ### Fixed invariants
 
@@ -73,27 +77,30 @@
 | 6 | Runtime Preparation | `OWNER_APPROVED` |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` |
-| 9 | Team Role to Employee mapping | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
+| 9 | Team Role to Employee mapping | `OWNER_APPROVED` |
+| 10 | Evals, Docker, docs, and v0.7 release closeout | `OWNER_APPROVED` |
 
 ### Current phase scope
 
-- Phases 1 through 8 are Owner-approved and closed to further implementation.
-- Phase 9 Team Role to Employee mapping is the only authorized implementation
-  scope.
+- Phases 1 through 10 are Owner-approved and closed to further implementation.
+- Phase 10 cross-module evals, Docker/persistence acceptance, v0.7
+  documentation, AI handoff, version, and changelog are implemented, validated,
+  and Owner-approved.
 - Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery remains
   the only execution truth and kernel.
-- Keep Phase 10 and all later phases blocked until the next explicit Owner Gate.
+- Keep every post-v0.7 product capability blocked. Version remains
+  `0.7.0-dev`; no formal tag, release, deployment, or publication is authorized.
 
 ### Current prohibited work
 
 - No second Run/Event/Plan/Approval/Verification/Tool/recovery state machine,
   Task SSE, scheduler, daemon, auto-start-next, automatic Memory acceptance,
-  multi-Workspace, cross-Employee read-only concurrency, Phase 10
-  implementation, version, or release change.
-- No Phase 10 implementation.
-- No Phase 9 PR merge, auto-merge, force push, or automatic Workspace
-  submission.
+  multi-Workspace, cross-Employee read-only concurrency, or new product
+  capability.
+- No auto-merge, force push, tag, formal release, version promotion, public
+  deployment, image push, or package publication.
+- No v0.8 implementation or automatic selection of a v0.8 direction. Any v0.8
+  work requires an independent plan and a new Owner Gate.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -115,26 +122,27 @@ git diff --check
 
 ### Next Gate
 
-Phase 10 may start only after the Owner explicitly approves Phase 9. Until
-then, stop after Phase 9 with:
+The next Gate is separate Owner authorization for a formal v0.7 release or an
+independently reviewed v0.8 implementation plan. Until then:
 
 ```text
-STATUS: WAITING_FOR_PHASE_9_APPROVAL
+STATUS: V0.7_DEVELOPMENT_COMPLETE_AWAITING_RELEASE_AUTHORIZATION
 ```
 
 ---
 
-Plan status: `PHASE_9_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
-Baseline: `origin/main@01cfe8c26324708b806d7cd1f946adbbea0306f2`
-Feature branch: `agent/electronic-employees-v0.7-phase9`
+Plan status: `V0.7_DEVELOPMENT_COMPLETE_AWAITING_RELEASE_AUTHORIZATION`
+Baseline: `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`
+Feature branch: `agent/electronic-employees-v0.7-phase10`
+Merge-base: `36987d92291c2781bfa3b997bdaab8002bd9c019`
 Last audited: 2026-07-29
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
-deviations, and remaining risk. The Executive Gate Summary plus the currently
-authorized phase section is the minimum required reading path. Phases 1 through
-8 are Owner-approved. Phase 9 is the only authorized implementation scope;
-Phase 10 remains blocked.
-Each Owner approval authorizes exactly one phase.
+deviations, and remaining risk. The Executive Gate Summary plus the relevant
+phase section is the minimum required reading path. Phases 1 through 10 are
+Owner-approved; v0.7 development implementation and acceptance are complete.
+Formal release work and any v0.8 implementation require separate Owner
+authorization.
 
 ## 1. Current-state evidence
 
@@ -1151,8 +1159,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` | Recovery Gate approved and PR #40 squash-merged as `d8194df`; full Phase 7 is in `origin/main` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` | Gate implementation `47d413b`; evidence `00d724a`; PR #41 squash-merged as `01cfe8c26324708b806d7cd1f946adbbea0306f2` |
-| 9 | Team Role to Employee mapping | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `9bb56fc`; security Gate `bc66781`; Draft PR #42; Gate-Head Push/PR CI green |
-| 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
+| 9 | Team Role to Employee mapping | `OWNER_APPROVED` | Implementation `9bb56fc`; security Gate `bc66781`; reviewed Head `0739329`; PR #42 squash-merged as `36987d92291c2781bfa3b997bdaab8002bd9c019` |
+| 10 | Evals, Docker, docs, and v0.7 release closeout | `OWNER_APPROVED` | Owner approval based on reviewed Head `d91740c27a567711e6e6779239a1ca02f9282df9`; implementation `b16ac00`; CI cleanup Gate `ad1159e`; final evidence `d91740c` |
 
 ### Phase 1: Employee Domain and ADR
 
@@ -2717,8 +2725,9 @@ Phase 8 Web UI Gate revision evidence (2026-07-29):
 
 ### Phase 9: Team Role to Employee mapping
 
-Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 10 remains
-`BLOCKED_BY_GATE`.
+Status: `OWNER_APPROVED`; reviewed Head
+`0739329024adeb38fb703cda9d51747ea9910d7d` squash-merged through PR #42 as
+`36987d92291c2781bfa3b997bdaab8002bd9c019`.
 
 Independent value:
 
@@ -2977,6 +2986,12 @@ Phase 9 hidden-Session and wire-migration Gate revision evidence
 
 ### Phase 10: Evals, Docker, docs, and v0.7 release closeout
 
+Status: `OWNER_APPROVED`. Owner approval is based on reviewed Head
+`d91740c27a567711e6e6779239a1ca02f9282df9`. Clean branch
+`agent/electronic-employees-v0.7-phase10` was created directly from
+`origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`; this is also its
+merge-base. Phases 1–9 are the final merged implementation baseline.
+
 Independent value:
 
 - Proves cross-cutting isolation, permission, recovery, idempotency, browser,
@@ -3007,6 +3022,152 @@ Exit: all final tests and GitHub CI pass; container is healthy and Workbench is
 browser-accessible; persistent data survives rebuild; docs/version/handoff are
 consistent; no generated files or protected user files are committed; Phase 10
 commit is pushed and Draft PR is ready for Owner review.
+
+Phase 10 implementation and acceptance evidence (2026-07-29):
+
+- Baseline and commits:
+  - PR #42 was revalidated at reviewed Head
+    `0739329024adeb38fb703cda9d51747ea9910d7d`, changed from Draft to Ready,
+    and squash-merged without auto-merge as
+    `36987d92291c2781bfa3b997bdaab8002bd9c019`;
+  - clean branch `agent/electronic-employees-v0.7-phase10` was created from
+    that exact `origin/main` SHA and retains it as merge-base;
+  - Phase 10 plan-start commit:
+    `9a6bb7229ff2637dba8e5318eece7978896f47f0`;
+  - implementation/docs/version commit:
+    `b16ac00d0f28bac69d10ffe65b3c8ea528005ecb`.
+- Actual files:
+  - cross-module eval and persistent fixture:
+    `internal/evals/v07_contracts_test.go`;
+  - acceptance-blocking asynchronous test synchronization:
+    `internal/controlplane/employee_execution_test.go`;
+  - real Compose/image/health/rebuild acceptance:
+    `internal/evals/docker_acceptance.sh`,
+    `.github/workflows/ci.yml`;
+  - version: `internal/app/app.go`;
+  - minimum AI handoff path: root `AGENTS.md`, `docs/ai/context.md`,
+    `docs/ai/employees.md`, `docs/ai/handoff-v0.7.md`;
+  - closeout documentation:
+    `docs/adr/0013-first-class-electronic-employees.md`,
+    `docs/ai/next-development-plan.md`, `docs/roadmap.md`, `CHANGELOG.md`,
+    and `README.md`.
+- Deterministic cross-module evals:
+  - directly verify `0.7.0-dev`, Employee identity/revision/ProjectBinding
+    snapshot isolation, exact policy intersection and Skill-only narrowing,
+    SKILL.md Adapter zero capability, Knowledge and Employee Memory isolation,
+    Project/Employee Memory separation, explicit acceptance, Forget, and
+    Store reopen;
+  - build a valid persistent Employee, queued Task, deterministic Knowledge
+    Index/Citation, accepted Memory Fact, Session, and Loop fixture using the
+    real domain and Store APIs; Task creation is asserted to leave SessionID
+    and RunID empty;
+  - an AST-backed regression manifest pins the existing behavioral tests for
+    explicit Start, zero-Run Prepare, at-most-once Start/reconciliation,
+    cancel/resume/restart, completed Tool non-replay, external Workspace
+    change, mutation verification, immutable Team assignment/recovery,
+    private Memory/Handoff isolation, hidden Session public denial, strict
+    TeamTemplate v1 migration, old Session compatibility, public API/SSE, and
+    browser refresh;
+  - default evals use no Provider and make no paid or network model call.
+- Docker and persistent data acceptance:
+  - the Docker CI job now uses the real generated fixture rather than
+    placeholder files;
+  - it runs `docker compose config`, requires the rendered host binding to be
+    `127.0.0.1`, builds the image, starts the service, waits for real
+    `/api/health`, checks `/api/info` reports `0.7.0-dev`, and confirms the
+    Workbench is reachable;
+  - it verifies Employee, Task, Knowledge, Memory, Loop, and Session files,
+    records SHA-256 manifests for `/data` and the workspace Session Store,
+    destroys/rebuilds/recreates the container, then requires byte-identical
+    manifests and a second healthy Workbench;
+  - it scans persistent content for credential-shaped data. The Compose and
+    Dockerfile product configuration and all existing data schemas remain
+    unchanged; no eager or destructive migration was added.
+- Local validation:
+  - Phase 10 scoped evals and direct regression packages: PASS;
+  - `go test ./internal/evals -cover -count=1`: PASS, 80.2% statements;
+  - `go test ./... -count=1`: PASS;
+  - `go test -race ./... -count=1`: PASS;
+  - `go vet ./...`: PASS;
+  - native CLI/Web builds and Linux amd64, Windows amd64, and Darwin arm64
+    CLI/Web cross-builds: PASS;
+  - JavaScript syntax for `app.js`, `loops.js`, `employees.js`, and
+    `tasks.js`: PASS;
+  - Playwright full suite: 13/13 PASS;
+  - Employees/Loops/Tasks repeated stability suite: 90/90 PASS
+    (`--repeat-each=10`);
+  - `bash -n internal/evals/docker_acceptance.sh`, `gofmt`,
+    `git diff --check`, and credential-shaped staged-diff scan: PASS.
+- Implementation-Head GitHub CI:
+  - Push CI
+    [30423367130](https://github.com/Rj455555/GoHermit/actions/runs/30423367130):
+    Go normal/race/vet/native/cross-build, Web E2E, and the actual Docker
+    Compose/image/health/rebuild persistence job all PASS;
+  - `live-smoke` is skipped by workflow design and no paid model is called.
+- Final-Head CI flake and bounded correction:
+  - evidence Head `3c89344e702767b5306f4258c0ba6e815591ab58`
+    had green Push CI
+    [30423561900](https://github.com/Rj455555/GoHermit/actions/runs/30423561900),
+    while PR CI
+    [30423598098](https://github.com/Rj455555/GoHermit/actions/runs/30423598098)
+    exposed a Linux-only `TempDir RemoveAll` cleanup race in
+    `TestEmployeeTaskStartReconcilesBindingCrashPoints`;
+  - the test observed the existing Run's `completed` projection before the
+    asynchronous Runner had finished Candidate/Artifact finalization and
+    released the service gate, allowing temporary-directory cleanup to race
+    the last Store write. Product execution and recovery assertions had
+    already passed;
+  - test-only correction
+    `ad1159ea77f2da04601f52d4fdc614058c705b57` waits for the existing
+    service run gate to become idle after the terminal projection. It changes
+    no runtime path, timeout, state, or product capability;
+  - corrected crash reconciliation with `-race -count=25`: PASS; corrected
+    full `go test ./... -count=1`, `go test -race ./... -count=1`,
+    `go vet ./...`, CLI/Web builds, and `git diff --check`: PASS;
+  - corrected final Push/PR CI links are recorded in Draft PR #43 after both
+    runs complete, avoiding another self-referential plan-evidence chain.
+- Documentation and version:
+  - `AGENTS.md` → `context.md` → `employees.md` → `handoff-v0.7.md` is the
+    minimum sufficient AI reading path;
+  - the documents describe entity relationships, context/policy layers,
+    Prepare/Start, projected status, Team Assignment, hidden Sessions,
+    recovery, API, Stores/schemas, accepted risks, and gated v0.8 candidates;
+  - version reports `0.7.0-dev`; no Release, tag, public deployment, or
+    distributable package was created.
+- Deviations and remaining bounded risk:
+  - `.github/workflows/ci.yml` is an acceptance-only change outside the
+    originally listed documentation/eval paths; it was necessary to execute
+    the Owner-required Docker persistence rebuild on a host with Docker;
+  - root `AGENTS.md`, `README.md`, and the workflow are additional closeout
+    files required for the requested minimum handoff, version accuracy, and
+    actual acceptance; no runtime capability was added;
+  - `internal/controlplane/employee_execution_test.go` is an
+    acceptance-blocking test-only deviation from the expected file list; it
+    synchronizes teardown with the existing service gate after CI exposed the
+    race and does not modify product code;
+  - the macOS development host has no Docker CLI, so actual Docker acceptance
+    runs in the Linux GitHub Docker job and is not claimed as a local result;
+  - existing accepted risks remain: per-file atomicity without cross-file
+    transactions, in-process locks, one Workspace/one writer, private hidden
+    Worker output retained for internal recovery, loopback-only unauthenticated
+    Web, conservative exact Memory echo detection, newest-100 global Task view,
+    and no default paid-provider inference;
+  - final evidence commit SHA and its Push/PR CI are recorded in the Draft PR
+    rather than creating a self-referential evidence commit chain;
+  - no Graphify/CodeGraph/browser/test output, build artifact, or protected
+    untracked user file is committed.
+
+Phase 10 Owner approval ledger (2026-07-29):
+
+- Owner approval is based on reviewed Head
+  `d91740c27a567711e6e6779239a1ca02f9282df9`.
+- Phases 1 through 10 are `OWNER_APPROVED`; GoHermit v0.7 development
+  implementation and acceptance are complete.
+- The version remains `0.7.0-dev`.
+- A formal tag, GitHub Release, deployment, image push, public package, or
+  publication remains unauthorized.
+- Any v0.8 work must begin with an independent implementation plan and wait for
+  a new Owner Gate.
 
 ## 22. Non-goals
 
@@ -3125,7 +3286,9 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-Phases 1 through 8 are Owner-approved and merged. Phase 9 is the only
-authorized implementation scope. Phase 10 remains blocked.
+Phases 1 through 10 are Owner-approved. v0.7 development implementation and
+acceptance are complete; no new product capability was added during closeout.
+The version remains `0.7.0-dev`, and formal release, tag, deployment,
+publication, and all v0.8 work remain separately gated.
 
-STATUS: WAITING_FOR_PHASE_9_APPROVAL
+STATUS: V0.7_DEVELOPMENT_COMPLETE_AWAITING_RELEASE_AUTHORIZATION

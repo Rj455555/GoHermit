@@ -171,3 +171,27 @@ model call, or execution transition.
 - Phase 2 may add owner-scoped storage and CRUD around these values, but it may
   not reinterpret their state graph or snapshot ownership without amending
   this ADR.
+
+## v0.7 implementation record
+
+The decision is implemented in `0.7.0-dev`:
+
+- Employee Store owns revision snapshots, ProjectBindings, Tasks, bounded
+  lifecycle/reference Activity, Knowledge, Memory, Artifacts, and dispatch
+  evidence.
+- Session schema v6 stores only a compact Employee context capped at 64 KiB.
+- Prepare performs live readiness and creates one stable Session with no Run;
+  explicit Start persists and starts at most one existing Run.
+- EmployeeTask state after binding is a projection of Session/Run/Plan/
+  Approval/Verification truth.
+- TeamTemplate schema v2 optionally binds a Role to an immutable
+  TeamEmployeeAssignment while strict v1 migration preserves unbound behavior.
+- Hidden Worker Sessions are internal recovery evidence and fail closed as not
+  found through every public Session API, including SSE and mutations.
+- Candidate promotion remains Owner-confirmed and private Employee Memory is
+  excluded from other Employees, parent Missions, public Handoffs, and public
+  APIs.
+
+The accepted storage boundary is in-process locking plus atomic replacement of
+one file at a time. v0.7 does not claim cross-file transactions or shared
+cross-process Employee Store locking.

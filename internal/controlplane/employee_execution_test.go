@@ -209,6 +209,7 @@ func TestEmployeeTaskStartReconcilesBindingCrashPoints(t *testing.T) {
 				t.Fatalf("reconciled binding = %#v", result)
 			}
 			waitForEmployeeTaskState(t, fixture.service, fixture.taskID, EmployeeTaskStateCompleted)
+			waitForEmployeeTaskIdle(t, fixture.service)
 			loaded, err := fixture.sessions.Load(context.Background(), result.SessionID)
 			if err != nil || len(loaded.Runs) != 1 || loaded.Runs[0].ID != result.RunID {
 				t.Fatalf("reconciled Runs = %#v, %v", loaded.Runs, err)
@@ -484,4 +485,16 @@ func waitForEmployeeTaskState(t *testing.T, service *Service, taskID string, exp
 	view, err := service.GetEmployeeTask(context.Background(), taskID)
 	t.Fatalf("Task did not reach %s: %#v, %v", expected, view, err)
 	return EmployeeTaskView{}
+}
+
+func waitForEmployeeTaskIdle(t *testing.T, service *Service) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !service.Active() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("Employee Task runner did not release the service gate")
 }
