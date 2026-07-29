@@ -6,8 +6,10 @@
     "typecheck": "pnpm --filter @gohermit/web typecheck",
     "lint": "pnpm --filter @gohermit/web lint",
     "test": "pnpm --filter @gohermit/web test",
+    "test:coverage": "pnpm --filter @gohermit/web test:coverage",
     "build": "pnpm --filter @gohermit/web build",
     "test:e2e": "playwright test",
+    "test:e2e:react": "playwright test --config=playwright.react.config.ts",
     "test:e2e:install": "playwright install chromium"
   },
   "devDependencies": {

@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { Component, type ReactNode } from 'react'
 
 interface BootstrapErrorBoundaryProps {
   children: ReactNode
@@ -16,10 +16,6 @@ export class BootstrapErrorBoundary extends Component<
 
   static getDerivedStateFromError(): BootstrapErrorBoundaryState {
     return { failed: true }
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error('React bootstrap render failed', error, info)
   }
 
   render(): ReactNode {

@@ -1,0 +1,52 @@
+import { expect, test } from '@playwright/test'
+
+test('locale and desktop rail preferences switch immediately and survive refresh', async ({ page }) => {
+  await page.goto('/dashboard')
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
+  await expect(page.getByText('GOHERMIT · 工作流')).toBeVisible()
+  await page.getByRole('button', { name: '切换到 English' }).click()
+  await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en-US')
+  await page.getByRole('button', { name: 'Collapse navigation' }).click()
+  await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toHaveAttribute(
+    'data-collapsed',
+    'true',
+  )
+  await page.reload()
+  await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toHaveAttribute(
+    'data-collapsed',
+    'true',
+  )
+})
+
+test('Agent Session sidebar has an independent persisted desktop preference', async ({ page }) => {
+  await page.goto('/agent')
+  await expect(page.getByRole('complementary', { name: '会话' })).toBeVisible()
+  await page.getByRole('button', { name: '收起会话栏' }).click()
+  await expect(page.getByRole('button', { name: '展开会话栏' })).toBeFocused()
+  await page.reload()
+  await expect(page.getByRole('button', { name: '展开会话栏' })).toBeVisible()
+  await page.goto('/settings')
+  await expect(page.getByRole('complementary', { name: '会话' })).toHaveCount(0)
+})
+
+test('mobile Session drawer traps focus, closes safely, and has no horizontal overflow', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/agent')
+  const trigger = page.getByRole('button', { name: '打开会话抽屉' })
+  await trigger.click()
+  await expect(page.getByRole('dialog', { name: '会话' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '关闭会话抽屉' })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(page.getByRole('button', { name: '完成' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: '会话' })).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  )
+  expect(overflow).toBe(false)
+})

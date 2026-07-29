@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { BrowserRouter } from 'react-router-dom'
 
 import { App } from './App'
 import { BootstrapErrorBoundary } from './BootstrapErrorBoundary'
@@ -11,8 +12,10 @@ if (rootElement === null) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <BootstrapErrorBoundary>
-      <App />
-    </BootstrapErrorBoundary>
+    <BrowserRouter>
+      <BootstrapErrorBoundary>
+        <App />
+      </BootstrapErrorBoundary>
+    </BrowserRouter>
   </StrictMode>,
 )
