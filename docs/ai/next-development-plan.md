@@ -1,61 +1,50 @@
 # Next development plan
 
-This file starts after the `0.6.0-dev` Loop Workbench milestone. Durable Session/Run recovery, Live Plan, Personal Agent Team, Scoped Approval, Loop Domain/Store, Dry Run, Manual Invocation, Verification Recipe, and the Web Loop Workbench are implemented; do not plan them again. PR #28–#33 are complete.
+GoHermit `0.7.0-dev` Electronic Employees is implemented through Phase 9.
+Phase 10 is eval, Docker persistence, documentation, and version closeout only.
+Do not reimplement Employee, Task, Prepare/Start, Web UI, or Team mapping.
 
-## P0: eval-driven Plan refinement — DONE
+## Frozen v0.7 boundary
 
-1. ~~Turn `docs/ai/evals/v0.5.md` into checked-in deterministic repository fixtures and graders for Plan fidelity, Handoff quality, recovery, verification, and final owner summary.~~ Done: `internal/evals` plus per-package `eval_test.go` graders; see the grader mapping in `docs/ai/evals/v0.5.md`.
-2. ~~Let Explorer propose bounded task-specific substeps through a strict schema. Every substep must map to a real WorkItem; completed IDs and revisions cannot be rewritten.~~ Done (A1, PR #5): `team.SubstepSpec` + strict `ValidateSubstepProposal` + atomic `Mission.AddSubsteps` + bounded `taskplan.AddSteps`; see `docs/ai/handoff-a1.md`.
-3. ~~Add structured Reviewer issue severity and make repair scheduling depend on actionable findings instead of always running one initial repair pass.~~ Done (A2, PR #6): `Handoff.Findings` with blocking/advisory severity; repair runs only on a blocking finding (`WorkSkipped` otherwise); see `docs/ai/handoff-a2.md`.
-4. ~~Record provider usage consistently for failed, retry, and summary calls and show per-role usage without exposing prompts.~~ Done (A3, PR #7): attempt counting in providers/Runner, failed-worker partial usage, `mission.usage_by_role`; see `docs/ai/handoff-a3.md`.
-5. ~~Keep one opt-in Codex live smoke outside default tests; paid calls remain disabled by default.~~ Done (A4, PR #8): `GOHERMIT_LIVE_CODEX_SMOKE=1` + workflow-dispatch-only CI job; see `docs/ai/handoff-a4.md`.
+- One owner, one foreground service, one startup-configured Workspace.
+- Manual Task creation and explicit Start; no queue daemon or scheduler.
+- Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery kernel.
+- One running Task per Employee and one Workspace mutation writer.
+- Local configured-root Skills and Knowledge only.
+- Owner-confirmed Employee Memory; no automatic promotion.
+- No automatic commit, push, PR, merge, deploy, or external message.
 
-Acceptance: deterministic evals pass three consecutive runs; Plan state never outruns execution facts; recovery never duplicates completed tools or WorkItems. — Met; see `docs/ai/handoff-a4.md` Phase A closeout.
+## v0.8 candidates requiring separate Owner gates
 
-## P1: personal Team templates and per-role models — DONE
-
-1. ~~Add a local Team Template editor with a default provider/model and optional role overrides.~~ Done (B1+B5, PRs #10/#15): `internal/teamtemplate` owner-scoped store; per-role overrides drive real worker runtime selection (template editor UI remains future work; the schema/store/execution path is complete); see `docs/ai/handoff-b1.md` and `docs/ai/handoff-b5.md`.
-2. ~~Validate provider capabilities and credentials for every selected role before Session creation.~~ Done (B2, PR #11): pre-creation per-role catalog/credential/capability validation fails synchronously with no partial state; see `docs/ai/handoff-b2.md`.
-3. ~~Define cost ceilings, retry ownership, fallback audit events, and failure semantics before implementing provider fallback.~~ Done (B3, PR #12): `Budget.RoleLimits` + retry-ownership contract + `provider_fallback` audit event (contract only; no fallback switching); see `docs/ai/handoff-b3.md`.
-4. ~~Keep templates in owner-scoped storage outside repositories; export/import must redact credentials.~~ Done (B1/B4, PRs #10/#13): owner-scoped store; export blanks secrets, import rejects them via the shared `owner.LooksSecret`; see `docs/ai/handoff-b4.md`.
-
-Acceptance: unsupported or unconfigured role selections fail before a Run exists; one model failure cannot silently switch vendors. — Met; fallback switching intentionally unimplemented (contract layer only).
-
-## P2: scoped tool and Operator approval — DONE (Operator role still disabled)
-
-Plan review approval does not authorize side effects. Add a separate transport-neutral, scoped, expiring approval request/response contract for permission-required tools and future Operator work. — Done: ADR 0011 (C1, PR #16); `internal/approval` storage + lifecycle + Session schema v5 (C2, PR #20); expiry triggers wired into run transitions (C2b, PR #21); shell `ConfirmationRequired` calls produce real requests with a concurrency-safe rendezvous (C3, PR #22); workbench approval panel (PR #23). See `docs/ai/handoff-c1.md` … `docs/ai/handoff-c3.md` and `docs/ai/handoff-ui-approvals.md`.
-
-Acceptance: unattended mode denies approval-required actions; approvals cannot broaden workspace, credential, shell, or network policy; restart preserves pending approval without replaying a completed call. — Met (unattended expiry denies; executor re-validates; pending survives restart, consumed never replays).
-
-## Status note (2026-07-24)
-
-- PR #27 (`fix/verifier-synthetic-check`) is merged as `a3e396e` (owner action after the 2026-07-24 audit was written): read-only Team Runs pass verification with `Checks == [] && Issues == []`; mutation runs still require at least one real passing Check. `team.HandoffChecksPassed` is the single definition shared with runcontrol.
-- Historical drafts PR #2, PR #3, PR #4 are stale: their heads are ancestors of `main` and contain no unmerged product code. They are safe for the owner to close; closing is left to the owner (no GitHub write actions by the agent).
-
-## Worktree Foundation — POSTPONED
-
-Draft an ADR before implementation. Add temporary Git worktrees only after merge ownership, conflict handling, cleanup, recovery, ignored files, submodules, and user changes have deterministic tests. Until then, keep one writer.
-
-Status: ADR 0012 drafted (PR #24) but UNRESOLVED — its WIP self-commit recovery model conflicts with the no-auto-commit invariant (see gap analysis section 6.3). Owner decision required before any worktree implementation.
-
-## v0.7: Task Inbox and Shared Artifacts
-
-1. Add a bounded owner-visible Task Inbox that can prepare work without starting a model or Run.
-2. Define Shared Artifacts/Reports as bounded, redacted, owner-scoped outputs linked to the existing Session, Run, and Loop Invocation records.
-3. Reuse the Control Plane and existing stores; do not add a second Run, approval, verification, or event state machine.
-4. Keep execution manual and foreground in the first slice. Cron, a background daemon, notifications, and Publisher actions require separate ADRs and approval semantics.
-
-Acceptance: Inbox refresh/restart recovery is idempotent; consuming an item creates at most one Session/Run; artifacts contain no secrets, private reasoning, full prompts, or unbounded raw tool output.
-
-## Loop Mode (v0.6) — DONE
-
-PR #28–#33 completed documentation calibration, Control Plane application services, Loop Domain/Store, Dry Run, Manual Invocation, and Verification Recipe. The v0.6 Loop Workbench now exposes create/import/edit, readiness, start, Session-backed Timeline, history, cancellation, and refresh recovery in the local Web product. Worktree isolation, cron/daemon, Task Inbox/Shared Artifacts, and Publisher remain outside v0.6.
+1. **Shared owner Employee Store across per-Workspace instances.** Specify
+   cross-process revision coordination, file locks, crash ownership, and
+   ProjectBinding identity in a new ADR before code.
+2. **Artifact/report workflows.** Add explicit export/publish approvals and
+   destinations without treating a verified Artifact as permission to send,
+   commit, or deploy it.
+3. **Read-only concurrency.** Prove tool classification and Workspace
+   observations are race-free before allowing Tasks from different Employees
+   to overlap.
+4. **Worktree isolation.** Resolve ADR 0012's cleanup, conflict, ignored-file,
+   submodule, and no-auto-commit questions first.
+5. **Memory quality.** Improve Candidate review, provenance explanation, and
+   contradiction handling; automatic promotion remains out of scope.
+6. **Optional authentication for non-loopback deployments.** Public hosting,
+   accounts, tenancy, remote secrets, and telemetry require a distinct threat
+   model and are not incremental UI work.
 
 ## Explicitly deferred
 
-- Public or multi-user hosting
-- Organization accounts and cloud secret management
-- Unbounded autonomous Agent creation or free-form Agent chat
-- Automatic commit, push, deploy, messaging, or pull-request creation without scoped approval
-- Telemetry or a remote control plane
-- Cron, a background daemon, notifications, and Publisher actions until separate ADRs define their safety and recovery semantics
+- Multi-user/cloud control plane or organization tenancy.
+- Cron, daemon, unattended queue, auto-start-next, or notifications.
+- Remote Skill install/update, executable Skill content, or dependency install.
+- Remote Knowledge crawl, embeddings, or vector database.
+- Free-form Employee-to-Employee chat or private Memory sharing.
+- Model/vendor fallback without an explicit audited contract.
+- Parallel Workspace mutation writers.
+- Automatic Git/publish/deploy/message actions.
+- Avatar uploads, filesystem paths, or remote URLs.
+
+Every candidate must begin with a plan/ADR, deterministic acceptance tests, and
+an explicit Owner gate. Version `0.7.0-dev` remains unreleased until separately
+authorized.

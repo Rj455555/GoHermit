@@ -1,113 +1,140 @@
-# AI context: read this second
+# AI context: GoHermit 0.7
 
-This is the compact handoff for coding agents. Read `AGENTS.md` first, then this file. Do not load every document by default.
+Read root `AGENTS.md` first. This file and `employees.md` are the compact
+architecture map; `handoff-v0.7.md` records the verified delivery boundary.
 
 ## Product in one paragraph
 
-GoHermit `0.6.0-dev` is a foreground, local-first, single-owner coding harness. A durable Session contains multiple user-message Runs, visible history, bounded context, verified project memory, crash recovery, and a task-specific public Live Plan. A Run may wait for owner Plan approval, use the original single Agent, or use an adaptive Personal Agent Team whose Mission delegates bounded WorkItems through structured Handoffs and a bounded repair/verify loop. Loop Mode adds owner-scoped, revisioned Definitions, zero-side-effect Dry Run, and manual Invocations that snapshot a Definition and bind one existing Session/Run. The Web Loop Workbench exposes that same Control Plane; it does not introduce another runtime or event store.
+GoHermit `0.7.0-dev` is a foreground, local-first, single-owner coding
+workbench. The existing Session/Run kernel still owns execution, Live Plan,
+Approval, Verification, Tool lifecycle, Event/SSE, and recovery. v0.7 adds
+owner-scoped Electronic Employees, pinned Skill/Knowledge/Memory/Project
+context, a persistent Task Inbox with explicit Prepare and Start, bounded
+Artifacts and Memory Candidates, Employees/Tasks Web UI, and optional
+Team Role-to-Employee assignments. One service executes only its
+startup-configured Workspace; there is no scheduler, auto-start, multi-user
+control plane, or automatic Git/publish action.
 
-## Shortest useful reading path
+## Read by topic
 
-1. Always read `AGENTS.md` and this file.
-2. Read the target package and its `_test.go` files.
-3. For Session/Run, context, memory, recovery, or Web conversation work, read `docs/ai/harness.md`.
-4. For Owner Profile, Mission, WorkItem, role policy, Handoff, or team UI, read `docs/ai/team.md`.
-5. For Live Plan/checklist/progress/recovery work, read `docs/ai/plan-mode.md`.
-6. Read only the matching topic document:
-   - agent/model flow: `docs/architecture.md`
-   - context: `docs/context-management.md`
-   - session/storage: `docs/session-storage.md`
-   - plugin changes: `docs/plugin-protocol.md`
-   - filesystem/shell/credentials: `docs/security-model.md`
-7. Read a specific ADR only when changing that decision boundary.
-8. Read `docs/ai/next-development-plan.md` for planned work.
-
-## Code map
-
-| Change | Start here | Also inspect |
+| Work | Start here | Then inspect |
 |---|---|---|
-| CLI flag/output | `internal/app/app.go` | `internal/app/app_test.go`, `cmd/hermit/main.go` |
-| turns/stopping/tool loop | `internal/agent/agent.go` | agent tests, event/session contracts |
-| provider/streaming/retry | `internal/model` | HTTP fixture tests |
-| provider catalog/grouping | `internal/config` | `internal/auth`, provider docs, config tests |
-| credentials/device login | `internal/auth` | `docs/ai/console-credentials.md`, Compose data volume |
-| local Web/SSE | `internal/web`, `cmd/hermit-web` | Web tests, `docs/web-debug.md` |
-| Loop Definition/Invocation | `internal/loop`, `internal/loopstore` | `internal/controlplane/loops.go`, `internal/controlplane/invocations.go`, Loop Web handlers/tests |
-| team orchestration | `internal/team`, `internal/app/team_worker.go` | `internal/runcontrol`, `docs/ai/team.md`, ADR 0008 |
-| Live Plan/checklist | `internal/taskplan`, `internal/runcontrol` | `docs/ai/plan-mode.md`, ADR 0009/0010 |
-| owner preferences/memory | `internal/owner` | owner APIs and context manager |
-| Docker packaging | `Dockerfile`, `compose.yaml` | Web/Docker guide |
-| tool registry/timeouts | `internal/tool/tool.go` | executor tests |
-| filesystem/shell/Git/test | `internal/tool/builtin` | policy and security tests |
-| prompt budget/summary | `internal/contextmgr` | context tests and compression prompt |
-| checkpoint/resume/clean | `internal/session` | storage package and session tests |
-| redaction/rotation/atomic file | `internal/storage` | storage tests |
-| shell classification | `internal/policy` | policy tests |
-| plugin process/protocol | `internal/plugin`, `protocol/plugin/v1` | both echo examples and plugin tests |
-| configuration | `internal/config` | `hermit.example.toml`, config tests |
+| Employee/Task lifecycle | `docs/ai/employees.md` | `internal/employee`, `internal/employeestore` |
+| Prepare/Start/recovery | `internal/controlplane/employee_tasks.go` | `employee_execution.go`, `internal/session`, `internal/agent` |
+| Skill/Knowledge/Memory context | `docs/ai/employees.md` | `internal/skill`, `internal/knowledge`, `internal/employeememory`, `internal/contextmgr` |
+| Team assignments | `docs/ai/employees.md` | `internal/controlplane/team_employees.go`, `internal/app/team_worker.go`, `internal/teamtemplate` |
+| Employee/Task Web UI | `internal/web/assets/employees.js` | `tasks.js`, Web Go tests, `tests/e2e` |
+| Session/Run/SSE | `docs/ai/harness.md` | `internal/session`, `internal/controlplane`, `internal/web` |
+| Team/Mission/Handoff | `docs/ai/team.md` | ADR 0008, ADR 0013 |
+| Live Plan and Verification | `docs/ai/plan-mode.md` | ADR 0009–0011, `internal/runcontrol` |
+| Loop Workbench | `docs/ai/handoff-v0.6-loop-workbench.md` | `internal/loop`, `internal/loopstore` |
+| Docker/persistence | `compose.yaml` | `Dockerfile`, `internal/evals/docker_acceptance.sh` |
+| Future work | `docs/ai/next-development-plan.md` | `docs/roadmap.md` |
 
-## Invariants that must survive every change
+## Execution and data model
 
-- Agent Core emits events; it never prints to a terminal.
-- Model/vendor JSON does not enter Agent Core behavior; opaque provider continuation data stays in the message envelope and is interpreted only by its provider.
-- Every loop is bounded by turns and total time; every external call is cancellable and timed.
-- Tool errors are returned to the model as structured results unless the task itself cannot continue.
-- Built-in filesystem access stays inside the real workspace and cannot read `.git`, `.gohermit`, credential-like files, or symlink escapes.
-- Shell is an allowlist, not a general terminal. Non-interactive permission requests are never auto-approved.
-- Stream chunks, full prompts/requests, secrets, private reasoning, and unbounded outputs are not persisted.
-- Checkpoints are versioned JSON, atomically replaced, and resumable without full conversation history.
-- Plugin stdout is protocol-only, message/concurrency sizes are bounded, and crashes cannot crash the core.
-- GoHermit never commits, pushes, opens PRs, changes system settings, or emits telemetry by itself. Docker packaging is an operator-started local debug surface.
-- Team agents communicate durably only through bounded Handoffs; read-only agents may run concurrently, but one workspace has one writer. Child activity is committed before presentation delivery.
-- A Team Run cannot reach Lead completion without independent post-repair Verifier evidence.
-- Live Plan revisions come only from real lifecycle transitions. Single-Agent Plans have one current step; Team Plans may show concurrent read-only steps. No Plan contains private reasoning or fabricated progress.
+```text
+Employee revision --sealed into--> EmployeeTask
+EmployeeTask --Prepare--> stable Session (no Run)
+EmployeeTask --explicit Start--> one existing Run
+EmployeeTask status <--projection-- Session/Run/Plan/Approval/Verification
 
-## Current verified state
+Team Role --optional preflight--> TeamEmployeeAssignment
+TeamEmployeeAssignment --sealed into--> hidden Worker Session
+hidden Worker Session --internal only--> existing Worker/Run/recovery kernel
+```
 
-- The v0.2 Harness baseline passed normal tests, race tests, vet, CLI/Web builds, and cross-builds on the Mac development host before v0.3 work began.
-- The v0.3 Personal Agent Team and Owner Profile milestone passed normal/race tests, vet, native/cross-builds, Compose validation, Docker acceptance, and recovery tests; its frozen record is `docs/ai/handoff-v0.3.md`.
-- For v0.4, Plan state-machine, schema migration, single-Agent lifecycle, Team lifecycle, verifier-failure, cancellation/interruption, SSE ordering, and persistence tests pass.
-- The v0.4 tree passes Mac formatting inspection, frontend JavaScript syntax, `go test ./...`, `go test -race ./...`, vet, native CLI/Web builds, and Linux amd64 plus Windows amd64 CLI/Web cross-builds.
-- Compose validation, Docker rebuild, container health, `/api/health`, `/api/info`, and static Live Plan asset acceptance pass. The local workbench reports `0.4.0-dev`; exact repository/deployment state is in `docs/ai/handoff-v0.4.md`.
-- Python and Node echo plugin lifecycles are covered by tests; restricted roles additionally filter plugin tools by declared permission and mutation flag.
-- Chat Completions and Responses HTTP behavior are tested with local servers, including reasoning continuation; no paid API call is part of the test suite.
-- Docker Compose binds the Web surface to host loopback, mounts Codex CLI auth read-only, and persists Web-managed credentials in a dedicated data volume.
-- `/api/info` returns secret-free status and separates the full Settings catalog from the credential-filtered Session catalog.
-- Codex Run models are discovered from the authenticated account; Responses streaming reconstructs text and tool calls from output-item events and safely replays encrypted continuation.
-- Harness tests cover Session/Run verification, schema migration, event replay, recovery reconciliation, project-memory redaction, and `Last-Event-ID` SSE continuation. The Mac-hosted v0.3 workbench passes health/API/static acceptance; an interactive live-model Mission remains opt-in.
-- Team tests cover dependency order, parallel readers, one writer, structured Handoffs, Verifier gating, parent Session completion, and completed Worker replay protection.
-- For v0.5, commit-journal crash injection, detached Worker event durability, Plan approval, adaptive Team topology, bounded repair/reverify, task-specific Plan, and Chromium refresh/approval E2E tests pass on Windows. Vet and native/cross-platform builds pass; Linux race and Docker gates are also checked by `.github/workflows/ci.yml` because this Windows host has no Docker and blocks some transient test executables.
-- The only third-party Go module is `github.com/BurntSushi/toml` for strict TOML decoding.
-- The v0.5 eval definition `docs/ai/evals/v0.5.md` is implemented as checked-in fixture graders: `internal/evals` (plan fidelity, handoff quality, shared fixture loader) plus `eval_test.go` graders in `internal/team` (verification), `internal/session` (recovery), and `internal/web` (owner summary); all fixtures under `internal/evals/testdata/` decode with `DisallowUnknownFields` and run inside `go test ./...`.
-- PR #28–#33 are merged: documentation calibration, shared Control Plane, Loop Domain/Store, Dry Run, Manual Invocation, and declarative Verification Recipe are complete.
-- The v0.6 Loop Workbench adds resource APIs and a Codex-style Dashboard/Loops surface for create/import/edit, revision display, readiness review, manual start, resumable Session-backed Timeline, history, cancellation, Approval/Plan/Team/Verification visibility, and browser refresh recovery.
-- The checked-in documentation-maintenance template is read-only, contains no credential, uses argv-only verification, and never requests automatic commit, push, PR, merge, or deploy.
+Employee is a durable identity, while Role is a temporary Mission
+responsibility. Task is the immutable owner request plus mutable Session/Run
+bindings. Session and Run remain the only execution truth.
 
-## Known boundaries
+## Security invariants
 
-- Shell/test execution and configured plugins are not OS sandboxes; repository code and plugins must be trusted.
-- Plugin streaming events are deferred beyond protocol v1.
-- Session storage is schema v5 with explicit v1, v2, v3, and v4 migrations; unknown versions still fail closed.
-- Permission-required events are non-interactive in v0.1.0.
-- Codex device login uses OpenAI's device flow and stores tokens only in the server-side credential store. Revocation is detected when a refresh is required; there is no proactive remote token introspection.
-- The Web surface is single-user and unauthenticated; public exposure is unsupported.
-- Provider/model/Agent selection is fixed for a Session; create a new Session to switch.
-- Plan approval and scoped expiring tool/side-effect approval are implemented. Multiple concurrent workspaces remain deferred.
-- Adaptive Team topology is deterministic and intent-based; bounded model-proposed substeps and per-role model overrides are implemented. Isolated parallel worktrees remain deferred because ADR 0012 is unresolved.
-- Team orchestration currently starts and resumes through the Web Session/Run API. The CLI and legacy `/api/run` reject `team` instead of silently running a single Lead loop.
-- Loop triggers are manual only. Cron, a background daemon, Task Inbox, Shared Artifacts, and Publisher workflows are not part of v0.6.
+- Full Employee revision snapshots live only in EmployeeTask/Employee Store.
+  Session and hidden Worker snapshots are compact and capped at 64 KiB.
+- Task `SnapshotDigest` excludes State/timestamps and Session/Run bindings; it
+  never changes when execution identities are attached.
+- Permission evaluation is:
 
-## Verification
+  ```text
+  base = Global ∩ AgentProfile ToolPolicy ∩ Employee ∩ Project ∩ Task
+  no Skill: effective = base
+  enabled Skills: effective = base ∩ union(requested capabilities)
+  ```
+
+  A Skill can only narrow. A SKILL.md-only Adapter requests zero capabilities
+  and cannot execute scripts or install dependencies.
+- Knowledge is deterministic, local-only, cited, content-digested, and
+  configured-root-only. Employee Memory is private and owner-confirmed;
+  Project Memory is a separate workspace layer.
+- Preparation rereads mutable Skill, Knowledge, Memory, model/access, Employee,
+  and Project state before writing a dispatch journal or Session.
+- Start is the only EmployeeTask execution entrypoint. It persists one stable
+  Run before the Runner can call a Provider or Tool.
+- Recovery uses canonical tool-argument digests only at the interrupted Turn
+  frontier. Completed effects are not replayed; started/uncertain effects
+  require reality inspection and replanning.
+- Hidden Worker Sessions are omitted from lists and return the same 404 as an
+  absent Session for every public detail/message/event/SSE/Run/Plan/Approval
+  operation. TeamWorker internal Store/Runner recovery remains available.
+- Private Employee Memory never enters another Employee context, a parent
+  Mission, public Handoff, log, or public API projection.
+- No durable store accepts credentials, private reasoning, raw tool arguments,
+  full hidden prompts, or unbounded output.
+
+## Persistence map
+
+- Employee root: `GOHERMIT_EMPLOYEE_STORE`, with Employee records, immutable
+  revisions, bindings, bounded activity references, Tasks, Knowledge indexes,
+  Memory Candidates/Facts, Artifacts, and dispatch journals isolated below
+  `<employee-id>/`.
+- Session root: configured storage directory, normally
+  `<workspace>/.gohermit/sessions`; schema v6 migrates v1–v5 one way and fails
+  closed on unknown/corrupt data.
+- Loop root: `GOHERMIT_LOOP_STORE`.
+- Project Memory: `<workspace>/.gohermit/memory`.
+- TeamTemplate root: owner-scoped configuration store; schema v2 strictly
+  migrates v1 and rejects a v1 document carrying `employee_id`.
+
+Store reads and writes enforce lexical and realpath containment, reject
+symlinks/non-regular files, use strict bounded JSON, and atomically replace one
+file at a time. Cross-file transactions are intentionally not claimed.
+
+## Current verified baseline
+
+- Phases 1–9 are Owner-approved and merged through Phase 9 squash commit
+  `36987d92291c2781bfa3b997bdaab8002bd9c019`.
+- Phase 10 adds deterministic cross-module evals, actual Docker
+  build/health/rebuild persistence acceptance, and documentation/version
+  closeout only.
+- Default tests use deterministic Fake Providers. Paid Codex smoke remains
+  workflow-dispatch-only and skips without an explicit secret.
+- `internal/evals` contains the v0.7 cross-package regression manifest and the
+  valid persistent Store fixture used by Docker CI.
+
+## Accepted boundaries
+
+- Single owner, one service, one configured Workspace, one mutation writer,
+  and at most one running Task per Employee.
+- In-process locks plus per-file atomicity; no cross-process transaction or
+  recovery journal beyond the existing scoped dispatch/Session journals.
+- The Web surface is unauthenticated and must remain loopback-only.
+- Hidden Worker output remains durable for internal recovery but is not
+  publicly addressable.
+- Shell/plugins are policy constrained, not an OS sandbox.
+- Global Tasks intentionally reads at most the newest 100 Tasks per Employee.
+- Exact private-Memory echo detection is conservative and may reject a public
+  Handoff containing the same text.
+
+## Standard verification
 
 ```bash
-gofmt -w <changed Go files>
-go test ./...
-go test -race ./...
+gofmt -l .
+go test ./... -count=1
+go test -race ./... -count=1
 go vet ./...
 go build ./cmd/hermit
 go build ./cmd/hermit-web
 pnpm test:e2e
 docker compose config
 ```
-
-When handing off, update this file only if the product boundary, code map, invariants, verified state, or known boundaries changed. Keep it compact.

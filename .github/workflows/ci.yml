@@ -59,8 +59,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose config
-      - run: docker build -t gohermit:ci .
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.8
+          cache: true
+      - name: Compose, image, health, and persistent data acceptance
+        run: bash internal/evals/docker_acceptance.sh
 
   # Live Codex smoke: manual dispatch only, never on push/PR. It makes one paid
   # API call, so the repo owner must first add a GOHERMIT_CODEX_AUTH_JSON secret
