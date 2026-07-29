@@ -1,6 +1,6 @@
 # GoHermit React Workbench / i18n Migration Plan
 
-> Gate document only. No product implementation is authorized until the Owner approves this plan.
+> The Owner reapproved this plan at baseline commit `c4074a2963e0b210804d08b2bfcab5b1e010762f` and authorized Phase 1 only. Phase 1 is now complete and awaiting its approval gate; Phases 2–5 remain unauthorized.
 
 ## 0. Gate, baseline, and audit evidence
 
@@ -16,9 +16,9 @@
 - CodeGraph: a `.codegraph/` directory exists and the executable is available at `/Users/yuanxin/.local/bin/codegraph` (version 1.4.1 during this Gate). The earlier bare `codegraph` lookup failed because the non-interactive SSH `PATH` did not include `/Users/yuanxin/.local/bin`; it did not mean CodeGraph was absent. This revision re-audited Session SSE ownership and static routing with `/Users/yuanxin/.local/bin/codegraph explore "<question>"`. Future code audits must use that absolute path before grep/file reads. The index was not initialized, rebuilt, changed, or upgraded.
 - Baseline verification: `/opt/homebrew/bin/go test ./internal/web -count=1` passed in 1.670s.
 - Reapproval verification: the Markdown heading/fence/table/status structure check and `git diff --check` passed; `/opt/homebrew/bin/go test ./internal/web -count=1` passed again in 1.937s.
-- Environment note: Go exists at `/opt/homebrew/bin/go` (`go` is not on the SSH `PATH`); `node`, `npm`, and `pnpm` are not currently available through SSH. If Phase 1 is approved, its first preflight is the bounded Homebrew Node 22 + Corepack + pnpm 11.9.0 procedure in Section 4.5. This Gate does not install or change that toolchain.
+- Phase 1 toolchain evidence: `/opt/homebrew/bin/brew` installed Homebrew `node@22` once because it was absent. Non-interactive SSH used `PATH=/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`. Node command `/opt/homebrew/opt/node@22/bin/node` resolves to `/opt/homebrew/Cellar/node@22/22.23.1/bin/node` (`v22.23.1`); Corepack command `/opt/homebrew/opt/node@22/bin/corepack` resolves to `/opt/homebrew/Cellar/node@22/22.23.1/lib/node_modules/corepack/dist/corepack.js` (`0.34.6`); pnpm command `/opt/homebrew/opt/node@22/bin/pnpm` resolves to `/opt/homebrew/Cellar/node@22/22.23.1/lib/node_modules/corepack/dist/pnpm.js` (`11.9.0`). No alternative installer or global npm install was used.
 
-This Gate creates only `REACT_IMPLEMENTATION_PLAN.md`. It does not change Go, HTML, CSS, JavaScript, tests, CI, Docker, documentation, generated assets, schemas, or persisted data.
+The original plan Gate changed only this document. The reapproved Phase 1 changes only the paths listed in its authorized-files section; no Phase 2–5 product migration, CI/Docker cutover, API/domain schema change, or persisted-data change is included.
 
 ## 1. Non-negotiable migration invariants
 
@@ -408,14 +408,14 @@ Initial load and reconnect contract:
 
 1. Fetch and decode `GET /api/sessions/{id}` first. Its Session, Runs, Messages, Plan, Tool, and Verification fields are the authoritative render projection.
 2. Read `gohermit.ui.sseSequence.{sessionId}` as untrusted input.
-3. Accept it only if it is a finite safe nonnegative integer and does not exceed a frontier the server can validate for that Session; otherwise remove/reset it to the safe value `0`. No Run frontier is consulted.
+3. Accept it only if it is a finite safe nonnegative integer and does not exceed the authoritative `session.next_event_sequence` returned by `GET /api/sessions/{id}`. If it exceeds that Session frontier, remove the storage key and recover with `after=0`. No Run frontier is consulted.
 4. Open the shared Session EventSource with `after=<savedSequence>` when the validated value exists; otherwise use `after=0`.
 5. Advance and persist the high-water only from valid monotonic events belonging to that Session.
 6. Native `Last-Event-ID` remains supported, and an explicit reconnect uses the current Session high-water.
 7. A normal refresh with a valid saved sequence does not unconditionally replay from `after=0`.
 8. SSE events provide incremental display hints and trigger authoritative projection refreshes; they never become a second Session/Run/Task/Loop state store.
 
-CodeGraph confirms that the current public Session DTO does not expose a separate event-frontier field; the Store’s sequence map is internal. Before implementing the hook, Phase 3 must prove a server-verifiable frontier mechanism within the existing Session/SSE contract. It must not invent a Run-owned sequence, silently trust an ahead-of-server value, or change an API/domain schema without a new Owner gate. If the current contract cannot verify an overshoot safely, Phase 3 stops and reports that blocker. When the server can identify a saved value as invalid or beyond its Session frontier, the client removes it and reconnects from `0`; this recovery behavior must be bounded and tested.
+CodeGraph confirms that the public `Session` DTO already exposes `NextEventSequence` as `next_event_sequence`, `GET /api/sessions/{id}` returns that Session field, and the Store maintains it as the current committed Session event frontier during commit and recovery. Phase 3 therefore validates the local high-water directly against `session.next_event_sequence`: the value must be a safe nonnegative integer no greater than that Session frontier. An overshoot removes the local key and reconnects with `after=0`. This uses the existing API and Session schema unchanged and never introduces a Run-level frontier.
 
 ### 3.7 i18n
 
@@ -527,7 +527,7 @@ clean clone
 
 The request’s generic `npm ci`/`npm run ...` checklist is implemented with the repository’s existing pnpm policy (`pnpm install --frozen-lockfile` and `pnpm ...`). Adding a `package-lock.json` solely to run `npm ci` would violate the single-lockfile requirement.
 
-### 4.5 Phase 1 Node/pnpm preflight (plan only; not executed in this Gate)
+### 4.5 Phase 1 Node/pnpm preflight
 
 After explicit Phase 1 approval, use:
 
@@ -664,7 +664,7 @@ Acceptance:
 - one Session with two different Run-filtered subscribers creates exactly one underlying EventSource, while each subscriber receives only its selected Run projection;
 - removing one subscriber does not close the shared Session connection while another subscriber remains; the final unsubscribe closes it;
 - Session switching releases the old subscription and closes the old connection only when its reference count reaches zero;
-- a validated high-water resumes with `after=<sessionSequence>`; a normal refresh does not unconditionally use `after=0`;
+- a validated safe nonnegative high-water no greater than `session.next_event_sequence` resumes with `after=<sessionSequence>`; an overshoot removes the key and safely uses `after=0`, while a normal refresh with a valid value does not unconditionally replay from zero;
 - corrupt, negative, fractional, unsafe, or beyond-server-frontier sequence values are discarded and recover from a safe value;
 - dedupe, disconnect preservation, and StrictMode mount/cleanup/remount connection counts pass without creating multiple EventSources for different Runs in the same Session;
 - review-first Plan and Approval suites remain behaviorally equivalent;
@@ -845,11 +845,27 @@ Required SSE connection/sequence tests:
 | SPA fallback masks API/asset errors or traversal | return HTML only for declared route shapes; Go/API 404 unknown top-level paths, invalid shapes, extra segments, API misses, extension-bearing asset misses, traversal, and encoded anomalies |
 | Generated assets drift | commit `dist`, rebuild in CI, fail on diff |
 | Embedded React artifact becomes a hidden second UI before cutover | Phase 1 keeps `Server.New()` on legacy `assets/`, exposes no React URL, and tests `dist` through the embedded FS only; the serving-root switch is Phase 4 |
-| Mac mini cannot currently run frontend commands over SSH | after Phase 1 approval use only `/opt/homebrew/bin/brew` for Node 22 and Corepack for pnpm 11.9.0, explicitly set non-interactive PATH, and stop on failure |
+| Mac mini frontend commands depend on a non-login SSH environment | Phase 1 installed only Homebrew Node 22, activated pnpm 11.9.0 through Corepack, recorded real paths/versions, and explicitly sets the non-interactive PATH |
 | Dependency expansion | use only the dependency table above; any addition requires evidence and Owner approval |
 
-## 11. Approval gate
+## 11. Phase ledger and approval gate
 
-No Phase 1 implementation has started. This revision changes the Gate document only.
+| Phase | Authorization | State | Evidence |
+|---|---|---|---|
+| Plan Gate | Owner reapproval at `c4074a2963e0b210804d08b2bfcab5b1e010762f` | complete | SSE ownership, SPA fallback, CodeGraph, temporary Embed boundary, and toolchain plan approved |
+| Phase 1 | `AUTHORIZED_PHASE: PHASE_1_ONLY` | complete; awaiting approval | minimal React/TypeScript/Vite workspace, committed deterministic Embed artifact, old UI boundary, and validations below |
+| Phases 2–5 | not authorized | not started | no router, i18n, sidebar, feature migration, React serving-root cutover, Docker/CI migration, or legacy deletion |
 
-`STATUS: WAITING_FOR_REACT_IMPLEMENTATION_PLAN_REAPPROVAL`
+### 11.1 Phase 1 execution evidence
+
+- Frontier evidence correction: CodeGraph shows public `Session.NextEventSequence` serializes as `next_event_sequence`, is returned by `GET /api/sessions/{id}`, and is maintained by Store commit/recovery as the committed Session event frontier. Phase 3 will validate the Session-owned local high-water as a safe nonnegative integer no greater than this field, remove an overshoot, and recover with `after=0`; no API field, Session schema, or Run frontier is added.
+- Workspace: the root scripts delegate `typecheck`, `lint`, `test`, and `build` to the single `@gohermit/web` workspace while retaining the existing root Playwright E2E command. One `pnpm-lock.yaml` covers both importers; `pnpm-workspace.yaml` allows only the Vite-required `esbuild` install script.
+- Resolved frontend stack: React/React DOM `19.2.8`, TypeScript `5.9.2`, Vite `7.3.6`, ESLint `9.39.5`, Vitest/coverage `3.2.7`, Testing Library React `16.3.2`, and the existing Playwright `1.61.1`. No router, i18n, product state library, UI framework, external font/CDN, telemetry, or remote resource was added.
+- Bootstrap: `main.tsx` mounts `App` through `StrictMode` and `BootstrapErrorBoundary`; three Vitest tests cover the app marker, bounded render-error fallback, and real document-root mount. Coverage passed at 95% lines/statements, 87.5% branches, and 100% functions.
+- Embed boundary: a failing test first proved that the pre-Phase-1 `FileServer` returned 301 for `/dist/index.html`. The minimal `server.go` wrapper now fails closed with 404 for `/dist` and `/dist/**`, delegates every other request to the unchanged legacy `assets/` static root, and keeps `//go:embed assets/*` unchanged. Direct embedded-FS tests prove `dist/index.html`, its content-hashed JS/CSS, missing-resource failure, and machine-path absence. `GET /` remains the legacy UI.
+- Deterministic build: two clean builds produced the same three-file set and byte-identical SHA-256 manifest: CSS `44d61fdb285046e830b0534217a15e77efbdfc1944c2172ed420505501d307d6`, JS `3f18f959a336e87b95fe7585f88ffebd7d5b01179711edca2551ed5e187c1c1e`, and `index.html` `e3ea78822442835bfc386f5cadc6706dfabfcf5f541169d669f746e7e2cde6f8`. No sourcemap, timestamp, absolute machine path, or Build ID marker was found.
+- Frontend verification: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, and the existing Chromium `pnpm test:e2e` suite passed; legacy E2E remained 13/13 and no browser installation was needed.
+- Go verification: `go test ./internal/web -count=1`, `go test ./... -count=1`, `go test -race ./... -count=1`, `go vet ./...`, `go build ./cmd/hermit`, and `go build ./cmd/hermit-web` passed. Build executables were moved outside the repository after verification.
+- Hygiene: Markdown structure, `git diff --check`, the single-lockfile check, production-sourcemap check, and authorized-path review passed. Excluding the authorized Phase 1 additions, the protected untracked path-list SHA-256 remains `530153626b098db04ebade3e1ff76660b58d7d6a0243b4b060b986f7a533b223`; those files remain unmodified and unstaged.
+
+`STATUS: WAITING_FOR_REACT_PHASE_1_APPROVAL`

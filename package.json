@@ -3,6 +3,10 @@
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "scripts": {
+    "typecheck": "pnpm --filter @gohermit/web typecheck",
+    "lint": "pnpm --filter @gohermit/web lint",
+    "test": "pnpm --filter @gohermit/web test",
+    "build": "pnpm --filter @gohermit/web build",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium"
   },

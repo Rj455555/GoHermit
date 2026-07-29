@@ -3,11 +3,14 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -75,6 +78,78 @@ func TestPhase8AssetsAndNavigationAreServed(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPhase1ReactDistIsEmbeddedWithHashedAssets(t *testing.T) {
+	index, err := assets.ReadFile("assets/dist/index.html")
+	if err != nil {
+		t.Fatalf("read embedded React index: %v", err)
+	}
+
+	references := regexp.MustCompile(`(?:src|href)="(/assets/[^"]+-[A-Za-z0-9_-]{8,}\.(?:js|css))"`).FindAllSubmatch(index, -1)
+	if len(references) < 2 {
+		t.Fatalf("React index must reference content-hashed JS and CSS assets, got %q", index)
+	}
+
+	foundJS, foundCSS := false, false
+	generated := [][]byte{index}
+	for _, match := range references {
+		reference := string(match[1])
+		switch {
+		case strings.HasSuffix(reference, ".js"):
+			foundJS = true
+		case strings.HasSuffix(reference, ".css"):
+			foundCSS = true
+		}
+		content, readErr := assets.ReadFile("assets/dist" + reference)
+		if readErr != nil {
+			t.Fatalf("read embedded React asset %q: %v", reference, readErr)
+		}
+		if len(content) == 0 {
+			t.Fatalf("embedded React asset %q is empty", reference)
+		}
+		generated = append(generated, content)
+	}
+	if !foundJS || !foundCSS {
+		t.Fatalf("React index hashed assets: found JS=%t CSS=%t", foundJS, foundCSS)
+	}
+
+	machinePath := regexp.MustCompile(`(?i)(?:/Users/[^/\s]+/|/home/[^/\s]+/|[a-z]:\\Users\\[^\\\s]+\\)`)
+	for _, content := range generated {
+		if match := machinePath.Find(content); match != nil {
+			t.Fatalf("embedded React output contains a machine path: %q", match)
+		}
+	}
+
+	if _, err = assets.ReadFile("assets/dist/assets/phase1-missing.js"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing embedded React asset error = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestPhase1ReactDistIsNotHTTPAccessibleAndLegacyRemainsDefault(t *testing.T) {
+	handler := testServer(t).Handler()
+	for _, path := range []string{"/dist", "/dist/", "/dist/index.html"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", path, response.Code)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET / status = %d, body = %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, `data-testid="nav-dashboard"`) {
+		t.Fatal("GET / no longer serves the legacy UI")
+	}
+	if strings.Contains(body, `data-testid="react-bootstrap"`) {
+		t.Fatal("GET / unexpectedly serves the React bootstrap")
 	}
 }
 

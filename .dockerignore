@@ -3,5 +3,8 @@
 hermit
 hermit.exe
 coverage.out
+node_modules
+web/.vite
+web/coverage
 sandbox
 docs

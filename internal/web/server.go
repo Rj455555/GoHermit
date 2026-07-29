@@ -45,9 +45,16 @@ func New(workspace, configPath string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	legacyStatic := http.FileServer(http.FS(root))
 	server := &Server{
 		Workspace: workspace, ConfigPath: configPath,
-		static:      http.FileServer(http.FS(root)),
+		static: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/dist" || strings.HasPrefix(r.URL.Path, "/dist/") {
+				http.NotFound(w, r)
+				return
+			}
+			legacyStatic.ServeHTTP(w, r)
+		}),
 		subscribers: map[string]map[chan event.Event]struct{}{},
 	}
 	svc, err := controlplane.New(workspace, configPath, server.publish)
