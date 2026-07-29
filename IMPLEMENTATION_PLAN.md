@@ -21,11 +21,12 @@
 - Phase 9: `OWNER_APPROVED`; security Gate Head
   `0739329024adeb38fb703cda9d51747ea9910d7d` squash-merged through PR #42
   into `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`.
-- Phase 10: `COMPLETE_WAITING_FOR_OWNER` on clean branch
-  `agent/electronic-employees-v0.7-phase10`, merge-base
-  `36987d92291c2781bfa3b997bdaab8002bd9c019`.
-- Required terminal status after Phase 10 delivery:
-  `WAITING_FOR_PHASE_10_APPROVAL`.
+- Phase 10: `OWNER_APPROVED`; Owner approval is based on reviewed Head
+  `d91740c27a567711e6e6779239a1ca02f9282df9`.
+- Phases 1 through 10 are `OWNER_APPROVED`; v0.7 development implementation
+  and acceptance are complete.
+- Required terminal status:
+  `V0.7_DEVELOPMENT_COMPLETE_AWAITING_RELEASE_AUTHORIZATION`.
 
 ### Fixed invariants
 
@@ -77,19 +78,18 @@
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` |
 | 9 | Team Role to Employee mapping | `OWNER_APPROVED` |
-| 10 | Evals, Docker, docs, and v0.7 release closeout | `COMPLETE_WAITING_FOR_OWNER` |
+| 10 | Evals, Docker, docs, and v0.7 release closeout | `OWNER_APPROVED` |
 
 ### Current phase scope
 
-- Phases 1 through 9 are Owner-approved, merged, and closed to further
-  implementation.
+- Phases 1 through 10 are Owner-approved and closed to further implementation.
 - Phase 10 cross-module evals, Docker/persistence acceptance, v0.7
-  documentation, AI handoff, version, and changelog are implemented and
-  validated. Only evidence synchronization and Owner review remain.
+  documentation, AI handoff, version, and changelog are implemented, validated,
+  and Owner-approved.
 - Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery remains
   the only execution truth and kernel.
-- Keep every post-v0.7 product capability blocked; Phase 10 may not add product
-  capability or publish a release.
+- Keep every post-v0.7 product capability blocked. Version remains
+  `0.7.0-dev`; no formal tag, release, deployment, or publication is authorized.
 
 ### Current prohibited work
 
@@ -97,8 +97,10 @@
   Task SSE, scheduler, daemon, auto-start-next, automatic Memory acceptance,
   multi-Workspace, cross-Employee read-only concurrency, or new product
   capability.
-- No Phase 10 PR merge, auto-merge, force push, tag, formal release, public
-  deployment, or package publication.
+- No auto-merge, force push, tag, formal release, version promotion, public
+  deployment, image push, or package publication.
+- No v0.8 implementation or automatic selection of a v0.8 direction. Any v0.8
+  work requires an independent plan and a new Owner Gate.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -120,27 +122,27 @@ git diff --check
 
 ### Next Gate
 
-Phase 10 must stop after its implementation, validation, evidence update, push,
-and Draft PR creation with:
+The next Gate is separate Owner authorization for a formal v0.7 release or an
+independently reviewed v0.8 implementation plan. Until then:
 
 ```text
-STATUS: WAITING_FOR_PHASE_10_APPROVAL
+STATUS: V0.7_DEVELOPMENT_COMPLETE_AWAITING_RELEASE_AUTHORIZATION
 ```
 
 ---
 
-Plan status: `PHASE_10_COMPLETE_WAITING_FOR_OWNER`
+Plan status: `V0.7_DEVELOPMENT_COMPLETE_AWAITING_RELEASE_AUTHORIZATION`
 Baseline: `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`
 Feature branch: `agent/electronic-employees-v0.7-phase10`
 Merge-base: `36987d92291c2781bfa3b997bdaab8002bd9c019`
 Last audited: 2026-07-29
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
-deviations, and remaining risk. The Executive Gate Summary plus the currently
-authorized phase section is the minimum required reading path. Phases 1 through
-9 are Owner-approved and merged. Phase 10 is the only authorized implementation
-scope.
-Each Owner approval authorizes exactly one phase.
+deviations, and remaining risk. The Executive Gate Summary plus the relevant
+phase section is the minimum required reading path. Phases 1 through 10 are
+Owner-approved; v0.7 development implementation and acceptance are complete.
+Formal release work and any v0.8 implementation require separate Owner
+authorization.
 
 ## 1. Current-state evidence
 
@@ -1158,7 +1160,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` | Recovery Gate approved and PR #40 squash-merged as `d8194df`; full Phase 7 is in `origin/main` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` | Gate implementation `47d413b`; evidence `00d724a`; PR #41 squash-merged as `01cfe8c26324708b806d7cd1f946adbbea0306f2` |
 | 9 | Team Role to Employee mapping | `OWNER_APPROVED` | Implementation `9bb56fc`; security Gate `bc66781`; reviewed Head `0739329`; PR #42 squash-merged as `36987d92291c2781bfa3b997bdaab8002bd9c019` |
-| 10 | Evals, Docker, docs, and v0.7 release closeout | `COMPLETE_WAITING_FOR_OWNER` | Plan start `9a6bb72`; implementation `b16ac00`; Push CI `30423367130` green; final evidence Head/CI recorded in Draft PR |
+| 10 | Evals, Docker, docs, and v0.7 release closeout | `OWNER_APPROVED` | Owner approval based on reviewed Head `d91740c27a567711e6e6779239a1ca02f9282df9`; implementation `b16ac00`; CI cleanup Gate `ad1159e`; final evidence `d91740c` |
 
 ### Phase 1: Employee Domain and ADR
 
@@ -2984,7 +2986,8 @@ Phase 9 hidden-Session and wire-migration Gate revision evidence
 
 ### Phase 10: Evals, Docker, docs, and v0.7 release closeout
 
-Status: `COMPLETE_WAITING_FOR_OWNER`. Clean branch
+Status: `OWNER_APPROVED`. Owner approval is based on reviewed Head
+`d91740c27a567711e6e6779239a1ca02f9282df9`. Clean branch
 `agent/electronic-employees-v0.7-phase10` was created directly from
 `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`; this is also its
 merge-base. Phases 1–9 are the final merged implementation baseline.
@@ -3154,6 +3157,18 @@ Phase 10 implementation and acceptance evidence (2026-07-29):
   - no Graphify/CodeGraph/browser/test output, build artifact, or protected
     untracked user file is committed.
 
+Phase 10 Owner approval ledger (2026-07-29):
+
+- Owner approval is based on reviewed Head
+  `d91740c27a567711e6e6779239a1ca02f9282df9`.
+- Phases 1 through 10 are `OWNER_APPROVED`; GoHermit v0.7 development
+  implementation and acceptance are complete.
+- The version remains `0.7.0-dev`.
+- A formal tag, GitHub Release, deployment, image push, public package, or
+  publication remains unauthorized.
+- Any v0.8 work must begin with an independent implementation plan and wait for
+  a new Owner Gate.
+
 ## 22. Non-goals
 
 v0.7 does not implement:
@@ -3271,8 +3286,9 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-Phases 1 through 9 are Owner-approved and merged. Phase 10 implementation and
-acceptance are complete and awaiting Owner approval; no new product capability
-was added.
+Phases 1 through 10 are Owner-approved. v0.7 development implementation and
+acceptance are complete; no new product capability was added during closeout.
+The version remains `0.7.0-dev`, and formal release, tag, deployment,
+publication, and all v0.8 work remain separately gated.
 
-STATUS: WAITING_FOR_PHASE_10_APPROVAL
+STATUS: V0.7_DEVELOPMENT_COMPLETE_AWAITING_RELEASE_AUTHORIZATION
