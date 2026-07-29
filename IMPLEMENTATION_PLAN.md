@@ -18,11 +18,14 @@
   `origin/main@d8194df88c474d43d0576e26d61d304df74ecefb`.
 - Phase 8: `OWNER_APPROVED`; squash-merged through PR #41 into
   `origin/main@01cfe8c26324708b806d7cd1f946adbbea0306f2`.
-- Phase 9: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` on clean branch
-  `agent/electronic-employees-v0.7-phase9`.
-- Phase 10 and every later product-code change remain blocked.
-- Required terminal status:
-  `WAITING_FOR_PHASE_9_APPROVAL`.
+- Phase 9: `OWNER_APPROVED`; security Gate Head
+  `0739329024adeb38fb703cda9d51747ea9910d7d` squash-merged through PR #42
+  into `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`.
+- Phase 10: `IN_PROGRESS` on clean branch
+  `agent/electronic-employees-v0.7-phase10`, merge-base
+  `36987d92291c2781bfa3b997bdaab8002bd9c019`.
+- Required terminal status after Phase 10 delivery:
+  `WAITING_FOR_PHASE_10_APPROVAL`.
 
 ### Fixed invariants
 
@@ -73,27 +76,29 @@
 | 6 | Runtime Preparation | `OWNER_APPROVED` |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` |
-| 9 | Team Role to Employee mapping | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` |
-| 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` |
+| 9 | Team Role to Employee mapping | `OWNER_APPROVED` |
+| 10 | Evals, Docker, docs, and v0.7 release closeout | `IN_PROGRESS` |
 
 ### Current phase scope
 
-- Phases 1 through 8 are Owner-approved and closed to further implementation.
-- Phase 9 Team Role to Employee mapping is the only authorized implementation
-  scope.
+- Phases 1 through 9 are Owner-approved, merged, and closed to further
+  implementation.
+- Phase 10 cross-module evals, Docker/persistence acceptance, v0.7
+  documentation, AI handoff, version, changelog, and acceptance-blocking
+  minimal fixes are the only authorized scope.
 - Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery remains
   the only execution truth and kernel.
-- Keep Phase 10 and all later phases blocked until the next explicit Owner Gate.
+- Keep every post-v0.7 product capability blocked; Phase 10 may not add product
+  capability or publish a release.
 
 ### Current prohibited work
 
 - No second Run/Event/Plan/Approval/Verification/Tool/recovery state machine,
   Task SSE, scheduler, daemon, auto-start-next, automatic Memory acceptance,
-  multi-Workspace, cross-Employee read-only concurrency, Phase 10
-  implementation, version, or release change.
-- No Phase 10 implementation.
-- No Phase 9 PR merge, auto-merge, force push, or automatic Workspace
-  submission.
+  multi-Workspace, cross-Employee read-only concurrency, or new product
+  capability.
+- No Phase 10 PR merge, auto-merge, force push, tag, formal release, public
+  deployment, or package publication.
 - No modification, deletion, movement, staging, or cleanup of protected
   untracked user files.
 
@@ -115,25 +120,26 @@ git diff --check
 
 ### Next Gate
 
-Phase 10 may start only after the Owner explicitly approves Phase 9. Until
-then, stop after Phase 9 with:
+Phase 10 must stop after its implementation, validation, evidence update, push,
+and Draft PR creation with:
 
 ```text
-STATUS: WAITING_FOR_PHASE_9_APPROVAL
+STATUS: WAITING_FOR_PHASE_10_APPROVAL
 ```
 
 ---
 
-Plan status: `PHASE_9_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
-Baseline: `origin/main@01cfe8c26324708b806d7cd1f946adbbea0306f2`
-Feature branch: `agent/electronic-employees-v0.7-phase9`
+Plan status: `PHASE_10_IN_PROGRESS`
+Baseline: `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`
+Feature branch: `agent/electronic-employees-v0.7-phase10`
+Merge-base: `36987d92291c2781bfa3b997bdaab8002bd9c019`
 Last audited: 2026-07-29
 
 This file is the only source of truth for v0.7 phase status, scope, evidence,
 deviations, and remaining risk. The Executive Gate Summary plus the currently
 authorized phase section is the minimum required reading path. Phases 1 through
-8 are Owner-approved. Phase 9 is the only authorized implementation scope;
-Phase 10 remains blocked.
+9 are Owner-approved and merged. Phase 10 is the only authorized implementation
+scope.
 Each Owner approval authorizes exactly one phase.
 
 ## 1. Current-state evidence
@@ -1151,8 +1157,8 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 6 | Runtime Preparation | `OWNER_APPROVED` | Squash-merged through PR #39 into `origin/main@f213ac19`; implementation and final security Gate retained |
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` | Recovery Gate approved and PR #40 squash-merged as `d8194df`; full Phase 7 is in `origin/main` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` | Gate implementation `47d413b`; evidence `00d724a`; PR #41 squash-merged as `01cfe8c26324708b806d7cd1f946adbbea0306f2` |
-| 9 | Team Role to Employee mapping | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | Implementation `9bb56fc`; security Gate `bc66781`; Draft PR #42; Gate-Head Push/PR CI green |
-| 10 | Evals, Docker, docs, and v0.7 release closeout | `BLOCKED_BY_GATE` | Not started |
+| 9 | Team Role to Employee mapping | `OWNER_APPROVED` | Implementation `9bb56fc`; security Gate `bc66781`; reviewed Head `0739329`; PR #42 squash-merged as `36987d92291c2781bfa3b997bdaab8002bd9c019` |
+| 10 | Evals, Docker, docs, and v0.7 release closeout | `IN_PROGRESS` | Clean branch `agent/electronic-employees-v0.7-phase10`; merge-base `36987d92291c2781bfa3b997bdaab8002bd9c019` |
 
 ### Phase 1: Employee Domain and ADR
 
@@ -2717,8 +2723,9 @@ Phase 8 Web UI Gate revision evidence (2026-07-29):
 
 ### Phase 9: Team Role to Employee mapping
 
-Status: `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`. Phase 10 remains
-`BLOCKED_BY_GATE`.
+Status: `OWNER_APPROVED`; reviewed Head
+`0739329024adeb38fb703cda9d51747ea9910d7d` squash-merged through PR #42 as
+`36987d92291c2781bfa3b997bdaab8002bd9c019`.
 
 Independent value:
 
@@ -2977,6 +2984,11 @@ Phase 9 hidden-Session and wire-migration Gate revision evidence
 
 ### Phase 10: Evals, Docker, docs, and v0.7 release closeout
 
+Status: `IN_PROGRESS`. Clean branch
+`agent/electronic-employees-v0.7-phase10` was created directly from
+`origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`; this is also its
+merge-base. Phases 1–9 are the final merged implementation baseline.
+
 Independent value:
 
 - Proves cross-cutting isolation, permission, recovery, idempotency, browser,
@@ -3125,7 +3137,7 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-Phases 1 through 8 are Owner-approved and merged. Phase 9 is the only
-authorized implementation scope. Phase 10 remains blocked.
+Phases 1 through 9 are Owner-approved and merged. Phase 10 is the only
+authorized implementation scope and may not add new product capability.
 
-STATUS: WAITING_FOR_PHASE_9_APPROVAL
+STATUS: PHASE_10_IN_PROGRESS
