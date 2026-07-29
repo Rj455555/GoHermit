@@ -1,6 +1,8 @@
 import { PanelRightClose } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { SessionList } from '../components/SessionList'
+
 export function SessionSidebar({ onCollapse }: { onCollapse: () => void }) {
   const { t } = useTranslation()
   return (
@@ -17,7 +19,7 @@ export function SessionSidebar({ onCollapse }: { onCollapse: () => void }) {
           <PanelRightClose size={18} aria-hidden="true" />
         </button>
       </header>
-      <p>{t('session.placeholder')}</p>
+      <SessionList />
     </aside>
   )
 }

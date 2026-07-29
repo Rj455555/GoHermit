@@ -466,6 +466,206 @@ a:focus-visible {
   display: none;
 }
 
+.connectivity-banner {
+  position: fixed;
+  z-index: 40;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  max-width: min(520px, calc(100vw - 40px));
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #d8a500;
+  border-radius: 10px;
+  background: #fff8d8;
+  box-shadow: 0 8px 24px rgb(22 31 43 / 14%);
+}
+
+.feature-page {
+  display: grid;
+  gap: 20px;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.projection-card,
+.metric-grid > article {
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+
+.projection-card > :first-child,
+.metric-grid > article > :first-child {
+  margin-top: 0;
+}
+
+.projection-card > :last-child {
+  margin-bottom: 0;
+}
+
+.metric-grid,
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.metric-grid > article {
+  display: grid;
+  gap: 8px;
+}
+
+.metric-grid strong {
+  overflow-wrap: anywhere;
+  font-size: 1.35rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.form-grid h2,
+.form-grid .button {
+  grid-column: 1 / -1;
+}
+
+.form-grid label,
+.inline-form label,
+.composer label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  font: inherit;
+}
+
+textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.inline-form,
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+
+.inline-form label {
+  flex: 1 1 180px;
+}
+
+.provider-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.provider-card h2,
+.provider-card p {
+  margin: 0;
+}
+
+.fact-list,
+.session-list,
+.message-timeline,
+.approval-card {
+  display: grid;
+  gap: 10px;
+}
+
+.fact-list {
+  padding: 0;
+  list-style: none;
+}
+
+.fact-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-new-link {
+  display: flex;
+  margin: 10px 0;
+  text-decoration: none;
+}
+
+.session-list__item {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.session-list__item:hover,
+.session-list__item.is-active {
+  border-color: var(--color-border);
+  background: var(--color-accent-soft);
+}
+
+.session-list__item span,
+.session-list__item time {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.message {
+  max-width: 82%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--color-surface-subtle);
+  overflow-wrap: anywhere;
+}
+
+.message--user {
+  justify-self: end;
+  background: var(--color-accent-soft);
+}
+
+.message p {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+}
+
+.approval-card {
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.stale-notice {
+  color: #795700;
+}
+
+.composer small {
+  display: block;
+  margin: 8px 0;
+  color: var(--color-text-muted);
+}
+
 @media (max-width: 900px) {
   body {
     overflow-x: hidden;
@@ -525,6 +725,10 @@ a:focus-visible {
 
   .page-header {
     display: block;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
   }
 }
 

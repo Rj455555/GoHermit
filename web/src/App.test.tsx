@@ -3,32 +3,39 @@ import { describe, expect, it } from 'vitest'
 
 import { renderApp } from './test/renderApp'
 
-const declaredRoutes = [
-  ['/dashboard', '仪表盘'],
+const placeholderRoutes = [
   ['/employees', '电子员工'],
   ['/employees/employee-1', '电子员工'],
   ['/tasks', '任务'],
   ['/tasks/task-1', '任务'],
-  ['/agent', '智能体'],
-  ['/agent/sessions/session-1', '智能体'],
   ['/loops', '工作流'],
   ['/loops/loop-1', '工作流'],
   ['/loops/loop-1/invocations/invocation-1', '工作流'],
-  ['/settings', '设置'],
 ] as const
 
-describe('Phase 2 routes', () => {
-  it.each(declaredRoutes)('renders the localized placeholder for %s', (path, title) => {
+describe('declared React routes', () => {
+  it.each(placeholderRoutes)('retains the Phase 4 placeholder for %s', (path, title) => {
     renderApp(path)
 
     expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument()
     expect(screen.getByTestId('placeholder-page')).toBeInTheDocument()
   })
 
+  it.each(['/dashboard', '/agent', '/agent/sessions/session-1', '/settings'])(
+    'mounts the Phase 3 projection route %s',
+    (path) => {
+      renderApp(path)
+
+      expect(screen.getAllByRole('status').length).toBeGreaterThan(0)
+      expect(screen.queryByTestId('placeholder-page')).not.toBeInTheDocument()
+    },
+  )
+
   it('redirects the root route to the dashboard', async () => {
     renderApp('/')
 
-    expect(await screen.findByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
+    expect((await screen.findAllByRole('status')).length).toBeGreaterThan(0)
+    expect(screen.getByRole('link', { name: '仪表盘' })).toHaveAttribute('aria-current', 'page')
   })
 
   it('renders a localized Not Found page for an unknown React route', () => {

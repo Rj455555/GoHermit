@@ -9,22 +9,12 @@ test('200% zoom keeps controls accessible and shell copy is clean', async ({ pag
   const text = await page.locator('body').innerText()
   expect(text).not.toContain('undefined')
   expect(text).not.toContain('V0.6')
-  expect(text).not.toMatch(/\b(?:navigation|routes|actions)\.[a-zA-Z.]+\b/)
+  expect(text).not.toMatch(/\b(?:navigation|routes|actions|connectivity)\.[a-zA-Z.]+\b/)
 })
 
-test('React test server is independent from business APIs and Session SSE', async ({
-  page,
-  request,
-}) => {
-  const businessRequests: string[] = []
-  page.on('request', (entry) => {
-    if (entry.url().includes('/api/') || entry.url().includes('/events')) {
-      businessRequests.push(entry.url())
-    }
-  })
-  await page.goto('/agent/sessions/session-1')
-  await expect(page.getByTestId('placeholder-page')).toBeVisible()
-  expect(businessRequests).toEqual([])
-  expect((await request.get('/api/health')).status()).toBe(404)
-  expect((await request.get('/api/sessions/session-1/events')).status()).toBe(404)
+test('React test server exposes only the Phase 3 fixture API surface', async ({ request }) => {
+  expect((await request.get('/api/health')).status()).toBe(200)
+  expect((await request.get('/api/sessions/session-1')).status()).toBe(200)
+  expect((await request.get('/api/run')).status()).toBe(404)
+  expect((await request.get('/api/unknown')).status()).toBe(404)
 })

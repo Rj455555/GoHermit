@@ -4,9 +4,11 @@ import { afterEach, beforeEach, vi } from 'vitest'
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)))
   localStorage.clear()
   document.documentElement.lang = ''
   document.title = ''

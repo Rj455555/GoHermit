@@ -18,7 +18,7 @@ describe('i18n contract', () => {
     localStorage.setItem('gohermit.ui.locale', 'fr-FR')
     renderApp('/settings')
 
-    expect(screen.getByRole('heading', { name: '设置' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '设置' })).toHaveAttribute('aria-current', 'page')
     expect(localStorage.getItem('gohermit.ui.locale')).toBeNull()
   })
 

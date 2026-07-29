@@ -10,17 +10,33 @@ import { useTranslation } from 'react-i18next'
 import { useLocation } from 'react-router-dom'
 
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import {
+  ConnectivityBanner,
+  ConnectivityProvider,
+} from '../components/ConnectivityProvider'
+import { MobileSessionDrawer } from '../components/MobileSessionDrawer'
 import { ToastRegion } from '../components/ToastRegion'
+import { AgentDataProvider } from '../features/agent/AgentDataContext'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { getRouteTitleKey, isAgentRoute } from '../routes/routeMeta'
 import { useUI } from '../state/UIContext'
 import { NavigationRail } from './NavigationRail'
-import { SessionDrawer } from './SessionDrawer'
 import { SessionSidebar } from './SessionSidebar'
 
 const MOBILE_QUERY = '(max-width: 900px)'
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  return (
+    <ConnectivityProvider>
+      <AgentDataProvider active={isAgentRoute(location.pathname)}>
+        <AppShellFrame>{children}</AppShellFrame>
+      </AgentDataProvider>
+    </ConnectivityProvider>
+  )
+}
+
+function AppShellFrame({ children }: { children: ReactNode }) {
   const { t } = useTranslation()
   const location = useLocation()
   const { state, actions } = useUI()
@@ -71,6 +87,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         inert={shellIsolated}
       >
         <NavigationRail />
+        <ConnectivityBanner />
         <div className="app-shell__workspace">
           {agentRoute && mobile ? (
             <div className="mobile-session-toolbar">
@@ -105,7 +122,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           ) : null}
         </div>
       </div>
-      <SessionDrawer
+      <MobileSessionDrawer
         open={drawerOpen}
         onClose={closeDrawer}
         returnFocus={drawerTriggerRef}

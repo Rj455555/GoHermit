@@ -64,8 +64,8 @@ describe('desktop shell preferences', () => {
     const user = userEvent.setup()
     const app = renderApp('/agent/sessions/session-1')
 
-    expect(screen.getByRole('complementary', { name: '会话' })).toHaveTextContent(
-      '会话功能将在 Phase 3 接入',
+    expect(screen.getByRole('complementary', { name: '会话' })).toContainElement(
+      screen.getByRole('link', { name: '新建会话' }),
     )
     expect(screen.queryByText('任务功能将在 Phase 3 接入')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '收起会话栏' }))
@@ -165,7 +165,7 @@ describe('mobile Session drawer', () => {
     await user.click(trigger)
     const drawer = screen.getByRole('dialog', { name: '会话' })
     const close = screen.getByRole('button', { name: '关闭会话抽屉' })
-    const done = screen.getByRole('button', { name: '完成' })
+    const done = screen.getByRole('link', { name: '新建会话' })
     expect(drawer).toBeInTheDocument()
     expect(close).toHaveFocus()
     expect(screen.getByTestId('shell-background')).toHaveAttribute('inert')

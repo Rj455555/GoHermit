@@ -70,7 +70,7 @@ test('mobile Session drawer traps focus, closes safely, and has no horizontal ov
   await expect(page.getByRole('dialog', { name: '会话' })).toBeVisible()
   await expect(page.getByRole('button', { name: '关闭会话抽屉' })).toBeFocused()
   await page.keyboard.press('Shift+Tab')
-  await expect(page.getByRole('button', { name: '完成' })).toBeFocused()
+  await expect(page.locator('.session-list__item').last()).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog', { name: '会话' })).toHaveCount(0)
   await expect(trigger).toBeFocused()
