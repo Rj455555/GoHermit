@@ -13,9 +13,10 @@
 - Working branch: `agent/react-workbench-i18n`, created from and currently at the fetched baseline.
 - Existing tracked-worktree changes: none before this plan.
 - Existing protected untracked files: `.claude/*`, `.cursor/mcp.json`, `.gemini/settings.json`, `.mcp.json`, `.codegraph/.gitignore`, multiple untracked files below `docs/`, and persistent `sandbox/.gohermit/**` records. They remain unmodified and unstaged. The post-switch untracked path-list SHA-256 was `530153626b098db04ebade3e1ff76660b58d7d6a0243b4b060b986f7a533b223`.
-- CodeGraph: a `.codegraph/` directory exists, but the `codegraph` executable is unavailable both in the non-interactive SSH shell and the login shell. The audit therefore fell back to tracked-only `git show`/`git grep`; the index was not initialized, changed, or upgraded.
+- CodeGraph: a `.codegraph/` directory exists and the executable is available at `/Users/yuanxin/.local/bin/codegraph` (version 1.4.1 during this Gate). The earlier bare `codegraph` lookup failed because the non-interactive SSH `PATH` did not include `/Users/yuanxin/.local/bin`; it did not mean CodeGraph was absent. This revision re-audited Session SSE ownership and static routing with `/Users/yuanxin/.local/bin/codegraph explore "<question>"`. Future code audits must use that absolute path before grep/file reads. The index was not initialized, rebuilt, changed, or upgraded.
 - Baseline verification: `/opt/homebrew/bin/go test ./internal/web -count=1` passed in 1.670s.
-- Environment note: Go exists at `/opt/homebrew/bin/go` (`go` is not on the SSH `PATH`); `node`, `npm`, and `pnpm` are not currently available through SSH. Phase 1 must resolve the Node 22 + Corepack/pnpm toolchain before frontend checks can run. The Gate does not install it.
+- Reapproval verification: the Markdown heading/fence/table/status structure check and `git diff --check` passed; `/opt/homebrew/bin/go test ./internal/web -count=1` passed again in 1.937s.
+- Environment note: Go exists at `/opt/homebrew/bin/go` (`go` is not on the SSH `PATH`); `node`, `npm`, and `pnpm` are not currently available through SSH. If Phase 1 is approved, its first preflight is the bounded Homebrew Node 22 + Corepack + pnpm 11.9.0 procedure in Section 4.5. This Gate does not install or change that toolchain.
 
 This Gate creates only `REACT_IMPLEMENTATION_PLAN.md`. It does not change Go, HTML, CSS, JavaScript, tests, CI, Docker, documentation, generated assets, schemas, or persisted data.
 
@@ -36,7 +37,7 @@ This Gate creates only `REACT_IMPLEMENTATION_PLAN.md`. It does not change Go, HT
 
 | Area | Current implementation | Migration consequence |
 |---|---|---|
-| Embed declaration | `internal/web/server.go`: `//go:embed assets/*` into `embed.FS` | React output must remain below `internal/web/assets/` so a standalone Go binary contains it. |
+| Embed declaration | `internal/web/server.go`: `//go:embed assets/*` into `embed.FS` | React output remains below `internal/web/assets/`. Phase 1 first proves whether this existing pattern already recursively embeds `dist`; it must not change the declaration merely for form. |
 | Embedded root | `fs.Sub(assets, "assets")` | Final root becomes `fs.Sub(assets, "assets/dist")`. |
 | Static handler | `http.FileServer(http.FS(root))` | Replace with a bounded SPA handler after parity. |
 | Static route | `mux.Handle("GET /", s.static)` after all explicit API routes | Unknown GET paths currently reach the file server and deep routes return 404. The new handler must explicitly reject `/api` and `/api/*` before any SPA fallback. |
@@ -44,7 +45,7 @@ This Gate creates only `REACT_IMPLEMENTATION_PLAN.md`. It does not change Go, HT
 | Legacy assets | `index.html`, `styles.css`, `app.js`, `employees.js`, `tasks.js`, `loops.js` | Keep until React parity and cutover; remove in Phase 5. |
 | Entrypoints | `cmd/hermit-web/main.go` → `internal/web.New(...)` → `Server.Handler()` | No Node server is added to runtime. |
 
-The final embed declaration will include only the committed Vite output directory, using a directory pattern such as `//go:embed assets/dist` and `fs.Sub(assets, "assets/dist")`. The exact tested form will be chosen in Phase 1 based on Go embed behavior, but it must recursively include hashed assets and `index.html`.
+At final cutover, `fs.Sub(assets, "assets/dist")` becomes the served root. The embed declaration changes only if a Phase 1 test proves the current `//go:embed assets/*` pattern does not recursively include `dist/index.html` and its hashed assets. Phase 1 does not change `Server.New()` away from the legacy `assets/` static root.
 
 ### 2.2 Current pages and interaction surfaces
 
@@ -178,7 +179,7 @@ Current browser consumers:
 | Consumer | Isolation/recovery today | Gap to close |
 |---|---|---|
 | Agent (`app.js`) | one EventSource per selected Session; in-memory `lastSequence`; closes on Session switch | sequence resets to zero on reload; connection logic is duplicated and not StrictMode-aware |
-| Task (`tasks.js`) | key is Task + Session; filters mismatched Run IDs; persists sequence; caps in-memory events at 200; closes on navigation | logic is feature-specific; timeline restoration and StrictMode behavior need explicit tests |
+| Task (`tasks.js`) | key is Task + Session; filters mismatched Run IDs; persists sequence; caps in-memory events at 200; closes on navigation | React must move connection/sequence ownership to Session while retaining Run filtering per subscriber |
 | Loop (`loops.js`) | key is Invocation; persists sequence; reloads bound Session/Invocation; caps runtime events at 100 | no explicit duplicate check or Run filter; logic is duplicated |
 
 The React implementation will continue to use Session SSE. It will not add Task SSE, Loop SSE, a browser Run state machine, or a browser recovery store.
@@ -203,7 +204,7 @@ New UI-only keys:
 | `gohermit.ui.locale` | `'zh-CN' \| 'en-US'`; default `zh-CN` |
 | `gohermit.ui.navigationCollapsed` | strict serialized boolean; default `false` |
 | `gohermit.ui.sessionSidebarCollapsed` | strict serialized boolean; default `false` |
-| `gohermit.ui.sseSequence.{sessionId}.{runIdOrSession}` | finite nonnegative safe integer only; high-water marker, never event content |
+| `gohermit.ui.sseSequence.{sessionId}` | finite nonnegative safe integer only; Session-owned high-water marker, never event content |
 
 Every localStorage read will treat the value as untrusted input, whitelist/parse it, and fall back safely. No API response, prompt, message, credentials, Tool data, or model output is persisted.
 
@@ -348,9 +349,12 @@ Pages compose data loading, feature actions, and layout. API parsing stays in `a
 | `/loops/:loopId` | fetch Definition/history |
 | `/loops/:loopId/invocations/:invocationId` | fetch Invocation and bound Session; restore timeline |
 | `/settings` | fetch Owner/Profile and provider status |
-| unmatched non-API route | React localized Not Found page; no silent redirect to a business resource |
+| declared route with a missing resource ID | Go returns `index.html`; React renders a localized resource Not Found without selecting a replacement |
+| unknown top-level path, invalid route shape, or extra path segment | Go returns HTTP 404; it does not send React HTML |
 
 Browser back/forward changes the actual selection. URL path/query is the navigation truth; localStorage is limited to the three UI preferences and an SSE high-water number. On a route ID mismatch/not-found, the page renders a localized recoverable `ErrorState` without selecting a different resource behind the Owner’s back.
+
+React Router may retain a catch-all Not Found component for client-side navigation and defense in depth, but the Go Handler promises `index.html` only for the declared route shapes above. It does not broadly fall back arbitrary non-API URLs to React.
 
 ### 3.4 State ownership
 
@@ -360,7 +364,7 @@ Browser back/forward changes the actual selection. URL path/query is the navigat
 | Locale, global navigation collapsed, Agent session sidebar collapsed, toast/dialog/connectivity presentation | React Context + Reducer; only the three approved preferences persist |
 | Form drafts and validation | local controlled component state; never persisted automatically |
 | Employee, Task, Session, Run, Loop, Plan, Approval, Verification, Tool, Artifact data | server APIs; reload after mutations/events |
-| SSE connection, in-memory event dedupe, sequence high-water mark | shared `useSessionEvents` registry keyed by Session + Run |
+| SSE connection, in-memory event dedupe, sequence high-water mark | shared `useSessionEvents` registry and persistence keyed only by Session; optional Run filters belong to individual subscribers |
 
 No Redux, Zustand, TanStack Query, or persistence framework is justified. Abortable effects plus small feature hooks are sufficient for the current single-owner/local-first surface.
 
@@ -382,22 +386,36 @@ Hand-written bounded validation helpers are preferred to adding a runtime schema
 
 ### 3.6 Session SSE hook
 
-`useSessionEvents(sessionId, runId, options)` will wrap a module-local connection registry:
+`useSessionEvents(sessionId, options)` will subscribe to a module-local connection registry whose ownership exactly matches the server:
 
-- registry key: `{sessionId, runId || "session"}`;
-- one live EventSource per key, shared by subscribers;
-- reference counting and deferred cleanup so React StrictMode mount/cleanup/remount leaves at most one persistent connection;
-- explicit close on Session/Run key change, route exit, and final unsubscribe;
-- URL uses `after=<lastSequence>` for reconnect; native `Last-Event-ID` remains supported;
-- accept only known event types and decoded objects;
-- require matching Session context and, when both are present, matching Run ID;
-- drop non-safe/zero/out-of-order/duplicate sequences;
-- preserve existing rendered data on disconnect and expose a recoverable connection status;
+- EventSource registry key: `sessionId`;
+- sequence storage key: `gohermit.ui.sseSequence.{sessionId}`;
+- exactly one underlying EventSource per Session, regardless of how many Runs or Agent/Task/Loop consumers observe it;
+- every subscriber may provide an optional Run ID filter; the filter changes only that subscriber's projection and never the connection, sequence, replay, or reconnect boundary;
+- events advance the shared Session high-water before per-subscriber Run filtering, so an event ignored by one projection cannot cause replay or connection divergence;
+- reference counting and deferred cleanup keep the connection alive while any subscriber remains;
+- switching a consumer to another Session releases its old subscription; the underlying old Session connection closes only when its final subscriber exits;
+- React StrictMode mount → cleanup → remount reuses/cancels deferred disposal and leaves one persistent connection with a correct subscriber count;
+- known event types and decoded objects only; event `session_id`, when present, must match the registry Session;
+- each subscriber receives only events accepted by its optional Run filter, including a documented choice for Session-scoped events with no Run ID;
+- drop non-safe, negative, non-integer, out-of-order, or duplicate sequences;
+- preserve existing authoritative projections on disconnect and expose recoverable connection status;
 - cap in-memory event summaries; do not store event bodies;
-- persist only the numeric high-water mark;
-- refresh the authoritative Session/Task/Invocation projection on checkpoint/terminal/approval/plan events.
+- persist only the numeric Session high-water;
+- refresh authoritative Session/Task/Invocation projections on checkpoint/terminal/approval/plan events instead of building a browser execution state machine.
 
-For a newly mounted timeline with no in-memory history, the hook will replay server history from `after=0` to reconstruct bounded visible activity, using the saved high-water mark for duplicate/catch-up accounting. Subsequent reconnections use the current sequence. This avoids persisting messages or tool data while preserving refresh behavior.
+Initial load and reconnect contract:
+
+1. Fetch and decode `GET /api/sessions/{id}` first. Its Session, Runs, Messages, Plan, Tool, and Verification fields are the authoritative render projection.
+2. Read `gohermit.ui.sseSequence.{sessionId}` as untrusted input.
+3. Accept it only if it is a finite safe nonnegative integer and does not exceed a frontier the server can validate for that Session; otherwise remove/reset it to the safe value `0`. No Run frontier is consulted.
+4. Open the shared Session EventSource with `after=<savedSequence>` when the validated value exists; otherwise use `after=0`.
+5. Advance and persist the high-water only from valid monotonic events belonging to that Session.
+6. Native `Last-Event-ID` remains supported, and an explicit reconnect uses the current Session high-water.
+7. A normal refresh with a valid saved sequence does not unconditionally replay from `after=0`.
+8. SSE events provide incremental display hints and trigger authoritative projection refreshes; they never become a second Session/Run/Task/Loop state store.
+
+CodeGraph confirms that the current public Session DTO does not expose a separate event-frontier field; the Store’s sequence map is internal. Before implementing the hook, Phase 3 must prove a server-verifiable frontier mechanism within the existing Session/SSE contract. It must not invent a Run-owned sequence, silently trust an ahead-of-server value, or change an API/domain schema without a new Owner gate. If the current contract cannot verify an overshoot safely, Phase 3 stops and reports that blocker. When the server can identify a saved value as invalid or beyond its Session frontier, the client removes it and reconnects from `0`; this recovery behavior must be bounded and tested.
 
 ### 3.7 i18n
 
@@ -461,22 +479,24 @@ The requested recommended strategy is adopted:
 4. CI runs a clean pnpm install and rebuild, then fails if `git diff --exit-code -- internal/web/assets/dist` reports drift.
 5. A source change and its generated artifact are committed together.
 6. Sourcemaps are disabled for production unless the Owner separately approves their exposure.
+7. Production artifacts must not embed build timestamps, absolute workspace paths, host-specific paths, random build IDs, or other nondeterministic metadata. Two builds from identical source, lockfile, tool versions, and configuration must produce byte-identical `dist` content.
 
 ### 4.2 Go SPA handler and security
 
 The final Go handler will:
 
 - serve existing files from the embedded `assets/dist` subtree with correct content types;
-- serve `index.html` for `/`, `/dashboard`, `/employees`, one-segment Employee detail, `/tasks`, one-segment Task detail, `/agent`, one-segment Session detail, `/loops`, approved Loop/Invocation detail shapes, and `/settings`;
+- serve `index.html` only for the declared React route shapes: `/`, `/dashboard`, `/employees`, `/employees/{employeeId}`, `/tasks`, `/tasks/{taskId}`, `/agent`, `/agent/sessions/{sessionId}`, `/loops`, `/loops/{loopId}`, `/loops/{loopId}/invocations/{invocationId}`, and `/settings`;
+- let React render a localized resource Not Found when a declared detail route shape is valid but its Employee, Task, Session, Loop, or Invocation does not exist;
+- return Go HTTP 404 for unknown top-level paths, invalid route shapes, extra path segments, and missing extension-bearing assets;
 - accept GET/HEAD only for static/SPA content;
 - return not found (never HTML) for `/api`, `/api/`, and every unmatched `/api/*` path;
-- return not found for malformed frontend route shapes and missing asset-like paths;
 - reject traversal/canonicalization anomalies and never concatenate an unchecked URL path to a filesystem path;
 - preserve explicit API route precedence and existing security headers;
 - set `index.html` to no-cache and allow hashed assets to use immutable caching;
-- include Go tests for all valid deep links, HEAD, hashed assets, malformed paths, traversal attempts, unknown API paths, and content types.
+- include Go tests for every declared deep-link shape, missing resources inside valid shapes, unknown top-level paths, extra segments, HEAD, hashed assets, extension-bearing misses, malformed/encoded paths, traversal attempts, unknown API paths, and content types.
 
-React’s Not Found page handles validly served but unknown application routes only if the handler intentionally uses a broad non-API fallback. The preferred implementation is an explicit legal-route matcher so typos and asset misses do not become misleading HTML.
+React Router retains a catch-all Not Found component for in-app navigation and defense in depth, but Go uses the explicit route-shape matcher above and makes no broad arbitrary-URL fallback promise.
 
 ### 4.3 Docker multi-stage build
 
@@ -506,6 +526,26 @@ clean clone
 ```
 
 The request’s generic `npm ci`/`npm run ...` checklist is implemented with the repository’s existing pnpm policy (`pnpm install --frozen-lockfile` and `pnpm ...`). Adding a `package-lock.json` solely to run `npm ci` would violate the single-lockfile requirement.
+
+### 4.5 Phase 1 Node/pnpm preflight (plan only; not executed in this Gate)
+
+After explicit Phase 1 approval, use:
+
+```text
+Homebrew Node 22
+Corepack
+pnpm 11.9.0
+```
+
+Procedure and stop conditions:
+
+1. Resolve `/opt/homebrew/bin/brew` and use it preferentially. If it is absent or unusable, stop and report; do not choose another installer.
+2. Install/activate Homebrew Node 22 only through Homebrew. Do not use `curl | sh`.
+3. Use Node’s Corepack to prepare/activate the repository-declared `pnpm@11.9.0`. Do not run `npm install -g pnpm`.
+4. Do not create `package-lock.json` or any second lockfile.
+5. Explicitly configure the non-interactive SSH `PATH` for the resolved Homebrew Node, Corepack, and pnpm binary directories rather than assuming login-shell initialization.
+6. Record the resolved absolute paths and real versions for Node, Corepack, and pnpm before changing frontend manifests.
+7. If any Homebrew installation or Corepack activation step fails, stop Phase 1 and report the failure. Do not fall back to nvm, fnm, Volta, a downloaded installer, or another package manager without a new Owner decision.
 
 ## 5. Dependency decision
 
@@ -540,23 +580,30 @@ Authorized files after approval:
 - root `package.json`, `pnpm-lock.yaml`, new `pnpm-workspace.yaml`;
 - new `web/package.json`, TypeScript/Vite/ESLint/Vitest config, minimal React entry/tests/styles;
 - new committed `internal/web/assets/dist/**`;
-- narrowly scoped `internal/web/server.go` and `internal/web/server_test.go` embed/asset preparation;
+- `internal/web/server_test.go` for direct embedded-FS assertions; `internal/web/server.go` only if a failing test proves the existing embed declaration must change;
 - `.gitignore`/`.dockerignore` only as required for caches while explicitly retaining committed `dist`.
 
 Implementation:
 
+- complete the Section 4.5 Homebrew/Corepack/pnpm preflight and stop immediately on its stated failure conditions;
 - establish strict TypeScript and all required scripts;
 - build a minimal React bootstrap artifact;
-- embed/test the Vite artifact without switching the served production root away from the legacy UI;
-- document the temporary cutover flag/handler boundary in code comments/tests, not as a user-facing second application.
+- let Go Embed contain React `dist`, while `Server.New()` continues to use the legacy `assets/` subtree as its default static root;
+- do not switch the production service entrypoint and do not add a hidden, preview, alternate, or otherwise user-accessible React URL;
+- test the package-level embedded FS directly to prove `dist/index.html` and its referenced content-hashed JS/CSS assets are embedded;
+- keep the formal `fs.Sub(assets, "assets/dist")` serving-root switch exclusively in Phase 4;
+- retain the existing `//go:embed assets/*` declaration when its direct embedded-FS test proves recursive inclusion;
+- make identical-source Vite builds byte-identical, with no timestamp, absolute path, host path, random build ID, or similar nondeterministic output.
 
 Acceptance:
 
 - one pnpm lockfile only;
+- absolute Node/Corepack/pnpm paths and real versions are recorded; no alternative installer or global npm pnpm install was used;
 - `pnpm install --frozen-lockfile`, typecheck, lint, unit test, build pass;
-- rebuilt `dist` is clean;
+- two clean builds from identical source/tool inputs produce identical `dist` digests and rebuilt `dist` is clean;
 - `go test ./internal/web -count=1`, existing Go suite/builds, and legacy Playwright remain green;
-- Go binary contains the React artifact, while the existing UI is still the served default;
+- embedded-FS tests prove React `dist/index.html` plus hashed assets are present;
+- `Server.New()` and `GET /` still serve the legacy UI; no HTTP path exposes the React artifact;
 - only Phase 1 files changed; protected untracked files remain untouched.
 
 Stop: commit, push, report SHA/tests/artifacts/risks/Draft PR state, then wait.
@@ -613,7 +660,13 @@ Acceptance:
 - API method/path/JSON fixtures match current Go contracts;
 - settings never expose/log/persist credentials;
 - Agent Session deep link and refresh restore server data and timeline;
-- SSE after-sequence reconnect, dedupe, Run isolation, Session switch cleanup, disconnect preservation, and one persistent StrictMode connection pass;
+- the EventSource registry and persisted sequence are keyed only by Session ID;
+- one Session with two different Run-filtered subscribers creates exactly one underlying EventSource, while each subscriber receives only its selected Run projection;
+- removing one subscriber does not close the shared Session connection while another subscriber remains; the final unsubscribe closes it;
+- Session switching releases the old subscription and closes the old connection only when its reference count reaches zero;
+- a validated high-water resumes with `after=<sessionSequence>`; a normal refresh does not unconditionally use `after=0`;
+- corrupt, negative, fractional, unsafe, or beyond-server-frontier sequence values are discarded and recover from a safe value;
+- dedupe, disconnect preservation, and StrictMode mount/cleanup/remount connection counts pass without creating multiple EventSources for different Runs in the same Session;
 - review-first Plan and Approval suites remain behaviorally equivalent;
 - user/model/tool content is never translated.
 
@@ -642,8 +695,8 @@ Acceptance:
 - archived Employees are read-only;
 - impactful actions require confirmation;
 - Task and Loop timelines use Session SSE only;
-- root redirects to `/dashboard`; every legal deep link and refresh is 200;
-- unknown `/api/*` never returns React HTML; traversal/asset misses fail closed;
+- root redirects to `/dashboard`; every declared React route shape returns `index.html` on direct load/refresh, and missing resources inside valid detail shapes render React’s localized resource Not Found;
+- unknown top-level paths, invalid shapes, extra segments, extension-bearing asset misses, unknown `/api/*`, traversal, and encoded-path anomalies return Go/API 404 and never React HTML;
 - browser back/forward restores selections;
 - full React unit tests and Playwright pass, with critical SSE/navigation/mutation paths repeated 10 times;
 - existing backend semantics and DTOs remain unchanged.
@@ -732,11 +785,24 @@ Required new browser coverage:
 7. mobile drawer overlay/Escape/focus trap/focus return and desktop-preference restoration;
 8. Employee create/detail/tabs/readiness/lifecycle/archived read-only;
 9. Task create/filter/detail/Start/Cancel/Resume/Approval/Verification;
-10. Session SSE history, after-sequence reconnect, dedupe, Task/Session/Run isolation, disconnect preservation, cleanup, and StrictMode;
+10. Session-owned SSE registry, after-sequence reconnect, dedupe, consumer Run filtering, disconnect preservation, reference-counted cleanup, and StrictMode;
 11. Loop create/revise/import/Dry Run/Team mapping/start/cancel/refresh timeline;
 12. Settings Owner/Facts/API-key deletion/Codex login status;
 13. Error Boundary retry and shell survival;
-14. legal SPA deep links return HTML while unknown `/api/*`, malformed routes, path traversal, and missing assets do not.
+14. every declared SPA route shape returns HTML; a missing resource inside a valid detail shape renders localized React Not Found; unknown top-level paths, invalid shapes, extra segments, unknown `/api/*`, traversal/encoded anomalies, and missing extension-bearing assets return Go/API 404.
+
+Required SSE connection/sequence tests:
+
+1. one Session with two subscribers filtering two different Run IDs creates one underlying EventSource;
+2. each subscriber receives only its requested Run projection, while Session-scoped events follow the documented subscriber rule;
+3. unsubscribing one consumer does not close the connection still used by another;
+4. the final unsubscribe closes the underlying connection and a Session switch releases the old Session subscription;
+5. high-water persistence and `after` continuation are keyed only by Session;
+6. refresh loads the authoritative Session projection first and, with a valid saved sequence, does not unconditionally replay all events from `after=0`;
+7. missing sequence safely uses `after=0`;
+8. corrupt text, negative, fractional, unsafe, and beyond-server-frontier sequences are removed/reset and recover from a safe value;
+9. StrictMode mount → cleanup → remount maintains correct reference and connection counts at every step;
+10. two Runs in one Session never create two EventSources, and Run filter changes never reset the shared Session sequence.
 
 ## 8. Documentation deliverable
 
@@ -772,16 +838,18 @@ Required new browser coverage:
 |---|---|
 | Legacy DOM behavior is broad and partly implicit | preserve existing Playwright suites/test IDs; migrate feature by feature; cut over only after parity |
 | Default Chinese breaks English accessible-name assertions | make locale explicit for legacy English contract tests; add independent default-Chinese suites |
-| StrictMode duplicates effects/SSE | abortable loaders, stable dependencies, connection registry, active-connection tests |
-| Saved sequence skips visible history | replay server history for an empty timeline, keep only numeric high-water state, then reconnect after the live sequence |
-| SPA fallback masks API/asset errors or traversal | explicit API rejection, legal-route matcher, embedded-FS-only access, Go security tests |
+| Agent/Task/Loop or multiple Runs create duplicate SSE connections | key the registry and sequence only by Session, reference-count subscribers, apply Run filters after shared high-water advancement, and assert one underlying EventSource |
+| StrictMode corrupts SSE reference counts | deferred final disposal with remount cancellation plus connection/reference-count tests at each StrictMode lifecycle step |
+| Corrupt or ahead-of-server saved sequence loses incremental updates | decode as an untrusted safe nonnegative integer, validate against the Session frontier when server-verifiable, reset invalid/unverifiable values to `0`, and test every recovery case |
+| Refresh unnecessarily replays the full Session journal | load the authoritative Session projection first and use `after=<validatedSavedSequence>`; use `after=0` only when no safe saved value exists |
+| SPA fallback masks API/asset errors or traversal | return HTML only for declared route shapes; Go/API 404 unknown top-level paths, invalid shapes, extra segments, API misses, extension-bearing asset misses, traversal, and encoded anomalies |
 | Generated assets drift | commit `dist`, rebuild in CI, fail on diff |
-| Two frontend implementations linger | legacy remains served only until Phase 4; delete it in Phase 5; no alternate production URL |
-| Mac mini cannot currently run frontend commands over SSH | Phase 1 preflight installs/activates approved Node 22 + Corepack/pnpm or runs frontend verification in CI; report before product changes if unresolved |
+| Embedded React artifact becomes a hidden second UI before cutover | Phase 1 keeps `Server.New()` on legacy `assets/`, exposes no React URL, and tests `dist` through the embedded FS only; the serving-root switch is Phase 4 |
+| Mac mini cannot currently run frontend commands over SSH | after Phase 1 approval use only `/opt/homebrew/bin/brew` for Node 22 and Corepack for pnpm 11.9.0, explicitly set non-interactive PATH, and stop on failure |
 | Dependency expansion | use only the dependency table above; any addition requires evidence and Owner approval |
 
 ## 11. Approval gate
 
-No Phase 1 implementation has started.
+No Phase 1 implementation has started. This revision changes the Gate document only.
 
-`STATUS: WAITING_FOR_REACT_IMPLEMENTATION_PLAN_APPROVAL`
+`STATUS: WAITING_FOR_REACT_IMPLEMENTATION_PLAN_REAPPROVAL`
