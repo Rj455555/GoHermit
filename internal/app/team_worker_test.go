@@ -22,6 +22,7 @@ type teamProvider struct {
 	mu       sync.Mutex
 	calls    int
 	requests []model.GenerateRequest
+	response string
 }
 
 func (p *teamProvider) Generate(_ context.Context, request model.GenerateRequest) (model.GenerateResponse, error) {
@@ -29,7 +30,11 @@ func (p *teamProvider) Generate(_ context.Context, request model.GenerateRequest
 	p.calls++
 	p.requests = append(p.requests, model.GenerateRequest{Model: request.Model, Messages: append([]model.Message{}, request.Messages...)})
 	p.mu.Unlock()
-	return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: `{"summary":"inspected","evidence":["workspace"]}`}, FinishReason: "stop", Usage: model.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}}, nil
+	response := p.response
+	if response == "" {
+		response = `{"summary":"inspected","evidence":["workspace"]}`
+	}
+	return model.GenerateResponse{Message: model.Message{Role: model.RoleAssistant, Content: response}, FinishReason: "stop", Usage: model.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}}, nil
 }
 
 func (*teamProvider) Capabilities() model.Capabilities { return model.Capabilities{} }
@@ -421,4 +426,135 @@ func TestTeamWorkerRejectsProviderEchoOfPrivateMemory(t *testing.T) {
 	if handoffContainsPrivateMemory(team.Handoff{Summary: "public bounded result"}, memory) {
 		t.Fatal("public handoff was incorrectly rejected")
 	}
+}
+
+func TestTeamWorkerPrivateMemoryEchoPersistsOnlyInHiddenSession(t *testing.T) {
+	const sentinel = "PRIVATE_EMPLOYEE_MEMORY_PHASE9_SENTINEL"
+	root := t.TempDir()
+	store, err := session.NewStore(root, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := session.New("parent", root, "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent.ID = "parent-private-echo"
+	if err = store.Save(context.Background(), parent); err != nil {
+		t.Fatal(err)
+	}
+	provider := &teamProvider{
+		response: `{"summary":"PRIVATE_EMPLOYEE_MEMORY_PHASE9_SENTINEL","evidence":[]}`,
+	}
+	build := func(context.Context, string, string, RuntimeOptions) (*Runtime, error) {
+		manager, managerErr := contextmgr.New(contextmgr.Config{
+			MaxTokens: 4096, CompressionThreshold: .8,
+			HardLimitThreshold: .92, ReserveOutputTokens: 512,
+		})
+		if managerErr != nil {
+			return nil, managerErr
+		}
+		return &Runtime{Workspace: root, Store: store, Runner: &agent.Runner{
+			Provider: provider,
+			Executor: tool.Executor{
+				Registry: tool.NewRegistry(), DefaultTimeout: time.Second,
+			},
+			Context: manager, Store: store,
+			Config: agent.Config{MaxTurns: 2, Timeout: time.Minute, Model: "test"},
+		}}, nil
+	}
+	compact := employee.CompactSnapshot{
+		SchemaVersion: employee.CompactSnapshotSchemaVersion,
+		EmployeeID:    "employee-private", EmployeeRevision: 1, TaskID: "explore-private",
+		TaskSnapshotDigest: strings.Repeat("a", 64),
+		Identity: employee.CompactIdentity{
+			Name: "Private Employee", JobTitle: "Explorer", Charter: "Inspect bounded evidence.",
+		},
+		EffectivePolicy: employee.EffectivePolicy{AllowedCapabilities: []string{"read"}},
+		Budget: employee.BudgetPolicy{
+			MaxModelCalls: 2, MaxTokens: 1000, TimeoutSeconds: 60,
+		},
+		Project: employee.CompactProject{
+			BindingID: "project-private", WorkspaceFingerprint: strings.Repeat("b", 64),
+			ReadAllowed: true, WorkspaceSummary: "bounded workspace",
+		},
+		Skills: []employee.CompactSkill{}, Knowledge: []employee.CompactKnowledge{},
+		Memory: []employee.CompactMemory{{
+			FactID: "fact-private", Digest: strings.Repeat("c", 64),
+			Category: "preference", Value: sentinel, Provenance: `{"source":"owner"}`,
+		}},
+	}
+	if err = employee.SealCompactSnapshot(&compact); err != nil {
+		t.Fatal(err)
+	}
+	employeeAssignment := team.TeamEmployeeAssignment{
+		WorkItemID: "explore-private", Role: team.RoleExplorer,
+		EmployeeID: "employee-private", EmployeeRevision: 1,
+		EmployeeSnapshotDigest: strings.Repeat("a", 64),
+		ProjectBindingID:       "project-private", WorkspaceFingerprint: strings.Repeat("b", 64),
+		Company: "deepseek", Access: "deepseek", Model: "deepseek-chat",
+		AgentProfile: "explorer", EffectivePolicyDigest: strings.Repeat("d", 64),
+		ContextDigest: compact.Digest,
+	}
+	if err = team.SealTeamEmployeeAssignment(&employeeAssignment); err != nil {
+		t.Fatal(err)
+	}
+	assignmentCopy, compactCopy := employeeAssignment, compact
+	childID := "worker-private-echo"
+	worker := TeamWorker{
+		Workspace: root, ParentSessionID: parent.ID, ParentRunID: "parent-run",
+		ParentStore: store, Build: build,
+		WorkItemRuntimes: map[string]RoleRuntime{"explore-private": {
+			Selection: config.RuntimeSelection{
+				Company: "deepseek", Access: "deepseek",
+				Model: "deepseek-chat", Agent: "explorer",
+			},
+			EmployeeAssignment: &assignmentCopy, EmployeeContext: &compactCopy,
+		}},
+	}
+	result, err := worker.Execute(context.Background(), team.Assignment{
+		MissionID: "mission-private", Goal: "inspect",
+		WorkItem: team.WorkItem{
+			ID: "explore-private", Role: team.RoleExplorer, Title: "Explore",
+			Goal: "inspect", ExecutionSessionID: childID,
+		},
+		MaxTokens: 1000, MaxDuration: time.Minute, Employee: &assignmentCopy,
+	})
+	if err == nil || !strings.Contains(err.Error(), "private Employee Memory") {
+		t.Fatalf("result=%+v err=%v, want private-memory fail closed", result, err)
+	}
+	if strings.Contains(string(mustJSON(t, result.Handoff)), sentinel) {
+		t.Fatal("private Memory entered a public Handoff")
+	}
+	child, err := store.Load(context.Background(), childID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, err := store.Messages(childID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.Events(childID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]any{
+		"checkpoint": child, "messages": messages, "events": events,
+	} {
+		if !strings.Contains(string(mustJSON(t, value)), sentinel) {
+			t.Fatalf("%s did not prove the provider echo was persisted", name)
+		}
+	}
+	if !child.Hidden || provider.calls == 0 {
+		t.Fatalf("hidden=%t provider_calls=%d", child.Hidden, provider.calls)
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }

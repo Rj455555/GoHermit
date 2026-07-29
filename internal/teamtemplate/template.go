@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Rj455555/GoHermit/internal/owner"
 	"github.com/Rj455555/GoHermit/internal/storage"
@@ -51,6 +52,25 @@ type Template struct {
 	Default       RoleSelection            `json:"default"`
 	Roles         map[string]RoleSelection `json:"roles,omitempty"` // per-role overrides
 	UpdatedAt     time.Time                `json:"updated_at"`
+}
+
+// schema-v1 wire types deliberately do not contain employee_id. Keeping the
+// legacy decoder structurally separate prevents a document that claims v1
+// from smuggling v2-only identity into the migrated Template.
+type roleSelectionV1 struct {
+	Company       string `json:"company"`
+	Access        string `json:"access"`
+	Model         string `json:"model"`
+	MaxModelCalls int    `json:"max_model_calls,omitempty"`
+	MaxTokens     int    `json:"max_tokens,omitempty"`
+}
+
+type templateV1 struct {
+	SchemaVersion int                        `json:"schema_version"`
+	Name          string                     `json:"name"`
+	Default       roleSelectionV1            `json:"default"`
+	Roles         map[string]roleSelectionV1 `json:"roles,omitempty"`
+	UpdatedAt     time.Time                  `json:"updated_at"`
 }
 
 // allowedOverrides lists the roles a template may override. RoleOperator
@@ -330,6 +350,9 @@ func redactSelection(selection RoleSelection) RoleSelection {
 }
 
 func decodeTemplate(raw []byte) (Template, error) {
+	if !utf8.Valid(raw) {
+		return Template{}, errors.New("decode team template: invalid UTF-8")
+	}
 	var version struct {
 		SchemaVersion int `json:"schema_version"`
 	}
@@ -339,22 +362,49 @@ func decodeTemplate(raw []byte) (Template, error) {
 	if version.SchemaVersion != LegacySchemaV1 && version.SchemaVersion != SchemaVersion {
 		return Template{}, fmt.Errorf("unsupported team template version %d", version.SchemaVersion)
 	}
+	if version.SchemaVersion == LegacySchemaV1 {
+		legacy := templateV1{}
+		if err := decodeTemplateWire(raw, &legacy); err != nil {
+			return Template{}, err
+		}
+		template := Template{
+			SchemaVersion: SchemaVersion,
+			Name:          legacy.Name,
+			Default:       migrateV1Selection(legacy.Default),
+			UpdatedAt:     legacy.UpdatedAt,
+		}
+		if legacy.Roles != nil {
+			template.Roles = make(map[string]RoleSelection, len(legacy.Roles))
+			for role, selection := range legacy.Roles {
+				template.Roles[role] = migrateV1Selection(selection)
+			}
+		}
+		return template, nil
+	}
 	template := Template{}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&template); err != nil {
-		return Template{}, fmt.Errorf("decode team template: %w", err)
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return Template{}, errors.New("decode team template: trailing JSON value")
-	}
-	// v1 and v2 have identical legacy selection semantics; v2 only adds the
-	// optional employee_id. Migration is therefore deterministic and cannot
-	// invent an Employee assignment.
-	if template.SchemaVersion == LegacySchemaV1 {
-		template.SchemaVersion = SchemaVersion
+	if err := decodeTemplateWire(raw, &template); err != nil {
+		return Template{}, err
 	}
 	return template, nil
+}
+
+func decodeTemplateWire(raw []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("decode team template: %w", err)
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return errors.New("decode team template: trailing JSON value")
+	}
+	return nil
+}
+
+func migrateV1Selection(value roleSelectionV1) RoleSelection {
+	return RoleSelection{
+		Company: value.Company, Access: value.Access, Model: value.Model,
+		MaxModelCalls: value.MaxModelCalls, MaxTokens: value.MaxTokens,
+	}
 }
 
 func validateEmployeeID(value string) error {

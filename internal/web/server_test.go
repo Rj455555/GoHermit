@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/approval"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/event"
+	"github.com/Rj455555/GoHermit/internal/model"
 	"github.com/Rj455555/GoHermit/internal/runcontrol"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/taskplan"
@@ -86,6 +88,150 @@ func freshStore(t *testing.T, server *Server) *session.Store {
 		t.Fatal(err)
 	}
 	return fresh
+}
+
+func snapshotTree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	result := map[string]string{}
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		relative, relativeErr := filepath.Rel(root, path)
+		if relativeErr != nil {
+			return relativeErr
+		}
+		result[relative] = string(raw)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestHiddenTeamWorkerSessionIsAbsentFromEveryPublicSessionAPI(t *testing.T) {
+	const sentinel = "PRIVATE_EMPLOYEE_MEMORY_PHASE9_SENTINEL"
+	server := testServer(t)
+	store := freshStore(t, server)
+	parent, err := session.New("parent mission", server.Workspace, "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent.ID = "parent-private-boundary"
+	if err = store.Save(context.Background(), parent); err != nil {
+		t.Fatal(err)
+	}
+	hidden, err := session.New("hidden worker", server.Workspace, "digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden.ID = "worker-private-boundary"
+	hidden.Hidden = true
+	hidden.ParentSessionID = parent.ID
+	hidden.ParentRunID = "parent-run"
+	hidden.WorkItemID = "explore"
+	hidden.Selection = session.Selection{
+		Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "explorer",
+	}
+	run, err := hidden.NewRun("inspect private context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	run.Status = session.RunCompleted
+	run.FinalMessage = sentinel
+	run.CompletedAt = &now
+	run.UpdatedAt = now
+	hidden.ActiveRunID = ""
+	hidden.RecentMessages = []model.Message{
+		{Role: model.RoleAssistant, Content: sentinel},
+	}
+	request, err := approval.Create(approval.CreateSpec{
+		RequestID: "approval-private", SessionID: hidden.ID, RunID: run.ID,
+		Tool: "write_file", ResourcePaths: []string{"private.txt"},
+		ArgsSummary: sentinel, ArgsPayload: `{"path":"private.txt"}`,
+		PolicyFingerprint: "policy", PlanRevision: 1,
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden.ApprovalRequests = append(hidden.ApprovalRequests, request)
+	if err = store.Save(context.Background(), hidden); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.AppendMessage(hidden.ID, session.MessageRecord{
+		RunID: run.ID, Role: model.RoleAssistant, Content: sentinel, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	completed := event.New(event.TaskCompleted, hidden.ID)
+	completed.RunID = run.ID
+	completed.Message = sentinel
+	if _, err = store.CommitDetachedEvent(context.Background(), hidden.ID, completed); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionRoot := filepath.Join(server.Workspace, ".gohermit", "sessions", hidden.ID)
+	beforeHidden := snapshotTree(t, sessionRoot)
+	beforeParent := snapshotTree(t, filepath.Join(server.Workspace, ".gohermit", "sessions", parent.ID))
+	markerPath := filepath.Join(server.Workspace, "workspace-marker.txt")
+	if err = os.WriteFile(markerPath, []byte("unchanged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "get", method: http.MethodGet, path: "/api/sessions/" + hidden.ID},
+		{name: "events", method: http.MethodGet, path: "/api/sessions/" + hidden.ID + "/events?after=0"},
+		{name: "start", method: http.MethodPost, path: "/api/sessions/" + hidden.ID + "/runs", body: `{"message":"second run"}`},
+		{name: "resume", method: http.MethodPost, path: "/api/sessions/" + hidden.ID + "/runs/" + run.ID + "/resume"},
+		{name: "cancel", method: http.MethodPost, path: "/api/sessions/" + hidden.ID + "/runs/" + run.ID + "/cancel"},
+		{name: "plan approve", method: http.MethodPost, path: "/api/sessions/" + hidden.ID + "/runs/" + run.ID + "/approve"},
+		{name: "approval list", method: http.MethodGet, path: "/api/sessions/" + hidden.ID + "/approvals?status=pending"},
+		{name: "approval decide", method: http.MethodPost, path: "/api/sessions/" + hidden.ID + "/approvals/" + request.RequestID + "/decide", body: `{"decision":"approve"}`},
+	}
+	handler := server.Handler()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			httpRequest := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			httpRequest.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httpRequest)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), sentinel) ||
+				strings.Contains(strings.ToLower(response.Body.String()), "hidden") {
+				t.Fatalf("response leaked hidden Session data: %s", response.Body.String())
+			}
+		})
+	}
+	server.subscribersMu.Lock()
+	subscriberCount := len(server.subscribers[hidden.ID])
+	server.subscribersMu.Unlock()
+	if subscriberCount != 0 {
+		t.Fatalf("hidden Session SSE registered %d subscribers", subscriberCount)
+	}
+	if after := snapshotTree(t, sessionRoot); !reflect.DeepEqual(after, beforeHidden) {
+		t.Fatal("public operations changed the hidden Session")
+	}
+	if after := snapshotTree(t, filepath.Join(server.Workspace, ".gohermit", "sessions", parent.ID)); !reflect.DeepEqual(after, beforeParent) {
+		t.Fatal("public operations changed the parent Session")
+	}
+	if marker, err := os.ReadFile(markerPath); err != nil || string(marker) != "unchanged" {
+		t.Fatalf("workspace marker changed: %q err=%v", marker, err)
+	}
 }
 
 func TestVerifierFailureMarksLivePlanFailed(t *testing.T) {

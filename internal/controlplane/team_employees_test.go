@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -72,13 +73,13 @@ func TestTeamEmployeePreflightPinsAssignmentAndRestoresWithoutMutableEmployee(t 
 		child.TeamEmployeeContextSnapshot.Digest != assignment.ContextDigest {
 		t.Fatalf("hidden child did not pin isolated Employee context: %+v", child)
 	}
-	projected, _, err := fixture.service.GetSession(context.Background(), childID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if projected.TeamEmployeeContextSnapshot != nil ||
-		projected.TeamEmployeeAssignment == nil {
-		t.Fatal("Web Session projection leaked private Employee context or lost public assignment metadata")
+	if _, _, err = fixture.service.GetSession(context.Background(), childID); err == nil {
+		t.Fatal("hidden Team Worker Session was exposed through the public Control Plane")
+	} else {
+		var serviceErr *Error
+		if !errors.As(err, &serviceErr) || serviceErr.Kind != KindNotFound {
+			t.Fatalf("hidden Session error = %v, want KindNotFound", err)
+		}
 	}
 
 	record, err := fixture.employees.Get("employee-a")
