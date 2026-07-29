@@ -3036,6 +3036,8 @@ Phase 10 implementation and acceptance evidence (2026-07-29):
 - Actual files:
   - cross-module eval and persistent fixture:
     `internal/evals/v07_contracts_test.go`;
+  - acceptance-blocking asynchronous test synchronization:
+    `internal/controlplane/employee_execution_test.go`;
   - real Compose/image/health/rebuild acceptance:
     `internal/evals/docker_acceptance.sh`,
     `.github/workflows/ci.yml`;
@@ -3099,6 +3101,28 @@ Phase 10 implementation and acceptance evidence (2026-07-29):
     Go normal/race/vet/native/cross-build, Web E2E, and the actual Docker
     Compose/image/health/rebuild persistence job all PASS;
   - `live-smoke` is skipped by workflow design and no paid model is called.
+- Final-Head CI flake and bounded correction:
+  - evidence Head `3c89344e702767b5306f4258c0ba6e815591ab58`
+    had green Push CI
+    [30423561900](https://github.com/Rj455555/GoHermit/actions/runs/30423561900),
+    while PR CI
+    [30423598098](https://github.com/Rj455555/GoHermit/actions/runs/30423598098)
+    exposed a Linux-only `TempDir RemoveAll` cleanup race in
+    `TestEmployeeTaskStartReconcilesBindingCrashPoints`;
+  - the test observed the existing Run's `completed` projection before the
+    asynchronous Runner had finished Candidate/Artifact finalization and
+    released the service gate, allowing temporary-directory cleanup to race
+    the last Store write. Product execution and recovery assertions had
+    already passed;
+  - test-only correction
+    `ad1159ea77f2da04601f52d4fdc614058c705b57` waits for the existing
+    service run gate to become idle after the terminal projection. It changes
+    no runtime path, timeout, state, or product capability;
+  - corrected crash reconciliation with `-race -count=25`: PASS; corrected
+    full `go test ./... -count=1`, `go test -race ./... -count=1`,
+    `go vet ./...`, CLI/Web builds, and `git diff --check`: PASS;
+  - corrected final Push/PR CI links are recorded in Draft PR #43 after both
+    runs complete, avoiding another self-referential plan-evidence chain.
 - Documentation and version:
   - `AGENTS.md` → `context.md` → `employees.md` → `handoff-v0.7.md` is the
     minimum sufficient AI reading path;
@@ -3114,6 +3138,10 @@ Phase 10 implementation and acceptance evidence (2026-07-29):
   - root `AGENTS.md`, `README.md`, and the workflow are additional closeout
     files required for the requested minimum handoff, version accuracy, and
     actual acceptance; no runtime capability was added;
+  - `internal/controlplane/employee_execution_test.go` is an
+    acceptance-blocking test-only deviation from the expected file list; it
+    synchronizes teardown with the existing service gate after CI exposed the
+    race and does not modify product code;
   - the macOS development host has no Docker CLI, so actual Docker acceptance
     runs in the Linux GitHub Docker job and is not claimed as a local result;
   - existing accepted risks remain: per-file atomicity without cross-file
