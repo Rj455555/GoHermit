@@ -5,27 +5,59 @@ vi.mock('./client', () => client)
 
 import {
   approvePlan,
+  cancelEmployeeTask,
+  cancelLoopInvocation,
   cancelRun,
+  createEmployee,
+  createEmployeeTask,
+  createLoop,
   createSession,
   decideApproval,
   deleteProviderCredentials,
   forgetOwnerFact,
+  getEmployee,
+  getEmployeeActivity,
+  getEmployeeKnowledge,
+  getEmployeeMemory,
+  getEmployeeMemoryCandidates,
+  getEmployeeSkills,
+  getEmployeeTask,
   getCodexLogin,
   getHealth,
   getInfo,
+  getLoop,
+  getLoopInvocation,
   getOwner,
   getSession,
+  getTeamTemplate,
+  importLoop,
+  importTeamTemplate,
   listApprovals,
+  listEmployees,
+  listEmployeeTasks,
+  listLoopInvocationDetails,
   listLoopInvocations,
   listLoops,
   listSessions,
+  listProjects,
+  listSkills,
+  mutateEmployeeLifecycle,
+  resumeEmployeeTask,
   resumeRun,
   saveOwner,
   saveOwnerFact,
   saveProviderAPIKey,
   startCodexLogin,
+  startEmployeeTask,
+  startLoopInvocation,
   startRun,
+  dryRunEmployee,
+  dryRunLoop,
+  updateEmployee,
+  updateEmployeeSkills,
+  updateLoop,
 } from './endpoints'
+import type { Employee, LoopDefinition } from './types'
 
 const profile = {
   schema_version: 1,
@@ -76,5 +108,64 @@ describe('Phase 3 endpoint map', () => {
     expect(paths).not.toContain('/api/sessions?limit=200')
     expect(paths).toContain('/api/sessions/session%20one/runs/run%20one/cancel')
     expect(paths).toContain('/api/settings/providers/openai%20api/api-key')
+  })
+
+  it('maps every Phase 4 wrapper without introducing a second execution API', async () => {
+    const employee = {
+      id: 'employee-1',
+      revision: 1,
+      skill_bindings: [],
+    } as unknown as Employee
+    const definition = {
+      id: 'loop-1',
+      revision: 2,
+    } as unknown as LoopDefinition
+    await Promise.all([
+      listEmployees({ state: 'active', cursor: 'next', limit: 500 }),
+      getEmployee('employee one'),
+      createEmployee({ employee, project_bindings: [] }),
+      updateEmployee('employee one', {
+        expected_revision: 1,
+        employee,
+        project_bindings: [],
+      }),
+      mutateEmployeeLifecycle('employee one', 'disable', 1),
+      mutateEmployeeLifecycle('employee one', 'enable', 2),
+      mutateEmployeeLifecycle('employee one', 'archive', 3),
+      dryRunEmployee('employee one'),
+      listProjects(),
+      listSkills(),
+      getEmployeeSkills('employee one'),
+      updateEmployeeSkills('employee one', 1, []),
+      getEmployeeKnowledge('employee one'),
+      getEmployeeMemory('employee one'),
+      getEmployeeMemoryCandidates('employee one'),
+      getEmployeeActivity('employee one'),
+      listEmployeeTasks('employee one', { limit: 500 }),
+      createEmployeeTask('employee one', { prompt: 'literal' }),
+      getEmployeeTask('task one'),
+      startEmployeeTask('task one'),
+      cancelEmployeeTask('task one'),
+      resumeEmployeeTask('task one'),
+      getLoop('loop one'),
+      createLoop(definition),
+      updateLoop('loop one', definition),
+      importLoop(definition),
+      dryRunLoop('loop one'),
+      listLoopInvocationDetails('loop one'),
+      startLoopInvocation('loop one'),
+      getLoopInvocation('invocation one'),
+      cancelLoopInvocation('invocation one'),
+      getTeamTemplate(),
+      importTeamTemplate({ schema_version: 1 }),
+    ])
+
+    const paths = client.apiRequest.mock.calls.map(([path]) => path as string)
+    expect(paths).toContain('/api/employees?limit=100&state=active&cursor=next')
+    expect(paths).toContain('/api/employees/employee%20one/tasks?limit=100')
+    expect(paths).toContain('/api/employee-tasks/task%20one/start')
+    expect(paths).toContain('/api/loops/loop%20one/dry-run')
+    expect(paths).toContain('/api/loop-invocations/invocation%20one/cancel')
+    expect(paths).not.toContain('/api/tasks/task%20one/events')
   })
 })

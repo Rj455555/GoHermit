@@ -3,22 +3,22 @@ import { describe, expect, it } from 'vitest'
 
 import { renderApp } from './test/renderApp'
 
-const placeholderRoutes = [
-  ['/employees', '电子员工'],
-  ['/employees/employee-1', '电子员工'],
-  ['/tasks', '任务'],
-  ['/tasks/task-1', '任务'],
-  ['/loops', '工作流'],
-  ['/loops/loop-1', '工作流'],
-  ['/loops/loop-1/invocations/invocation-1', '工作流'],
+const phase4Routes = [
+  '/employees',
+  '/employees/employee-1',
+  '/tasks',
+  '/tasks/task-1',
+  '/loops',
+  '/loops/loop-1',
+  '/loops/loop-1/invocations/invocation-1',
 ] as const
 
 describe('declared React routes', () => {
-  it.each(placeholderRoutes)('retains the Phase 4 placeholder for %s', (path, title) => {
+  it.each(phase4Routes)('mounts the Phase 4 feature route %s', (path) => {
     renderApp(path)
 
-    expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument()
-    expect(screen.getByTestId('placeholder-page')).toBeInTheDocument()
+    expect(screen.getByTestId('react-bootstrap')).toBeInTheDocument()
+    expect(screen.queryByTestId('placeholder-page')).not.toBeInTheDocument()
   })
 
   it.each(['/dashboard', '/agent', '/agent/sessions/session-1', '/settings'])(

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,20 +42,17 @@ type Server struct {
 }
 
 func New(workspace, configPath string) (*Server, error) {
-	root, err := fs.Sub(assets, "assets")
+	root, err := fs.Sub(assets, "assets/dist")
 	if err != nil {
 		return nil, err
 	}
-	legacyStatic := http.FileServer(http.FS(root))
+	index, err := fs.ReadFile(root, "index.html")
+	if err != nil {
+		return nil, fmt.Errorf("read embedded React index: %w", err)
+	}
 	server := &Server{
 		Workspace: workspace, ConfigPath: configPath,
-		static: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/dist" || strings.HasPrefix(r.URL.Path, "/dist/") {
-				http.NotFound(w, r)
-				return
-			}
-			legacyStatic.ServeHTTP(w, r)
-		}),
+		static:      reactStaticHandler(root, index),
 		subscribers: map[string]map[chan event.Event]struct{}{},
 	}
 	svc, err := controlplane.New(workspace, configPath, server.publish)
@@ -130,7 +128,107 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings/providers/openai-codex/login", s.startCodexLogin)
 	mux.HandleFunc("GET /api/settings/logins/{session}", s.loginStatus)
 	mux.Handle("GET /", s.static)
-	return securityHeaders(mux)
+	return securityHeaders(rejectAnomalousPaths(mux))
+}
+
+func rejectAnomalousPaths(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawPath := strings.SplitN(r.RequestURI, "?", 2)[0]
+		lowerRawPath := strings.ToLower(rawPath)
+		cleaned := path.Clean(r.URL.Path)
+		if rawPath == "" ||
+			strings.Contains(lowerRawPath, "%2e") ||
+			strings.Contains(lowerRawPath, "%2f") ||
+			strings.Contains(lowerRawPath, "%5c") ||
+			strings.Contains(rawPath, "\\") ||
+			strings.Contains(r.URL.Path, "\\") ||
+			strings.Contains(r.URL.Path, "\x00") ||
+			strings.Contains(r.URL.Path, "//") ||
+			cleaned != r.URL.Path {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func reactStaticHandler(root fs.FS, index []byte) http.Handler {
+	files := http.FileServer(http.FS(root))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath := r.URL.Path
+		if requestPath == "/" {
+			http.Redirect(w, r, "/dashboard", http.StatusTemporaryRedirect)
+			return
+		}
+		if strings.HasPrefix(requestPath, "/api") ||
+			requestPath == "/dist" ||
+			strings.HasPrefix(requestPath, "/dist/") ||
+			requestPath == "/index.html" {
+			http.NotFound(w, r)
+			return
+		}
+		if strings.HasPrefix(requestPath, "/assets/") {
+			name := strings.TrimPrefix(requestPath, "/")
+			info, err := fs.Stat(root, name)
+			if err != nil || info.IsDir() {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			files.ServeHTTP(w, r)
+			return
+		}
+		if !isDeclaredReactRoute(requestPath) {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(index)
+	})
+}
+
+func isDeclaredReactRoute(requestPath string) bool {
+	parts := strings.Split(strings.TrimPrefix(requestPath, "/"), "/")
+	if len(parts) == 1 {
+		switch parts[0] {
+		case "dashboard", "employees", "tasks", "agent", "loops", "settings":
+			return true
+		default:
+			return false
+		}
+	}
+	if len(parts) == 2 {
+		switch parts[0] {
+		case "employees", "tasks", "loops":
+			return validReactID(parts[1])
+		}
+	}
+	if len(parts) == 3 && parts[0] == "agent" && parts[1] == "sessions" {
+		return validReactID(parts[2])
+	}
+	if len(parts) == 4 && parts[0] == "loops" && parts[2] == "invocations" {
+		return validReactID(parts[1]) && validReactID(parts[3])
+	}
+	return false
+}
+
+func validReactID(value string) bool {
+	if value == "" || len(value) > 256 || value == "." || value == ".." ||
+		strings.Contains(value, ".") {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '-' || character == '_' || character == ':' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // statusForKind maps the service error classification to HTTP statuses.

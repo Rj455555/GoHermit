@@ -45,37 +45,95 @@ func testServer(t *testing.T) *Server {
 	return server
 }
 
-func TestPhase8AssetsAndNavigationAreServed(t *testing.T) {
+func TestPhase4ReactAssetsAndDeclaredRoutesAreServed(t *testing.T) {
 	handler := testServer(t).Handler()
-	tests := []struct {
-		path     string
-		contains []string
-	}{
-		{path: "/", contains: []string{
-			`data-testid="nav-dashboard"`,
-			`data-testid="nav-employees"`,
-			`data-testid="nav-employee-tasks"`,
-			`data-testid="nav-agent"`,
-			`data-testid="nav-loops"`,
-			`data-testid="nav-settings"`,
-			`<script src="/employees.js" defer></script>`,
-			`<script src="/tasks.js" defer></script>`,
-		}},
-		{path: "/employees.js", contains: []string{"loadEmployees", "employeeCreatePayload", "/api/employees"}},
-		{path: "/tasks.js", contains: []string{"loadEmployeeTaskWorkbench", "openEmployeeTask", "/api/sessions/"}},
+
+	rootRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootResponse := httptest.NewRecorder()
+	handler.ServeHTTP(rootResponse, rootRequest)
+	if rootResponse.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("GET / status = %d, want 307", rootResponse.Code)
 	}
-	for _, test := range tests {
-		t.Run(test.path, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+	if location := rootResponse.Header().Get("Location"); location != "/dashboard" {
+		t.Fatalf("GET / Location = %q, want /dashboard", location)
+	}
+
+	for _, path := range []string{
+		"/dashboard",
+		"/employees",
+		"/employees/employee-ada",
+		"/tasks",
+		"/tasks/task-1",
+		"/agent",
+		"/agent/sessions/session-1",
+		"/loops",
+		"/loops/loop-1",
+		"/loops/loop-1/invocations/invocation-1",
+		"/settings",
+	} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			if response.Code != http.StatusOK {
-				t.Fatalf("GET %s status = %d, body = %s", test.path, response.Code, response.Body.String())
+				t.Fatalf("GET %s status = %d, body = %s", path, response.Code, response.Body.String())
 			}
-			for _, expected := range test.contains {
-				if !strings.Contains(response.Body.String(), expected) {
-					t.Errorf("GET %s response does not contain %q", test.path, expected)
-				}
+			if contentType := response.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+				t.Fatalf("GET %s Content-Type = %q, want text/html", path, contentType)
+			}
+			if !strings.Contains(response.Body.String(), `<div id="root"></div>`) {
+				t.Fatalf("GET %s did not return the embedded React index", path)
+			}
+		})
+	}
+
+	index, err := assets.ReadFile("assets/dist/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := regexp.MustCompile(`src="(/assets/[^"]+\.js)"`).FindSubmatch(index)
+	if len(reference) != 2 {
+		t.Fatalf("React index has no hashed JS reference: %q", index)
+	}
+	request := httptest.NewRequest(http.MethodGet, string(reference[1]), nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d", reference[1], response.Code)
+	}
+	if contentType := response.Header().Get("Content-Type"); !strings.Contains(contentType, "javascript") {
+		t.Fatalf("GET %s Content-Type = %q, want JavaScript", reference[1], contentType)
+	}
+}
+
+func TestPhase4SPAFallbackFailsClosed(t *testing.T) {
+	handler := testServer(t).Handler()
+	for _, path := range []string{
+		"/unknown",
+		"/employees/employee-ada/extra",
+		"/tasks/task-1/extra",
+		"/loops/loop-1/invocations/invocation-1/extra",
+		"/assets/missing.js",
+		"/employees.js",
+		"/dist",
+		"/dist/index.html",
+		"/api",
+		"/api/",
+		"/api/unknown",
+		"/../dashboard",
+		"/%2e%2e/dashboard",
+		"/employees%2femployee-ada",
+		"/employees%5cemployee-ada",
+	} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("GET %s status = %d, want 404; body = %s", path, response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), `<div id="root"></div>`) {
+				t.Fatalf("GET %s returned React HTML", path)
 			}
 		})
 	}
@@ -127,29 +185,18 @@ func TestPhase1ReactDistIsEmbeddedWithHashedAssets(t *testing.T) {
 	}
 }
 
-func TestPhase1ReactDistIsNotHTTPAccessibleAndLegacyRemainsDefault(t *testing.T) {
+func TestPhase4LegacyAndDistAliasesAreNotHTTPAccessible(t *testing.T) {
 	handler := testServer(t).Handler()
-	for _, path := range []string{"/dist", "/dist/", "/dist/index.html"} {
+	for _, path := range []string{
+		"/dist", "/dist/", "/dist/index.html",
+		"/index.html", "/app.js", "/employees.js", "/tasks.js", "/loops.js", "/styles.css",
+	} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusNotFound {
 			t.Fatalf("GET %s status = %d, want 404", path, response.Code)
 		}
-	}
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("GET / status = %d, body = %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	if !strings.Contains(body, `data-testid="nav-dashboard"`) {
-		t.Fatal("GET / no longer serves the legacy UI")
-	}
-	if strings.Contains(body, `data-testid="react-bootstrap"`) {
-		t.Fatal("GET / unexpectedly serves the React bootstrap")
 	}
 }
 
@@ -434,7 +481,7 @@ func TestStaticIndexHasSecurityHeaders(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "GoHermit") || !strings.Contains(response.Body.String(), "nav-settings") {
+	if response.Code != http.StatusTemporaryRedirect || response.Header().Get("Location") != "/dashboard" {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("X-Frame-Options") != "DENY" {

@@ -448,3 +448,162 @@ export interface InvocationSummary {
   failure_code?: string | undefined
   failure_summary?: string | undefined
 }
+
+export type EmployeeState = 'active' | 'disabled' | 'archived'
+export type EmployeeTaskState =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface EmployeeSummary {
+  id: string
+  revision: number
+  state: EmployeeState
+  name: string
+  job_title: string
+  agent_profile: string
+  project_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SkillBinding {
+  skill_id: string
+  version: string
+  digest: string
+  configuration: Record<string, unknown>
+  enabled: boolean
+}
+
+export interface ProjectBinding {
+  id: string
+  label: string
+  workspace_real_path: string
+  workspace_fingerprint: string
+  read_allowed: boolean
+  mutation_allowed: boolean
+  allowed_tool_capabilities: string[]
+  network_allowed: boolean
+}
+
+export interface Employee extends EmployeeSummary {
+  schema_version: number
+  avatar: { kind: 'initials' | 'emoji'; value: string }
+  charter: string
+  responsibilities: string[]
+  behavior_boundaries: string[]
+  default_selection: { company: string; access: string; model: string }
+  skill_bindings: SkillBinding[]
+  project_binding_ids: string[]
+  permission_policy: { allowed_capabilities: string[]; network_allowed: boolean }
+  budget_policy: { max_model_calls: number; max_tokens: number; timeout_seconds: number }
+  concurrency_policy: { max_running_tasks: number }
+  memory_policy: {
+    candidate_generation: boolean
+    promotion: 'disabled' | 'owner_confirmation'
+    max_context_facts: number
+    max_context_bytes: number
+  }
+}
+
+export interface EmployeeRecord {
+  employee: Employee
+  project_bindings: ProjectBinding[]
+}
+
+export interface SkillCatalogItem {
+  skill_id: string
+  version: string
+  digest: string
+  kind: 'native' | 'skill_md_adapter'
+  title: string
+  description: string
+  requested_capabilities: string[]
+  configuration_schema: Record<string, unknown>
+}
+
+export interface EmployeeSkillStatus {
+  binding: SkillBinding
+  status: 'current' | 'missing' | 'digest_drift'
+  kind?: 'native' | 'skill_md_adapter' | undefined
+}
+
+export interface EmployeeTask {
+  schema_version: number
+  id: string
+  employee_id: string
+  employee_revision: number
+  prompt: string
+  state: EmployeeTaskState
+  created_at: string
+  updated_at: string
+  skills: Array<{ skill_id: string; version: string }>
+  knowledge: Array<{ source_id: string; citation_ids: string[] }>
+  memory_facts: Array<{
+    id: string
+    category?: string | undefined
+    value?: string | undefined
+  }>
+  project_binding: {
+    id: string
+    label: string
+    workspace_fingerprint: string
+    read_allowed: boolean
+    mutation_allowed: boolean
+    allowed_tool_capabilities: string[]
+    network_allowed: boolean
+  }
+  policy: {
+    allowed_capabilities: string[]
+    network_allowed: boolean
+    budget: { max_model_calls: number; max_tokens: number; timeout_seconds: number }
+  }
+  snapshot_digest: string
+  session_id?: string | undefined
+  run_id?: string | undefined
+  artifacts: Array<{ id?: string; kind?: string; path?: string; digest?: string }>
+}
+
+export interface LoopDefinition extends LoopSummary {
+  schema_version: number
+  description: string
+  workspace_identity: string
+  task_source: { type: 'fixed_prompt'; prompt: string }
+  agent_selection: RuntimeSelection
+  team_template_ref: string
+  plan_mode: PlanMode
+  verification_recipe: {
+    checks: string[]
+    independent_verifier: boolean
+    max_repair_attempts: number
+  }
+  budget: { max_model_calls: number; max_tokens: number; timeout_seconds: number }
+  approval_policy: { require_for_mutation: boolean }
+  workspace_policy: { read_only: boolean; require_clean_git: boolean }
+  output_policy: { include_diff: boolean; max_report_bytes: number }
+}
+
+export interface LoopInvocation extends InvocationSummary {
+  definition_snapshot: LoopDefinition
+}
+
+export interface DryRunReport {
+  loop_id: string
+  definition_revision: number
+  definition_valid: boolean
+  workspace_identity: string
+  workspace_matches: boolean
+  git_clean: boolean
+  task_prompt: string
+  agent: RuntimeSelection
+  roles: Array<Record<string, unknown>>
+  write_scope: string
+  checks: Array<Record<string, unknown>>
+  budget: { max_model_calls: number; max_tokens: number; timeout_seconds: number }
+  requires_approval: boolean
+  ready: boolean
+  reasons: string[]
+}

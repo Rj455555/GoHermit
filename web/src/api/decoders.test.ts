@@ -3,12 +3,23 @@ import { describe, expect, it } from 'vitest'
 import {
   decodeApprovals,
   decodeCancellation,
+  decodeBoundedProjection,
   decodeCodexLogin,
   decodeConfigured,
   decodeDecision,
+  decodeDryRun,
+  decodeEmployeeList,
+  decodeEmployeeRecord,
+  decodeEmployeeSkills,
+  decodeEmployeeTask,
+  decodeEmployeeTasks,
   decodeHealth,
   decodeInfo,
   decodeInvocations,
+  decodeLoopDefinition,
+  decodeLoopDefinitions,
+  decodeLoopInvocation,
+  decodeLoopInvocationList,
   decodeLoops,
   decodeOwnerProfile,
   decodeRunReference,
@@ -16,6 +27,7 @@ import {
   decodeRuntimeEvent,
   decodeSessionDetail,
   decodeSessionList,
+  decodeSkillCatalog,
 } from './decoders'
 
 const now = '2026-07-29T08:00:00Z'
@@ -53,6 +65,164 @@ describe('endpoint decoders', () => {
       active: false,
     })
     expect(() => decodeHealth({ status: 'maybe', version: '0.3', active: false })).toThrow()
+  })
+
+  it('strictly decodes the complete bounded Phase 4 projections', () => {
+    const summary = {
+      id: 'employee-1',
+      revision: 2,
+      state: 'active',
+      name: 'Literal Employee',
+      job_title: 'Builder',
+      agent_profile: 'coding',
+      project_count: 1,
+      created_at: now,
+      updated_at: now,
+    }
+    const employee = {
+      ...summary,
+      schema_version: 1,
+      avatar: { kind: 'initials', value: 'L' },
+      charter: 'Literal charter',
+      responsibilities: ['Build'],
+      behavior_boundaries: ['No secrets'],
+      default_selection: { company: 'openai', access: 'codex', model: 'gpt' },
+      skill_bindings: [{
+        skill_id: 'review',
+        version: '1.0.0',
+        digest: 'digest',
+        configuration: {},
+        enabled: true,
+      }],
+      project_binding_ids: ['project-1'],
+      permission_policy: { allowed_capabilities: ['read'], network_allowed: false },
+      budget_policy: { max_model_calls: 4, max_tokens: 4000, timeout_seconds: 600 },
+      concurrency_policy: { max_running_tasks: 1 },
+      memory_policy: {
+        candidate_generation: true,
+        promotion: 'owner_confirmation',
+        max_context_facts: 8,
+        max_context_bytes: 8192,
+      },
+    }
+    const project = {
+      id: 'project-1',
+      label: 'Literal project',
+      workspace_real_path: '/literal/path',
+      workspace_fingerprint: 'fingerprint',
+      read_allowed: true,
+      mutation_allowed: false,
+      allowed_tool_capabilities: ['read'],
+      network_allowed: false,
+    }
+    const task = {
+      schema_version: 1,
+      id: 'task-1',
+      employee_id: 'employee-1',
+      employee_revision: 2,
+      prompt: 'Literal prompt',
+      state: 'queued',
+      created_at: now,
+      updated_at: now,
+      skills: [{ skill_id: 'review', version: '1.0.0' }],
+      knowledge: [{ source_id: 'source-1', citation_ids: ['citation-1'] }],
+      memory_facts: [{ id: 'fact-1', category: 'literal', value: 'unchanged' }],
+      project_binding: {
+        id: project.id,
+        label: project.label,
+        workspace_fingerprint: project.workspace_fingerprint,
+        read_allowed: project.read_allowed,
+        mutation_allowed: project.mutation_allowed,
+        allowed_tool_capabilities: project.allowed_tool_capabilities,
+        network_allowed: project.network_allowed,
+      },
+      policy: {
+        allowed_capabilities: ['read'],
+        network_allowed: false,
+        budget: { max_model_calls: 4, max_tokens: 4000, timeout_seconds: 600 },
+      },
+      snapshot_digest: 'snapshot',
+      artifacts: [{ id: 'artifact-1', path: 'literal/file.go' }],
+    }
+    const definition = {
+      id: 'loop-1',
+      schema_version: 1,
+      name: 'Literal Loop',
+      description: 'Description',
+      workspace_identity: '/literal/path',
+      enabled: true,
+      task_source: { type: 'fixed_prompt', prompt: 'Literal mission' },
+      agent_selection: { company: 'openai', access: 'codex', model: 'gpt', agent: 'team' },
+      team_template_ref: 'default',
+      plan_mode: 'review',
+      verification_recipe: {
+        checks: ['go test ./...'],
+        independent_verifier: true,
+        max_repair_attempts: 1,
+      },
+      budget: { max_model_calls: 8, max_tokens: 8000, timeout_seconds: 1200 },
+      approval_policy: { require_for_mutation: true },
+      workspace_policy: { read_only: true, require_clean_git: false },
+      output_policy: { include_diff: false, max_report_bytes: 65536 },
+      created_at: now,
+      updated_at: now,
+      revision: 3,
+    }
+    const invocation = {
+      id: 'invocation-1',
+      loop_id: 'loop-1',
+      definition_revision: 3,
+      definition_snapshot: definition,
+      trigger: 'manual',
+      task_snapshot: 'Literal mission',
+      session_id: 'session-1',
+      run_id: 'run-1',
+      status: 'attached',
+      created_at: now,
+      started_at: now,
+    }
+
+    expect(decodeEmployeeList({ employees: [summary], next_cursor: 'next' }).employees).toHaveLength(1)
+    expect(decodeEmployeeRecord({ employee, project_bindings: [project] }).employee.name).toBe('Literal Employee')
+    expect(decodeSkillCatalog({ skills: [{
+      skill_id: 'review',
+      version: '1.0.0',
+      digest: 'digest',
+      kind: 'native',
+      title: 'Review',
+      description: 'Literal',
+      requested_capabilities: ['read'],
+      configuration_schema: {},
+    }] }).skills).toHaveLength(1)
+    expect(decodeEmployeeSkills({
+      employee_id: 'employee-1',
+      revision: 2,
+      bindings: [{ binding: employee.skill_bindings[0], status: 'current', kind: 'native' }],
+    }).bindings).toHaveLength(1)
+    expect(decodeBoundedProjection({ facts: [] })).toEqual({ facts: [] })
+    expect(decodeEmployeeTask(task).prompt).toBe('Literal prompt')
+    expect(decodeEmployeeTasks({ tasks: [task] }).tasks).toHaveLength(1)
+    expect(decodeLoopDefinition(definition).revision).toBe(3)
+    expect(decodeLoopDefinitions({ loops: [definition] }).loops).toHaveLength(1)
+    expect(decodeLoopInvocation(invocation).id).toBe('invocation-1')
+    expect(decodeLoopInvocationList({ invocations: [invocation], limit: 50 }).limit).toBe(50)
+    expect(decodeDryRun({
+      loop_id: 'loop-1',
+      definition_revision: 3,
+      definition_valid: true,
+      workspace_identity: '/literal/path',
+      workspace_matches: true,
+      git_clean: true,
+      task_prompt: 'Literal mission',
+      agent: definition.agent_selection,
+      roles: [],
+      write_scope: 'read-only',
+      checks: [],
+      budget: definition.budget,
+      requires_approval: false,
+      ready: true,
+      reasons: [],
+    }).ready).toBe(true)
   })
 
   it('defaults a missing next_event_sequence to zero', () => {

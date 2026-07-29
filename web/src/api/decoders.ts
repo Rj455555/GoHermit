@@ -5,11 +5,21 @@ import type {
   ApprovalRequest,
   CodexLoginSession,
   Company,
+  DryRunReport,
+  Employee,
+  EmployeeRecord,
+  EmployeeSkillStatus,
+  EmployeeState,
+  EmployeeSummary,
+  EmployeeTask,
+  EmployeeTaskState,
   Handoff,
   Health,
   Info,
   InvocationStatus,
   InvocationSummary,
+  LoopDefinition,
+  LoopInvocation,
   LoopSummary,
   Message,
   Mission,
@@ -35,6 +45,7 @@ import type {
   SessionSelection,
   SessionStatus,
   SessionSummary,
+  SkillCatalogItem,
   TestResult,
   ToolRecord,
   WorkItem,
@@ -129,6 +140,18 @@ function stringRecord(value: unknown, max = MAX_COLLECTION): Record<string, stri
     if (!ID_PATTERN.test(key) && key.length > 1024) fail()
     result[key] = string(entry)
   }
+  return result
+}
+
+function boundedRecord(value: unknown, maxBytes = MAX_TEXT): Record<string, unknown> {
+  const result = object(value)
+  let encoded: string
+  try {
+    encoded = JSON.stringify(result)
+  } catch {
+    fail()
+  }
+  if (new TextEncoder().encode(encoded).byteLength > maxBytes) fail()
   return result
 }
 
@@ -722,5 +745,366 @@ export function decodeCancellation(value: unknown): {
   return {
     cancelled: source.cancelled === undefined ? undefined : boolean(source.cancelled),
     status: optionalString(source.status, 64),
+  }
+}
+
+const EMPLOYEE_STATES = ['active', 'disabled', 'archived'] as const
+const EMPLOYEE_TASK_STATES = [
+  'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted',
+] as const
+
+function decodeEmployeeSummaryValue(value: unknown): EmployeeSummary {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    revision: integer(source.revision),
+    state: enumeration<EmployeeState>(source.state, EMPLOYEE_STATES),
+    name: string(source.name, 8192),
+    job_title: string(source.job_title, 8192),
+    agent_profile: id(source.agent_profile),
+    project_count: integer(source.project_count),
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
+  }
+}
+
+function decodeSkillBinding(value: unknown) {
+  const source = object(value)
+  return {
+    skill_id: id(source.skill_id),
+    version: string(source.version, 256),
+    digest: string(source.digest, 256),
+    configuration: boundedRecord(source.configuration ?? {}),
+    enabled: boolean(source.enabled),
+  }
+}
+
+function decodeProjectBinding(value: unknown) {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    label: string(source.label, 8192),
+    workspace_real_path: string(source.workspace_real_path, 4096),
+    workspace_fingerprint: string(source.workspace_fingerprint, 256),
+    read_allowed: boolean(source.read_allowed),
+    mutation_allowed: boolean(source.mutation_allowed),
+    allowed_tool_capabilities: array(
+      source.allowed_tool_capabilities,
+      (item) => string(item, 256),
+      MAX_SMALL_COLLECTION,
+    ),
+    network_allowed: boolean(source.network_allowed),
+  }
+}
+
+function decodeEmployeeValue(value: unknown): Employee {
+  const source = object(value)
+  const summary = decodeEmployeeSummaryValue(source)
+  const avatar = object(source.avatar)
+  const selection = object(source.default_selection)
+  const permission = object(source.permission_policy)
+  const budget = object(source.budget_policy)
+  const concurrency = object(source.concurrency_policy)
+  const memory = object(source.memory_policy)
+  return {
+    ...summary,
+    schema_version: integer(source.schema_version),
+    avatar: {
+      kind: enumeration(avatar.kind, ['initials', 'emoji'] as const),
+      value: string(avatar.value, 64),
+    },
+    charter: string(source.charter),
+    responsibilities: array(source.responsibilities, (item) => string(item), MAX_SMALL_COLLECTION),
+    behavior_boundaries: array(
+      source.behavior_boundaries,
+      (item) => string(item),
+      MAX_SMALL_COLLECTION,
+    ),
+    default_selection: {
+      company: id(selection.company),
+      access: id(selection.access),
+      model: id(selection.model),
+    },
+    skill_bindings: array(source.skill_bindings, decodeSkillBinding, MAX_SMALL_COLLECTION),
+    project_binding_ids: array(source.project_binding_ids, id, MAX_SMALL_COLLECTION),
+    permission_policy: {
+      allowed_capabilities: array(
+        permission.allowed_capabilities,
+        (item) => string(item, 256),
+        MAX_SMALL_COLLECTION,
+      ),
+      network_allowed: boolean(permission.network_allowed),
+    },
+    budget_policy: {
+      max_model_calls: integer(budget.max_model_calls),
+      max_tokens: integer(budget.max_tokens),
+      timeout_seconds: integer(budget.timeout_seconds),
+    },
+    concurrency_policy: { max_running_tasks: integer(concurrency.max_running_tasks) },
+    memory_policy: {
+      candidate_generation: boolean(memory.candidate_generation),
+      promotion: enumeration(memory.promotion, ['disabled', 'owner_confirmation'] as const),
+      max_context_facts: integer(memory.max_context_facts),
+      max_context_bytes: integer(memory.max_context_bytes),
+    },
+  }
+}
+
+export function decodeEmployeeList(value: unknown): {
+  employees: EmployeeSummary[]
+  next_cursor?: string | undefined
+} {
+  const source = object(value)
+  return {
+    employees: array(source.employees, decodeEmployeeSummaryValue, MAX_SMALL_COLLECTION),
+    next_cursor: optionalString(source.next_cursor, 1024),
+  }
+}
+
+export function decodeEmployeeRecord(value: unknown): EmployeeRecord {
+  const source = object(value)
+  return {
+    employee: decodeEmployeeValue(source.employee),
+    project_bindings: array(
+      source.project_bindings,
+      decodeProjectBinding,
+      MAX_SMALL_COLLECTION,
+    ),
+  }
+}
+
+export function decodeSkillCatalog(value: unknown): { skills: SkillCatalogItem[] } {
+  const source = object(value)
+  return {
+    skills: array(source.skills, (entry): SkillCatalogItem => {
+      const skill = object(entry)
+      return {
+        skill_id: id(skill.skill_id),
+        version: string(skill.version, 256),
+        digest: string(skill.digest, 256),
+        kind: enumeration(skill.kind, ['native', 'skill_md_adapter'] as const),
+        title: string(skill.title, 8192),
+        description: string(skill.description),
+        requested_capabilities: array(
+          skill.requested_capabilities,
+          (item) => string(item, 256),
+          MAX_SMALL_COLLECTION,
+        ),
+        configuration_schema: boundedRecord(skill.configuration_schema ?? {}),
+      }
+    }, MAX_SMALL_COLLECTION),
+  }
+}
+
+export function decodeEmployeeSkills(value: unknown): {
+  employee_id: string
+  revision: number
+  bindings: EmployeeSkillStatus[]
+} {
+  const source = object(value)
+  return {
+    employee_id: id(source.employee_id),
+    revision: integer(source.revision),
+    bindings: array(source.bindings, (entry): EmployeeSkillStatus => {
+      const binding = object(entry)
+      return {
+        binding: decodeSkillBinding(binding.binding),
+        status: enumeration(binding.status, ['current', 'missing', 'digest_drift'] as const),
+        kind: binding.kind === undefined
+          ? undefined
+          : enumeration(binding.kind, ['native', 'skill_md_adapter'] as const),
+      }
+    }, MAX_SMALL_COLLECTION),
+  }
+}
+
+export function decodeBoundedProjection(value: unknown): Record<string, unknown> {
+  return boundedRecord(value)
+}
+
+function decodeTaskProject(value: unknown): EmployeeTask['project_binding'] {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    label: string(source.label, 8192),
+    workspace_fingerprint: string(source.workspace_fingerprint, 256),
+    read_allowed: boolean(source.read_allowed),
+    mutation_allowed: boolean(source.mutation_allowed),
+    allowed_tool_capabilities: array(
+      source.allowed_tool_capabilities,
+      (item) => string(item, 256),
+      MAX_SMALL_COLLECTION,
+    ),
+    network_allowed: boolean(source.network_allowed),
+  }
+}
+
+export function decodeEmployeeTask(value: unknown): EmployeeTask {
+  const source = object(value)
+  const policy = object(source.policy)
+  const budget = object(policy.budget)
+  return {
+    schema_version: integer(source.schema_version),
+    id: id(source.id),
+    employee_id: id(source.employee_id),
+    employee_revision: integer(source.employee_revision),
+    prompt: string(source.prompt),
+    state: enumeration<EmployeeTaskState>(source.state, EMPLOYEE_TASK_STATES),
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
+    skills: array(source.skills, (entry) => {
+      const skill = object(entry)
+      return { skill_id: id(skill.skill_id), version: string(skill.version, 256) }
+    }, MAX_SMALL_COLLECTION),
+    knowledge: array(source.knowledge, (entry) => {
+      const knowledge = object(entry)
+      return {
+        source_id: id(knowledge.source_id),
+        citation_ids: array(knowledge.citation_ids, id, MAX_SMALL_COLLECTION),
+      }
+    }, MAX_SMALL_COLLECTION),
+    memory_facts: array(source.memory_facts, (entry) => {
+      const fact = object(entry)
+      return {
+        id: id(fact.id),
+        category: optionalString(fact.category, 8192),
+        value: optionalString(fact.value),
+      }
+    }, MAX_SMALL_COLLECTION),
+    project_binding: decodeTaskProject(source.project_binding),
+    policy: {
+      allowed_capabilities: array(
+        policy.allowed_capabilities,
+        (item) => string(item, 256),
+        MAX_SMALL_COLLECTION,
+      ),
+      network_allowed: boolean(policy.network_allowed),
+      budget: {
+        max_model_calls: integer(budget.max_model_calls),
+        max_tokens: integer(budget.max_tokens),
+        timeout_seconds: integer(budget.timeout_seconds),
+      },
+    },
+    snapshot_digest: string(source.snapshot_digest, 256),
+    session_id: optionalID(source.session_id),
+    run_id: optionalID(source.run_id),
+    artifacts: optionalArray(source.artifacts, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
+  }
+}
+
+export function decodeEmployeeTasks(value: unknown): { tasks: EmployeeTask[] } {
+  const source = object(value)
+  return { tasks: array(source.tasks, decodeEmployeeTask, MAX_SMALL_COLLECTION) }
+}
+
+function decodeBudget(value: unknown) {
+  const source = object(value)
+  return {
+    max_model_calls: integer(source.max_model_calls),
+    max_tokens: integer(source.max_tokens),
+    timeout_seconds: integer(source.timeout_seconds),
+  }
+}
+
+export function decodeLoopDefinition(value: unknown): LoopDefinition {
+  const source = object(value)
+  const task = object(source.task_source)
+  const verification = object(source.verification_recipe)
+  const approval = object(source.approval_policy)
+  const workspace = object(source.workspace_policy)
+  const output = object(source.output_policy)
+  return {
+    id: id(source.id),
+    schema_version: integer(source.schema_version),
+    name: string(source.name, 8192),
+    description: string(source.description),
+    workspace_identity: string(source.workspace_identity, 4096),
+    enabled: boolean(source.enabled),
+    task_source: {
+      type: enumeration(task.type, ['fixed_prompt'] as const),
+      prompt: string(task.prompt),
+    },
+    agent_selection: decodeSelection(source.agent_selection),
+    team_template_ref: string(source.team_template_ref, 256),
+    plan_mode: enumeration<PlanMode>(source.plan_mode, PLAN_MODES),
+    verification_recipe: {
+      checks: array(verification.checks, (item) => string(item, 4096), MAX_SMALL_COLLECTION),
+      independent_verifier: boolean(verification.independent_verifier),
+      max_repair_attempts: integer(verification.max_repair_attempts),
+    },
+    budget: decodeBudget(source.budget),
+    approval_policy: { require_for_mutation: boolean(approval.require_for_mutation) },
+    workspace_policy: {
+      read_only: boolean(workspace.read_only),
+      require_clean_git: boolean(workspace.require_clean_git),
+    },
+    output_policy: {
+      include_diff: boolean(output.include_diff),
+      max_report_bytes: integer(output.max_report_bytes),
+    },
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
+    revision: integer(source.revision),
+  }
+}
+
+export function decodeLoopDefinitions(value: unknown): { loops: LoopDefinition[] } {
+  const source = object(value)
+  return { loops: array(source.loops, decodeLoopDefinition, MAX_SMALL_COLLECTION) }
+}
+
+function decodeInvocationValue(value: unknown): LoopInvocation {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    loop_id: id(source.loop_id),
+    definition_revision: integer(source.definition_revision),
+    definition_snapshot: decodeLoopDefinition(source.definition_snapshot),
+    trigger: id(source.trigger),
+    task_snapshot: string(source.task_snapshot),
+    session_id: optionalID(source.session_id),
+    run_id: optionalID(source.run_id),
+    status: enumeration<InvocationStatus>(source.status, INVOCATION_STATUSES),
+    created_at: time(source.created_at),
+    started_at: optionalTime(source.started_at),
+    finished_at: optionalTime(source.finished_at),
+    failure_code: optionalString(source.failure_code, 256),
+    failure_summary: optionalString(source.failure_summary, 4096),
+  }
+}
+
+export function decodeLoopInvocation(value: unknown): LoopInvocation {
+  return decodeInvocationValue(value)
+}
+
+export function decodeLoopInvocationList(value: unknown): {
+  invocations: LoopInvocation[]
+  limit: number
+} {
+  const source = object(value)
+  return {
+    invocations: array(source.invocations, decodeInvocationValue, MAX_SMALL_COLLECTION),
+    limit: integer(source.limit),
+  }
+}
+
+export function decodeDryRun(value: unknown): DryRunReport {
+  const source = object(value)
+  return {
+    loop_id: id(source.loop_id),
+    definition_revision: integer(source.definition_revision),
+    definition_valid: boolean(source.definition_valid),
+    workspace_identity: string(source.workspace_identity, 4096),
+    workspace_matches: boolean(source.workspace_matches),
+    git_clean: boolean(source.git_clean),
+    task_prompt: string(source.task_prompt),
+    agent: decodeSelection(source.agent),
+    roles: array(source.roles, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
+    write_scope: string(source.write_scope, 256),
+    checks: array(source.checks, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
+    budget: decodeBudget(source.budget),
+    requires_approval: boolean(source.requires_approval),
+    ready: boolean(source.ready),
+    reasons: array(source.reasons, (item) => string(item, 4096), MAX_SMALL_COLLECTION),
   }
 }

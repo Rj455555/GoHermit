@@ -213,6 +213,25 @@ const loops = [{
   updated_at: now,
   revision: 1,
 }]
+const loopDefinition = {
+  ...loops[0],
+  schema_version: 1,
+  description: 'A bounded daily review.',
+  workspace_identity: '/test/workspace',
+  task_source: { type: 'fixed_prompt', prompt: 'Review' },
+  agent_selection: selection,
+  team_template_ref: 'default',
+  plan_mode: 'review',
+  verification_recipe: {
+    checks: ['go test ./...'],
+    independent_verifier: true,
+    max_repair_attempts: 1,
+  },
+  budget: { max_model_calls: 12, max_tokens: 120000, timeout_seconds: 1200 },
+  approval_policy: { require_for_mutation: true },
+  workspace_policy: { read_only: true, require_clean_git: false },
+  output_policy: { include_diff: false, max_report_bytes: 65536 },
+}
 const invocations = [{
   id: 'invocation-1',
   loop_id: 'daily-review',
@@ -225,6 +244,88 @@ const invocations = [{
   started_at: now,
   finished_at: now,
 }]
+const loopInvocation = {
+  ...invocations[0],
+  definition_snapshot: loopDefinition,
+  run_id: 'run-loop-1',
+}
+const employeeSummary = {
+  id: 'employee-ada',
+  revision: 4,
+  state: 'archived',
+  name: 'Ada',
+  job_title: 'Release Engineer',
+  agent_profile: 'coding',
+  project_count: 1,
+  created_at: now,
+  updated_at: now,
+}
+const employeeRecord = {
+  employee: {
+    ...employeeSummary,
+    schema_version: 1,
+    avatar: { kind: 'initials', value: 'A' },
+    charter: 'Ship verified releases.',
+    responsibilities: ['Review release evidence.'],
+    behavior_boundaries: ['Do not expose credentials.'],
+    default_selection: {
+      company: selection.company,
+      access: selection.access,
+      model: selection.model,
+    },
+    skill_bindings: [],
+    project_binding_ids: ['project-main'],
+    permission_policy: { allowed_capabilities: ['read'], network_allowed: false },
+    budget_policy: { max_model_calls: 8, max_tokens: 8000, timeout_seconds: 1200 },
+    concurrency_policy: { max_running_tasks: 1 },
+    memory_policy: {
+      candidate_generation: true,
+      promotion: 'owner_confirmation',
+      max_context_facts: 8,
+      max_context_bytes: 8192,
+    },
+  },
+  project_bindings: [{
+    id: 'project-main',
+    label: 'GoHermit',
+    workspace_real_path: '/test/workspace',
+    workspace_fingerprint: 'f'.repeat(64),
+    read_allowed: true,
+    mutation_allowed: true,
+    allowed_tool_capabilities: ['read'],
+    network_allowed: false,
+  }],
+}
+let employeeTask = {
+  schema_version: 1,
+  id: 'task-queued',
+  employee_id: employeeSummary.id,
+  employee_revision: employeeSummary.revision,
+  prompt: 'Prepare release.',
+  state: 'queued',
+  created_at: now,
+  updated_at: now,
+  skills: [],
+  knowledge: [],
+  memory_facts: [],
+  project_binding: {
+    id: 'project-main',
+    label: 'GoHermit',
+    workspace_fingerprint: 'f'.repeat(64),
+    read_allowed: true,
+    mutation_allowed: true,
+    allowed_tool_capabilities: ['read'],
+    network_allowed: false,
+  },
+  policy: {
+    allowed_capabilities: ['read'],
+    network_allowed: false,
+    budget: { max_model_calls: 4, max_tokens: 4000, timeout_seconds: 600 },
+  },
+  snapshot_digest: 'a'.repeat(64),
+  artifacts: [],
+}
+const initialEmployeeTask = structuredClone(employeeTask)
 const streams = new Map()
 const stats = {
   activeSSE: 0,
@@ -395,8 +496,107 @@ async function handleApi(request, response, url) {
     json(response, 200, owner)
     return true
   }
+  if (request.method === 'GET' && pathname === '/api/employees') {
+    json(response, 200, { employees: [employeeSummary] })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/projects') {
+    json(response, 200, { projects: employeeRecord.project_bindings })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/skills') {
+    json(response, 200, { skills: [] })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/employees/employee-ada') {
+    json(response, 200, employeeRecord)
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/employees/employee-ada/skills') {
+    json(response, 200, {
+      employee_id: employeeSummary.id,
+      revision: employeeSummary.revision,
+      bindings: [],
+    })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/employees/employee-ada/knowledge') {
+    json(response, 200, { sources: [], indexes: [], results: [] })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/employees/employee-ada/memory') {
+    json(response, 200, { facts: [] })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/employees/employee-ada/memory-candidates') {
+    json(response, 200, { candidates: [] })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/employees/employee-ada/activity') {
+    json(response, 200, { events: [] })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/employees/employee-ada/tasks') {
+    json(response, 200, { tasks: [employeeTask] })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/employee-tasks/task-queued') {
+    json(response, 200, employeeTask)
+    return true
+  }
+  if (request.method === 'POST' && pathname === '/api/employee-tasks/task-queued/start') {
+    employeeTask = {
+      ...employeeTask,
+      state: 'running',
+      session_id: 'session-1',
+      run_id: 'run-task-1',
+    }
+    json(response, 200, employeeTask)
+    return true
+  }
   if (request.method === 'GET' && pathname === '/api/loops') {
     json(response, 200, { loops })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/loops/daily-review') {
+    json(response, 200, loopDefinition)
+    return true
+  }
+  if (request.method === 'PUT' && pathname === '/api/loops/daily-review') {
+    const input = await body(request)
+    json(response, 200, { ...input, revision: input.revision + 1, updated_at: now })
+    return true
+  }
+  if (request.method === 'POST' && pathname === '/api/loops/daily-review/dry-run') {
+    json(response, 200, {
+      loop_id: loopDefinition.id,
+      definition_revision: loopDefinition.revision,
+      definition_valid: true,
+      workspace_identity: loopDefinition.workspace_identity,
+      workspace_matches: true,
+      git_clean: true,
+      task_prompt: loopDefinition.task_source.prompt,
+      agent: loopDefinition.agent_selection,
+      roles: [],
+      write_scope: 'read-only',
+      checks: [],
+      budget: loopDefinition.budget,
+      requires_approval: false,
+      ready: true,
+      reasons: [],
+    })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/team-template/export') {
+    json(response, 200, { schema_version: 1, roles: [] })
+    return true
+  }
+  if (request.method === 'POST' && pathname === '/api/team-template/import') {
+    json(response, 200, await body(request))
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/loop-invocations/invocation-1') {
+    json(response, 200, loopInvocation)
     return true
   }
   const apiKeyMatch = pathname.match(/^\/api\/settings\/providers\/([^/]+)\/api-key$/u)
@@ -436,7 +636,7 @@ async function handleApi(request, response, url) {
     return true
   }
   if (request.method === 'GET' && pathname === '/api/loops/daily-review/invocations') {
-    json(response, 200, { invocations, limit: 50 })
+    json(response, 200, { invocations: [loopInvocation], limit: 50 })
     return true
   }
   if (request.method === 'GET' && pathname === '/api/sessions') {
@@ -683,6 +883,7 @@ const server = createServer(async (request, response) => {
       codexConfigured = true
       loginSession = null
       loginPolls = 0
+      employeeTask = structuredClone(initialEmployeeTask)
       stats.maxSSE = stats.activeSSE
       stats.urls = []
       stats.runStarts = 0
