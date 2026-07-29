@@ -130,6 +130,58 @@ func preparedCompactSnapshot() employee.CompactSnapshot {
 	return value
 }
 
+func TestHiddenTeamEmployeeSnapshotIsBoundedAndFailsClosedOnMismatch(t *testing.T) {
+	root := t.TempDir()
+	compact := preparedCompactSnapshot()
+	compact.TaskID = "explore"
+	compact.TaskSnapshotDigest = strings.Repeat("a", 64)
+	if err := employee.SealCompactSnapshot(&compact); err != nil {
+		t.Fatal(err)
+	}
+	assignment := team.TeamEmployeeAssignment{
+		WorkItemID: "explore", Role: team.RoleExplorer,
+		EmployeeID: "employee-a", EmployeeRevision: 7,
+		EmployeeSnapshotDigest: strings.Repeat("a", 64),
+		ProjectBindingID:       "project-a", WorkspaceFingerprint: strings.Repeat("b", 64),
+		Company: "deepseek", Access: "deepseek", Model: "deepseek-chat",
+		AgentProfile: "explorer", EffectivePolicyDigest: strings.Repeat("c", 64),
+		ContextDigest: compact.Digest,
+	}
+	if err := team.SealTeamEmployeeAssignment(&assignment); err != nil {
+		t.Fatal(err)
+	}
+	child, err := NewTeamWorker(
+		"worker-mission-explore", "inspect", "Explore", root, "digest",
+		"parent", "run-a",
+		Selection{Company: "deepseek", Access: "deepseek", Model: "deepseek-chat", Agent: "explorer"},
+		assignment, compact,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _ := NewStore(root, ".gohermit")
+	if err = store.Save(context.Background(), child); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(context.Background(), child.ID)
+	if err != nil || loaded.TeamEmployeeContextSnapshot == nil ||
+		loaded.TeamEmployeeContextSnapshot.Digest != compact.Digest {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+	path := filepath.Join(root, ".gohermit", "sessions", child.ID, "session.json")
+	raw, _ := os.ReadFile(path)
+	var document map[string]any
+	_ = json.Unmarshal(raw, &document)
+	document["work_item_id"] = "other"
+	raw, _ = json.Marshal(document)
+	if err = os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Load(context.Background(), child.ID); err == nil {
+		t.Fatal("mismatched hidden Worker identity must fail closed")
+	}
+}
+
 func TestSaveLoadAndExternalChange(t *testing.T) {
 	root := t.TempDir()
 	store, err := NewStore(root, ".gohermit")

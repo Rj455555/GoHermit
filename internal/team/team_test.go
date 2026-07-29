@@ -1,7 +1,10 @@
 package team
 
 import (
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestMissionDependencyAndWriterRules(t *testing.T) {
@@ -103,5 +106,62 @@ func TestAdaptiveMissionChoosesTopologyForTaskIntent(t *testing.T) {
 	}
 	if writers < 1 || !verifier || len(implementation.WorkItems) <= len(readOnly.WorkItems) {
 		t.Fatalf("implementation topology=%+v", implementation.WorkItems)
+	}
+}
+
+func TestTeamEmployeeAssignmentSealIntegrityAndBounds(t *testing.T) {
+	value := TeamEmployeeAssignment{
+		WorkItemID: "explore", Role: RoleExplorer,
+		EmployeeID: "employee-a", EmployeeRevision: 3,
+		EmployeeSnapshotDigest: strings.Repeat("a", 64),
+		ProjectBindingID:       "project-a", WorkspaceFingerprint: strings.Repeat("b", 64),
+		Company: "deepseek", Access: "deepseek", Model: "deepseek-chat",
+		AgentProfile: "explorer", EffectivePolicyDigest: strings.Repeat("c", 64),
+		ContextDigest: strings.Repeat("d", 64),
+	}
+	if err := SealTeamEmployeeAssignment(&value); err != nil {
+		t.Fatal(err)
+	}
+	tampered := value
+	tampered.Model = "deepseek-reasoner"
+	if err := ValidateTeamEmployeeAssignment(tampered); err == nil {
+		t.Fatal("tampered assignment must fail closed")
+	}
+	oversized := value
+	oversized.Model = strings.Repeat("m", MaxEmployeeAssignmentBytes)
+	oversized.Digest = ""
+	if err := SealTeamEmployeeAssignment(&oversized); err == nil {
+		t.Fatal("assignment larger than 16 KiB must be rejected")
+	}
+}
+
+func TestMissionEmployeeAssignmentAggregateLimit(t *testing.T) {
+	mission, err := NewMission("mission-a", "run-a", "inspect", Budget{
+		MaxWorkItems: 10, MaxModelCalls: 10, MaxTokens: 1000, Timeout: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mission.EmployeeAssignments = map[string]TeamEmployeeAssignment{}
+	for index := 0; index < 9; index++ {
+		id := fmt.Sprintf("work-%d", index)
+		if err = mission.AddWork(WorkItem{ID: id, Title: id, Goal: "inspect", Role: RoleExplorer}); err != nil {
+			t.Fatal(err)
+		}
+		value := TeamEmployeeAssignment{
+			WorkItemID: id, Role: RoleExplorer, EmployeeID: "employee-a",
+			EmployeeRevision: 1, EmployeeSnapshotDigest: strings.Repeat("a", 64),
+			ProjectBindingID: "project-a", WorkspaceFingerprint: strings.Repeat("b", 64),
+			Company: "deepseek", Access: "deepseek", Model: strings.Repeat("m", 7600),
+			AgentProfile: "explorer", EffectivePolicyDigest: strings.Repeat("c", 64),
+			ContextDigest: strings.Repeat("d", 64),
+		}
+		if err = SealTeamEmployeeAssignment(&value); err != nil {
+			t.Fatal(err)
+		}
+		mission.EmployeeAssignments[id] = value
+	}
+	if err := mission.ValidateEmployeeAssignments(); err == nil {
+		t.Fatal("Mission assignment aggregate larger than 64 KiB must be rejected")
 	}
 }

@@ -77,13 +77,13 @@ func (s *Service) CreateSession(ctx context.Context, in CreateSessionInput) (*se
 // StartRun loads a session and launches a run carrying the given user
 // message. The workspace run gate makes a concurrent launch a KindConflict.
 func (s *Service) StartRun(ctx context.Context, sessionID, message string) (string, error) {
+	sess, err := s.loadPublicSession(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
 	message = strings.TrimSpace(message)
 	if message == "" || len(message) > 16<<10 {
 		return "", &Error{Kind: KindInvalid, Message: "message must contain 1 to 16384 bytes"}
-	}
-	sess, err := s.store.Load(ctx, sessionID)
-	if err != nil {
-		return "", classified(KindNotFound, err)
 	}
 	runID, err := s.launchSessionRun(sess, message)
 	if err != nil {
@@ -97,9 +97,9 @@ func (s *Service) StartRun(ctx context.Context, sessionID, message string) (stri
 // approvals died with it (ADR 0011) and the resumed run requests fresh
 // ones.
 func (s *Service) ResumeRun(ctx context.Context, sessionID, runID string) (string, error) {
-	sess, err := s.store.Recover(ctx, sessionID)
+	sess, err := s.recoverPublicSession(ctx, sessionID)
 	if err != nil {
-		return "", classified(KindNotFound, err)
+		return "", err
 	}
 	run := sess.ActiveRun()
 	if run == nil || run.ID != runID || run.Status != session.RunInterrupted {
@@ -119,9 +119,9 @@ func (s *Service) ResumeRun(ctx context.Context, sessionID, runID string) (strin
 
 // ApprovePlan marks a queued review-plan run approved and relaunches it.
 func (s *Service) ApprovePlan(ctx context.Context, sessionID, runID string) (string, error) {
-	sess, err := s.store.Load(ctx, sessionID)
+	sess, err := s.loadPublicSession(ctx, sessionID)
 	if err != nil {
-		return "", classified(KindNotFound, err)
+		return "", err
 	}
 	run := sess.ActiveRun()
 	if run == nil || run.ID != runID || run.Status != session.RunQueued || run.PlanMode != session.PlanReview || run.Plan == nil {
@@ -156,33 +156,34 @@ func classifiedLaunchError(err error) error {
 // and the call reports activeCancelled=true; a queued review-plan run is
 // cancelled durably through the commit path and the call reports false.
 func (s *Service) CancelRun(ctx context.Context, sessionID, runID string) (activeCancelled bool, err error) {
+	sess, err := s.loadPublicSession(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
 	s.runMu.Lock()
 	if s.activeSession != sessionID || s.activeRun != runID || s.cancelRun == nil {
-		sess, loadErr := s.store.Load(ctx, sessionID)
-		if loadErr == nil {
-			run := sess.ActiveRun()
-			if run != nil && run.ID == runID && run.Status == session.RunQueued && run.PlanMode == session.PlanReview && !run.PlanApproved {
-				transition, cancelErr := runcontrol.Cancel(run.Plan, "计划未执行，已由用户停止")
-				if cancelErr == nil {
-					now := time.Now().UTC()
-					run.Status, run.CompletedAt, run.UpdatedAt = session.RunCancelled, &now, now
-					sess.ActiveRunID = ""
-					runtimeEvents := make([]event.Event, 0, 2)
-					if transition.Changed {
-						runtimeEvents = append(runtimeEvents, s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, transition.Detail))
-					}
-					cancelled := event.New(event.TaskCancelled, sess.ID)
-					cancelled.RunID, cancelled.Message = run.ID, "计划已停止"
-					runtimeEvents = append(runtimeEvents, cancelled)
-					runtimeEvents = s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, run.ID, now), runtimeEvents)
-					_, cancelErr = s.commitAndPublishMany(sess, runtimeEvents)
+		run := sess.ActiveRun()
+		if run != nil && run.ID == runID && run.Status == session.RunQueued && run.PlanMode == session.PlanReview && !run.PlanApproved {
+			transition, cancelErr := runcontrol.Cancel(run.Plan, "计划未执行，已由用户停止")
+			if cancelErr == nil {
+				now := time.Now().UTC()
+				run.Status, run.CompletedAt, run.UpdatedAt = session.RunCancelled, &now, now
+				sess.ActiveRunID = ""
+				runtimeEvents := make([]event.Event, 0, 2)
+				if transition.Changed {
+					runtimeEvents = append(runtimeEvents, s.planRuntimeEvent(sess.ID, run, event.PlanUpdated, transition.StepID, transition.Detail))
 				}
-				s.runMu.Unlock()
-				if cancelErr != nil {
-					return false, classified(KindInternal, cancelErr)
-				}
-				return false, nil
+				cancelled := event.New(event.TaskCancelled, sess.ID)
+				cancelled.RunID, cancelled.Message = run.ID, "计划已停止"
+				runtimeEvents = append(runtimeEvents, cancelled)
+				runtimeEvents = s.appendApprovalExpiredEvents(sess, runcontrol.ExpireRunApprovals(sess.ApprovalRequests, run.ID, now), runtimeEvents)
+				_, cancelErr = s.commitAndPublishMany(sess, runtimeEvents)
 			}
+			s.runMu.Unlock()
+			if cancelErr != nil {
+				return false, classified(KindInternal, cancelErr)
+			}
+			return false, nil
 		}
 		s.runMu.Unlock()
 		return false, &Error{Kind: KindConflict, Message: "run is not active"}
@@ -202,6 +203,20 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 	liveModels, err := s.validateSelection(context.Background(), selection)
 	if err != nil {
 		return "", err
+	}
+	// Resolve every Team Employee before creating or changing a Run. A
+	// resumed Mission restores its already pinned hidden Worker snapshots;
+	// a new Mission resolves the current Employee stores exactly once.
+	var teamPlan *teamRolePlan
+	if selection.Agent == "team" {
+		if sess.Mission != nil && len(sess.Mission.EmployeeAssignments) > 0 {
+			teamPlan, err = s.restoreTeamEmployeePlan(context.Background(), sess)
+		} else {
+			teamPlan, err = s.resolveTeamRolePlan(context.Background(), selection)
+		}
+		if err != nil {
+			return "", err
+		}
 	}
 	apiKey, err := s.resolveCredential(context.Background(), selection)
 	if err != nil {
@@ -253,14 +268,8 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 	}
 	if selection.Agent == "team" && (sess.Mission == nil || sess.Mission.RunID != run.ID) {
 		budget := team.DefaultBudget()
-		rolePlan, planErr := s.resolveTeamRolePlan(context.Background(), selection)
-		if planErr != nil {
-			s.active.Store(false)
-			s.runMu.Unlock()
-			return "", planErr
-		}
-		if rolePlan != nil && len(rolePlan.roleLimits) > 0 {
-			budget.RoleLimits = rolePlan.roleLimits
+		if teamPlan != nil && len(teamPlan.roleLimits) > 0 {
+			budget.RoleLimits = teamPlan.roleLimits
 		}
 		mission, missionErr := team.AdaptiveMission("mission-"+run.ID, run.ID, run.Message, budget)
 		if missionErr != nil {
@@ -269,6 +278,11 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 			return "", missionErr
 		}
 		sess.Mission = mission
+		if materializeErr := s.materializeTeamEmployeeAssignments(context.Background(), sess, teamPlan); materializeErr != nil {
+			s.active.Store(false)
+			s.runMu.Unlock()
+			return "", materializeErr
+		}
 	}
 	var createdPlanEvent event.Event
 	if run.Plan == nil {
@@ -325,7 +339,7 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 			s.approvals.Release(sess.ID)
 		}()
 		if selection.Agent == "team" {
-			s.runTeam(runCtx, sess, runID, selection, apiKey, liveModels)
+			s.runTeam(runCtx, sess, runID, selection, apiKey, liveModels, teamPlan)
 			return
 		}
 		var runtime *app.Runtime

@@ -110,9 +110,9 @@ func (b *approvalBroker) Release(sessionID string) {
 // durable checkpoint — a lazy expiry becomes durable at the next decide or
 // batch trigger that travels the commit path.
 func (s *Service) ListApprovals(ctx context.Context, sessionID, filter string) ([]approval.Request, error) {
-	sess, err := s.store.Load(ctx, sessionID)
+	sess, err := s.loadPublicSession(ctx, sessionID)
 	if err != nil {
-		return nil, classified(KindNotFound, err)
+		return nil, err
 	}
 	filter = strings.TrimSpace(filter)
 	switch approval.Status(filter) {
@@ -146,12 +146,12 @@ func (s *Service) ListApprovals(ctx context.Context, sessionID, filter string) (
 // path and fails closed: the runner keeps waiting until its deadline and the
 // request expires (deny by default).
 func (s *Service) DecideApproval(ctx context.Context, sessionID, requestID string, approve bool) (*approval.Request, event.Event, error) {
+	sess, err := s.loadPublicSession(ctx, sessionID)
+	if err != nil {
+		return nil, event.Event{}, err
+	}
 	if requestID == "" || len(requestID) > approval.MaxIDBytes {
 		return nil, event.Event{}, &Error{Kind: KindInvalid, Message: "invalid approval request id"}
-	}
-	sess, err := s.store.Load(ctx, sessionID)
-	if err != nil {
-		return nil, event.Event{}, classified(KindNotFound, err)
 	}
 	var target *approval.Request
 	for i := range sess.ApprovalRequests {

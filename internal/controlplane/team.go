@@ -19,7 +19,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/teamtemplate"
 )
 
-func (s *Service) runTeam(ctx context.Context, sess *session.Session, runID string, selection config.RuntimeSelection, apiKey string, liveModels []config.ModelOption) {
+func (s *Service) runTeam(ctx context.Context, sess *session.Session, runID string, selection config.RuntimeSelection, apiKey string, liveModels []config.ModelOption, preparedPlans ...*teamRolePlan) {
 	run := sess.ActiveRun()
 	if run == nil || run.ID != runID || sess.Mission == nil {
 		s.failLaunchedRun(sess, runID, errors.New("team mission is missing"))
@@ -27,7 +27,16 @@ func (s *Service) runTeam(ctx context.Context, sess *session.Session, runID stri
 	}
 	// A non-empty team template pins roles to their own validated runtimes; a
 	// load or resolution failure fails the launch closed, like creation.
-	rolePlan, planErr := s.resolveTeamRolePlan(ctx, selection)
+	var rolePlan *teamRolePlan
+	if len(preparedPlans) > 0 {
+		rolePlan = preparedPlans[0]
+	}
+	var planErr error
+	if rolePlan == nil && len(sess.Mission.EmployeeAssignments) > 0 {
+		rolePlan, planErr = s.restoreTeamEmployeePlan(ctx, sess)
+	} else if rolePlan == nil {
+		rolePlan, planErr = s.resolveTeamRolePlan(ctx, selection)
+	}
 	if planErr != nil {
 		s.failLaunchedRun(sess, runID, planErr)
 		return
@@ -55,6 +64,7 @@ func (s *Service) runTeam(ctx context.Context, sess *session.Session, runID stri
 	}
 	if rolePlan != nil {
 		teamWorker.RoleSelections = rolePlan.overrides
+		teamWorker.WorkItemRuntimes = rolePlan.workItems
 	}
 	// A loop invocation's verification recipe feeds the existing verifier:
 	// the worker runs the declared checks deterministically before the
@@ -70,6 +80,10 @@ func (s *Service) runTeam(ctx context.Context, sess *session.Session, runID stri
 	var sinkErr error
 	coordinator := &team.Coordinator{
 		Worker: worker,
+		PrepareAssignment: func(mission *team.Mission, item *team.WorkItem) error {
+			sess.Mission = mission
+			return s.materializeTeamEmployeeWorkItem(context.WithoutCancel(ctx), sess, rolePlan, item)
+		},
 		Sink: func(teamEvent team.TeamEvent) {
 			if sinkErr != nil {
 				return
@@ -329,6 +343,12 @@ func (s *Service) validateTeamSelections(ctx context.Context, sessionSelection c
 	checked := map[string]bool{}
 	for _, role := range teamValidationRoles {
 		roleSelection := selections[role]
+		if roleSelection.EmployeeID != "" {
+			if _, err := s.resolveTeamEmployeeRole(ctx, team.Role(role), roleSelection); err != nil {
+				return fmt.Errorf("team role %q Employee: %w", role, err)
+			}
+			continue
+		}
 		selection := config.RuntimeSelection{Company: roleSelection.Company, Access: roleSelection.Access, Model: roleSelection.Model, Agent: sessionSelection.Agent}
 		key := selection.Company + "\x00" + selection.Access + "\x00" + selection.Model
 		if checked[key] {
@@ -345,8 +365,10 @@ func (s *Service) validateTeamSelections(ctx context.Context, sessionSelection c
 // teamRolePlan holds the per-role execution overrides and budget limits a
 // non-empty team template implies for one launch.
 type teamRolePlan struct {
-	overrides  map[string]app.RoleRuntime
-	roleLimits map[team.Role]team.Usage
+	overrides     map[string]app.RoleRuntime
+	roleLimits    map[team.Role]team.Usage
+	employeeRoles map[string]teamEmployeeRole
+	workItems     map[string]app.RoleRuntime
 }
 
 // resolveTeamRolePlan loads the team template and resolves every role's
@@ -364,21 +386,34 @@ func (s *Service) resolveTeamRolePlan(ctx context.Context, sessionSelection conf
 	}
 	selections := teamtemplate.EffectiveSelections(template)
 	resolved := map[string]app.RoleRuntime{}
-	plan := &teamRolePlan{overrides: map[string]app.RoleRuntime{}}
+	plan := &teamRolePlan{
+		overrides:     map[string]app.RoleRuntime{},
+		employeeRoles: map[string]teamEmployeeRole{},
+		workItems:     map[string]app.RoleRuntime{},
+	}
 	for _, role := range teamValidationRoles {
 		roleSelection := selections[role]
-		selection := config.RuntimeSelection{Company: roleSelection.Company, Access: roleSelection.Access, Model: roleSelection.Model, Agent: sessionSelection.Agent}
-		key := selection.Company + "\x00" + selection.Access + "\x00" + selection.Model
-		runtime, ok := resolved[key]
-		if !ok {
-			_, apiKey, liveModels, resolveErr := s.resolveTeamRoleSelection(ctx, selection)
+		if roleSelection.EmployeeID != "" {
+			employeeRole, resolveErr := s.resolveTeamEmployeeRole(ctx, team.Role(role), roleSelection)
 			if resolveErr != nil {
-				return nil, fmt.Errorf("team role %q: %w", role, resolveErr)
+				return nil, fmt.Errorf("team role %q Employee: %w", role, resolveErr)
 			}
-			runtime = app.RoleRuntime{Selection: selection, APIKey: apiKey, Models: liveModels}
-			resolved[key] = runtime
+			plan.employeeRoles[role] = employeeRole
+			plan.overrides[role] = employeeRole.runtime
+		} else {
+			selection := config.RuntimeSelection{Company: roleSelection.Company, Access: roleSelection.Access, Model: roleSelection.Model, Agent: sessionSelection.Agent}
+			key := selection.Company + "\x00" + selection.Access + "\x00" + selection.Model
+			runtime, ok := resolved[key]
+			if !ok {
+				_, apiKey, liveModels, resolveErr := s.resolveTeamRoleSelection(ctx, selection)
+				if resolveErr != nil {
+					return nil, fmt.Errorf("team role %q: %w", role, resolveErr)
+				}
+				runtime = app.RoleRuntime{Selection: selection, APIKey: apiKey, Models: liveModels}
+				resolved[key] = runtime
+			}
+			plan.overrides[role] = runtime
 		}
-		plan.overrides[role] = runtime
 		if roleSelection.MaxModelCalls > 0 || roleSelection.MaxTokens > 0 {
 			if plan.roleLimits == nil {
 				plan.roleLimits = map[team.Role]team.Usage{}

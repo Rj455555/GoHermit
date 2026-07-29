@@ -23,6 +23,8 @@ type RoleAvailability struct {
 	Model                string `json:"model"`
 	CredentialConfigured bool   `json:"credential_configured"`
 	Detail               string `json:"detail,omitempty"`
+	EmployeeID           string `json:"employee_id,omitempty"`
+	EmployeeRevision     int    `json:"employee_revision,omitempty"`
 }
 
 // DryRunReport is the result of inspecting a loop definition without
@@ -84,7 +86,8 @@ func ValidateDryRunReport(r DryRunReport) error {
 		return fmt.Errorf("dry run report exceeds role limit %d", MaxDryRunRoles)
 	}
 	for _, role := range r.Roles {
-		if len(role.Role) > MaxIDBytes || len(role.Company) > MaxTextBytes || len(role.Access) > MaxTextBytes || len(role.Model) > MaxTextBytes || len(role.Detail) > MaxTextBytes {
+		if len(role.Role) > MaxIDBytes || len(role.Company) > MaxTextBytes || len(role.Access) > MaxTextBytes || len(role.Model) > MaxTextBytes || len(role.Detail) > MaxTextBytes ||
+			len(role.EmployeeID) > MaxIDBytes || role.EmployeeRevision < 0 {
 			return fmt.Errorf("dry run report role %q field exceeds size limit", role.Role)
 		}
 	}

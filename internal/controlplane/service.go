@@ -212,9 +212,9 @@ func (s *Service) ListSessions(ctx context.Context, limit int) ([]session.Sessio
 
 // GetSession loads one session and its visible message history.
 func (s *Service) GetSession(ctx context.Context, id string) (*session.Session, []session.MessageRecord, error) {
-	sess, err := s.store.Load(ctx, id)
+	sess, err := s.loadPublicSession(ctx, id)
 	if err != nil {
-		return nil, nil, classified(KindNotFound, err)
+		return nil, nil, err
 	}
 	messages, err := s.store.Messages(sess.ID)
 	if err != nil {
@@ -223,19 +223,54 @@ func (s *Service) GetSession(ctx context.Context, id string) (*session.Session, 
 	return sess, messages, nil
 }
 
-// LoadSession loads one session, reporting KindNotFound when it does not
-// exist. It backs existence checks before event streaming.
+// LoadSession loads a public Session, reporting the same KindNotFound response
+// for absent and hidden Team Worker Sessions. It is the reusable authorization
+// boundary for public transports; internal Team execution and recovery use the
+// Session Store directly.
 func (s *Service) LoadSession(ctx context.Context, id string) (*session.Session, error) {
+	return s.loadPublicSession(ctx, id)
+}
+
+func (s *Service) loadPublicSession(ctx context.Context, id string) (*session.Session, error) {
 	sess, err := s.store.Load(ctx, id)
 	if err != nil {
 		return nil, classified(KindNotFound, err)
 	}
+	if err = requirePublicSession(sess); err != nil {
+		return nil, err
+	}
 	return sess, nil
+}
+
+func (s *Service) recoverPublicSession(ctx context.Context, id string) (*session.Session, error) {
+	if _, err := s.loadPublicSession(ctx, id); err != nil {
+		return nil, err
+	}
+	sess, err := s.store.Recover(ctx, id)
+	if err != nil {
+		return nil, classified(KindNotFound, err)
+	}
+	if err = requirePublicSession(sess); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
+func requirePublicSession(sess *session.Session) error {
+	if sess == nil || sess.Hidden {
+		// Deliberately identical to an absent Session: no public caller may
+		// learn whether a guessed hidden Worker Session ID exists.
+		return &Error{Kind: KindNotFound, Message: "session not found"}
+	}
+	return nil
 }
 
 // SessionEvents returns the durable event journal of one session after the
 // given sequence.
 func (s *Service) SessionEvents(ctx context.Context, id string, after uint64) ([]event.Event, error) {
+	if _, err := s.loadPublicSession(ctx, id); err != nil {
+		return nil, err
+	}
 	events, err := s.store.Events(id, after)
 	if err != nil {
 		return nil, classified(KindNotFound, err)

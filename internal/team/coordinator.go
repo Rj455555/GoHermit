@@ -11,12 +11,13 @@ import (
 )
 
 type Assignment struct {
-	MissionID   string        `json:"mission_id"`
-	Goal        string        `json:"goal"`
-	WorkItem    WorkItem      `json:"work_item"`
-	Inputs      []Handoff     `json:"inputs,omitempty"`
-	MaxTokens   int           `json:"max_tokens"`
-	MaxDuration time.Duration `json:"max_duration"`
+	MissionID   string                  `json:"mission_id"`
+	Goal        string                  `json:"goal"`
+	WorkItem    WorkItem                `json:"work_item"`
+	Inputs      []Handoff               `json:"inputs,omitempty"`
+	MaxTokens   int                     `json:"max_tokens"`
+	MaxDuration time.Duration           `json:"max_duration"`
+	Employee    *TeamEmployeeAssignment `json:"employee,omitempty"`
 }
 
 type Result struct {
@@ -57,6 +58,10 @@ type Coordinator struct {
 	MaxRepairAttempts int
 	Sink              func(TeamEvent)
 	Checkpoint        func(*Mission) error
+	// PrepareAssignment pins optional Employee metadata/context before any
+	// WorkItem in a batch starts. It runs for the whole batch first so Worker
+	// goroutines never race a runtime-map update.
+	PrepareAssignment func(*Mission, *WorkItem) error
 }
 
 func DefaultMission(id, runID, goal string, budget Budget) (*Mission, error) {
@@ -220,6 +225,17 @@ const VerificationFailureMessage = "independent verification did not pass"
 func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []string) error {
 	batchCtx, cancelBatch := context.WithCancel(ctx)
 	defer cancelBatch()
+	if c.PrepareAssignment != nil {
+		for _, id := range ready {
+			item := mission.work(id)
+			if item == nil {
+				return fmt.Errorf("work item %q is missing", id)
+			}
+			if err := c.PrepareAssignment(mission, item); err != nil {
+				return err
+			}
+		}
+	}
 	results := make(chan workResult, len(ready))
 	var group sync.WaitGroup
 	started := 0
@@ -259,6 +275,10 @@ func (c *Coordinator) runBatch(ctx context.Context, mission *Mission, ready []st
 			return err
 		}
 		assignment := Assignment{MissionID: mission.ID, Goal: mission.Goal, WorkItem: *item, Inputs: dependencyHandoffs(mission, *item), MaxTokens: max(1024, (mission.Budget.MaxTokens-mission.Usage.Tokens)/max(1, len(mission.WorkItems))), MaxDuration: mission.Budget.Timeout}
+		if pinned, ok := mission.EmployeeAssignments[item.ID]; ok {
+			copy := pinned
+			assignment.Employee = &copy
+		}
 		started++
 		group.Add(1)
 		go func(id string, role Role, assignment Assignment) {

@@ -2,6 +2,9 @@
 package team
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -10,11 +13,14 @@ import (
 )
 
 const (
-	DefaultTemplate     = "personal-development-team"
-	MaxWorkItems        = 24
-	MaxHandoffs         = 48
-	MaxTextBytes        = 32 << 10
-	MaxProposedSubsteps = 8
+	DefaultTemplate                 = "personal-development-team"
+	MaxWorkItems                    = 24
+	MaxHandoffs                     = 48
+	MaxTextBytes                    = 32 << 10
+	MaxProposedSubsteps             = 8
+	EmployeeAssignmentSchemaVersion = 1
+	MaxEmployeeAssignmentBytes      = 16 << 10
+	MaxMissionAssignmentsBytes      = 64 << 10
 )
 
 type Role string
@@ -137,6 +143,28 @@ type Handoff struct {
 	CreatedAt     time.Time     `json:"created_at"`
 }
 
+// TeamEmployeeAssignment is the immutable, public-safe identity and digest
+// envelope pinned to one WorkItem. Employee context values (especially
+// private Memory) are deliberately absent; the matching hidden Worker
+// Session owns the independently bounded compact snapshot.
+type TeamEmployeeAssignment struct {
+	SchemaVersion          int    `json:"schema_version"`
+	WorkItemID             string `json:"work_item_id"`
+	Role                   Role   `json:"role"`
+	EmployeeID             string `json:"employee_id"`
+	EmployeeRevision       int    `json:"employee_revision"`
+	EmployeeSnapshotDigest string `json:"employee_snapshot_digest"`
+	ProjectBindingID       string `json:"project_binding_id"`
+	WorkspaceFingerprint   string `json:"workspace_fingerprint"`
+	Company                string `json:"company"`
+	Access                 string `json:"access"`
+	Model                  string `json:"model"`
+	AgentProfile           string `json:"agent_profile"`
+	EffectivePolicyDigest  string `json:"effective_policy_digest"`
+	ContextDigest          string `json:"context_digest"`
+	Digest                 string `json:"digest"`
+}
+
 // HasBlockingFindings reports whether the handoff carries at least one
 // finding that must be repaired before delivery.
 func (h Handoff) HasBlockingFindings() bool {
@@ -161,9 +189,106 @@ type Mission struct {
 	UsageByRole map[Role]Usage `json:"usage_by_role,omitempty"`
 	WorkItems   []WorkItem     `json:"work_items"`
 	Handoffs    []Handoff      `json:"handoffs"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	Error       string         `json:"error,omitempty"`
+	// EmployeeAssignments is keyed by WorkItem ID. It contains no private
+	// Employee context; hidden Worker Sessions hold those immutable values.
+	EmployeeAssignments map[string]TeamEmployeeAssignment `json:"employee_assignments,omitempty"`
+	CreatedAt           time.Time                         `json:"created_at"`
+	UpdatedAt           time.Time                         `json:"updated_at"`
+	Error               string                            `json:"error,omitempty"`
+}
+
+// SealTeamEmployeeAssignment canonicalizes and seals a newly resolved
+// assignment. It never accepts unbounded or private context fields because
+// the type does not expose any.
+func SealTeamEmployeeAssignment(value *TeamEmployeeAssignment) error {
+	if value == nil {
+		return errors.New("Team Employee assignment is required")
+	}
+	value.SchemaVersion = EmployeeAssignmentSchemaVersion
+	value.Digest = ""
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode Team Employee assignment: %w", err)
+	}
+	sum := sha256.Sum256(raw)
+	value.Digest = hex.EncodeToString(sum[:])
+	return ValidateTeamEmployeeAssignment(*value)
+}
+
+// ValidateTeamEmployeeAssignment enforces identity, role, size, canonical
+// SHA-256 fields, and deterministic digest integrity.
+func ValidateTeamEmployeeAssignment(value TeamEmployeeAssignment) error {
+	if value.SchemaVersion != EmployeeAssignmentSchemaVersion ||
+		value.WorkItemID == "" || value.EmployeeID == "" || value.EmployeeRevision < 1 ||
+		!validRole(value.Role) || value.ProjectBindingID == "" ||
+		value.WorkspaceFingerprint == "" || value.Company == "" || value.Access == "" ||
+		value.Model == "" || value.AgentProfile == "" {
+		return errors.New("Team Employee assignment identity is invalid")
+	}
+	for _, identifier := range []string{value.WorkItemID, value.EmployeeID, value.ProjectBindingID} {
+		if len(identifier) > 128 || strings.ContainsAny(identifier, `/\%`) ||
+			identifier == "." || identifier == ".." || strings.Contains(identifier, "..") {
+			return errors.New("Team Employee assignment identifier is invalid")
+		}
+	}
+	for _, digest := range []string{
+		value.EmployeeSnapshotDigest, value.WorkspaceFingerprint,
+		value.EffectivePolicyDigest, value.ContextDigest, value.Digest,
+	} {
+		if !canonicalSHA256(digest) {
+			return errors.New("Team Employee assignment digest is invalid")
+		}
+	}
+	expected := value
+	expected.Digest = ""
+	raw, err := json.Marshal(expected)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(raw)
+	if value.Digest != hex.EncodeToString(sum[:]) {
+		return errors.New("Team Employee assignment digest mismatch")
+	}
+	raw, err = json.Marshal(value)
+	if err != nil || len(raw) > MaxEmployeeAssignmentBytes {
+		return errors.New("Team Employee assignment exceeds 16 KiB")
+	}
+	return nil
+}
+
+// ValidateEmployeeAssignments verifies every assignment belongs to an
+// existing WorkItem and keeps the parent Mission aggregate below 64 KiB.
+func (m *Mission) ValidateEmployeeAssignments() error {
+	if m == nil || len(m.EmployeeAssignments) == 0 {
+		return nil
+	}
+	work := make(map[string]Role, len(m.WorkItems))
+	for _, item := range m.WorkItems {
+		work[item.ID] = item.Role
+	}
+	total := 0
+	for id, assignment := range m.EmployeeAssignments {
+		if id != assignment.WorkItemID || work[id] != assignment.Role {
+			return errors.New("Team Employee assignment does not match its WorkItem")
+		}
+		if err := ValidateTeamEmployeeAssignment(assignment); err != nil {
+			return err
+		}
+		raw, _ := json.Marshal(assignment)
+		total += len(raw)
+	}
+	if total > MaxMissionAssignmentsBytes {
+		return errors.New("Team Employee assignments exceed 64 KiB")
+	}
+	return nil
+}
+
+func canonicalSHA256(value string) bool {
+	if len(value) != sha256.Size*2 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func DefaultBudget() Budget {

@@ -659,10 +659,14 @@ func TestTeamRunFailsClosedWhenTemplateUnloadable(t *testing.T) {
 		t.Fatalf("launch err = %v, want a team template failure", err)
 	}
 
-	// A launched run (e.g. approved review plan resumed later) fails closed too.
-	run := sess.ActiveRun()
-	if run == nil {
-		t.Fatal("launch left no active run behind")
+	if sess.ActiveRun() != nil || len(sess.Runs) != 0 {
+		t.Fatal("Team preflight failure must leave zero Run side effects")
+	}
+	// A previously persisted run (e.g. an older approved review plan resumed
+	// later) still fails closed inside runTeam.
+	run, err := sess.NewRun("build it")
+	if err != nil {
+		t.Fatal(err)
 	}
 	sess.Mission, err = team.DefaultMission("mission-"+run.ID, run.ID, run.Message, team.DefaultBudget())
 	if err != nil {

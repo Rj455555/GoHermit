@@ -12,6 +12,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/agent"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/contextmgr"
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/session"
@@ -22,9 +23,11 @@ import (
 // RoleRuntime carries the validated runtime inputs for one team role when the
 // team template pins that role to a different provider/model than the session.
 type RoleRuntime struct {
-	Selection config.RuntimeSelection
-	APIKey    string
-	Models    []config.ModelOption
+	Selection          config.RuntimeSelection
+	APIKey             string
+	Models             []config.ModelOption
+	EmployeeAssignment *team.TeamEmployeeAssignment
+	EmployeeContext    *employee.CompactSnapshot
 }
 
 // TeamWorker adapts the existing bounded single-Agent Runner into one role of
@@ -50,6 +53,9 @@ type TeamWorker struct {
 	// selection, credential, and catalog (the team template). A nil or empty
 	// map keeps the session-level inputs for every role.
 	RoleSelections map[string]RoleRuntime
+	// WorkItemRuntimes pins the exact Employee assignment/context for each
+	// WorkItem. It takes precedence over role-level legacy overrides.
+	WorkItemRuntimes map[string]RoleRuntime
 	// VerificationRecipe, when set, makes the Verifier run the recipe's
 	// deterministic checks through the policy-gated runner before its result
 	// is returned. The results join the child session's TestResults and flow
@@ -61,10 +67,21 @@ type TeamWorker struct {
 func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (team.Result, error) {
 	selection := w.Selection
 	apiKey, models := w.APIKey, w.Models
-	if override, ok := w.RoleSelections[string(assignment.WorkItem.Role)]; ok {
+	roleRuntime, hasRuntime := w.WorkItemRuntimes[assignment.WorkItem.ID]
+	if !hasRuntime {
+		roleRuntime, hasRuntime = w.RoleSelections[string(assignment.WorkItem.Role)]
+	}
+	if hasRuntime {
+		override := roleRuntime
 		selection, apiKey, models = override.Selection, override.APIKey, override.Models
 	}
 	selection.Agent = profileForRole(assignment.WorkItem.Role)
+	if assignment.Employee != nil {
+		if !hasRuntime || roleRuntime.EmployeeAssignment == nil || roleRuntime.EmployeeContext == nil ||
+			roleRuntime.EmployeeAssignment.Digest != assignment.Employee.Digest {
+			return team.Result{}, errors.New("Team Employee runtime assignment is missing or mismatched")
+		}
+	}
 	build := w.Build
 	if build == nil {
 		build = func(ctx context.Context, workspace, configPath string, options RuntimeOptions) (*Runtime, error) {
@@ -76,6 +93,14 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 		return team.Result{}, err
 	}
 	defer runtime.Close()
+	if assignment.Employee != nil {
+		runtime.Runner.Executor.Registry.RestrictCapabilities(roleRuntime.EmployeeContext.EffectivePolicy.AllowedCapabilities)
+		contextCopy, contextErr := contextmgr.EmployeeContextFromCompact(roleRuntime.EmployeeContext.Clone())
+		if contextErr != nil {
+			return team.Result{}, contextErr
+		}
+		runtime.Runner.EmployeeContext = &contextCopy
+	}
 	runtime.Runner.Context.SetOwnerProfile(w.OwnerContext)
 	prompt, err := assignmentPrompt(assignment)
 	if err != nil {
@@ -95,23 +120,52 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 	if releaser, ok := w.Approvals.(interface{ Release(string) }); ok {
 		defer releaser.Release(childID)
 	}
-	if runtime.Store.Has(childID) {
-		child, err = runtime.Store.Recover(ctx, childID)
+	store := runtime.Store
+	if w.ParentStore != nil {
+		store = w.ParentStore
+	}
+	if store.Has(childID) {
+		child, err = store.Recover(ctx, childID)
 	} else {
-		child, err = session.New(prompt, runtime.Workspace, session.ConfigDigest(runtime.Config))
+		if assignment.Employee != nil {
+			child, err = session.NewTeamWorker(
+				childID, prompt, assignment.WorkItem.Title, runtime.Workspace,
+				session.ConfigDigest(runtime.Config), w.ParentSessionID, w.ParentRunID,
+				session.Selection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent},
+				*roleRuntime.EmployeeAssignment, *roleRuntime.EmployeeContext,
+			)
+		} else {
+			child, err = session.New(prompt, runtime.Workspace, session.ConfigDigest(runtime.Config))
+			if err == nil {
+				child.ID = childID
+				child.Title = assignment.WorkItem.Title
+				child.Hidden = true
+				child.ParentSessionID = w.ParentSessionID
+				child.ParentRunID = w.ParentRunID
+				child.WorkItemID = assignment.WorkItem.ID
+				child.Selection = session.Selection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent}
+			}
+		}
 		if err == nil {
-			child.ID = childID
-			child.Title = assignment.WorkItem.Title
-			child.Hidden = true
-			child.ParentSessionID = w.ParentSessionID
-			child.ParentRunID = w.ParentRunID
-			child.WorkItemID = assignment.WorkItem.ID
-			child.Selection = session.Selection{Company: selection.Company, Access: selection.Access, Model: selection.Model, Agent: selection.Agent}
 			child.GitState = session.GitState(ctx, runtime.Workspace)
+			err = store.Save(ctx, child)
 		}
 	}
 	if err != nil {
 		return team.Result{}, err
+	}
+	if assignment.Employee != nil {
+		if child.TeamEmployeeAssignment == nil || child.TeamEmployeeContextSnapshot == nil ||
+			child.TeamEmployeeAssignment.Digest != assignment.Employee.Digest ||
+			child.TeamEmployeeContextSnapshot.Digest != roleRuntime.EmployeeContext.Digest {
+			return team.Result{}, errors.New("recovered Team Employee Worker snapshot mismatch")
+		}
+		if len(child.Runs) == 0 {
+			child.Goal, child.Title = prompt, assignment.WorkItem.Title
+			if err = store.Save(ctx, child); err != nil {
+				return team.Result{}, err
+			}
+		}
 	}
 	var relayMu sync.Mutex
 	var relayErr error
@@ -143,7 +197,14 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 			return team.Result{}, err
 		}
 	}
-	return workerResult(child, assignment, prompt)
+	result, err := workerResult(child, assignment, prompt)
+	if err != nil {
+		return team.Result{}, err
+	}
+	if assignment.Employee != nil && handoffContainsPrivateMemory(result.Handoff, roleRuntime.EmployeeContext.Memory) {
+		return team.Result{}, errors.New("worker handoff contains private Employee Memory")
+	}
+	return result, nil
 }
 
 // runRecipeChecks executes the recipe deterministically and appends one
@@ -228,6 +289,42 @@ func workerResult(child *session.Session, assignment team.Assignment, prompt str
 	return team.Result{Handoff: handoff, ModelCalls: max(1, run.ModelCalls), Tokens: tokens}, nil
 }
 
+// handoffContainsPrivateMemory is the last boundary before a worker result is
+// copied into the public parent Mission. Employee Memory is intentionally
+// available to the assigned worker, but an exact value must never become
+// durable public handoff content, even when a provider echoes its context.
+func handoffContainsPrivateMemory(handoff team.Handoff, memory []employee.CompactMemory) bool {
+	publicValues := []string{
+		handoff.Summary,
+	}
+	publicValues = append(publicValues, handoff.Evidence...)
+	publicValues = append(publicValues, handoff.ModifiedFiles...)
+	publicValues = append(publicValues, handoff.Issues...)
+	publicValues = append(publicValues, handoff.NextSteps...)
+	for _, check := range handoff.Checks {
+		publicValues = append(publicValues, check.Command, check.Summary)
+	}
+	for _, substep := range handoff.Substeps {
+		publicValues = append(publicValues, substep.ID, substep.Title, substep.Goal)
+		publicValues = append(publicValues, substep.DependsOn...)
+	}
+	for _, finding := range handoff.Findings {
+		publicValues = append(publicValues, finding.Summary)
+	}
+	for _, fact := range memory {
+		privateValue := strings.TrimSpace(fact.Value)
+		if privateValue == "" {
+			continue
+		}
+		for _, publicValue := range publicValues {
+			if strings.Contains(publicValue, privateValue) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (w *TeamWorker) relay(assignment team.Assignment, runtimeEvent event.Event) error {
 	switch runtimeEvent.Type {
 	case event.TaskStarted, event.TaskCompleted, event.TaskFailed, event.TaskCancelled, event.RunInterrupted, event.ModelDelta, event.PlanCreated, event.PlanUpdated:
@@ -272,6 +369,13 @@ func profileForRole(role team.Role) string {
 	default:
 		return "review"
 	}
+}
+
+// TeamAgentProfile returns the existing internal Agent preset used by a Team
+// role. The Control Plane uses the same mapping during Employee preflight so
+// the sealed effective policy matches the runtime exactly.
+func TeamAgentProfile(role team.Role) string {
+	return profileForRole(role)
 }
 
 func assignmentPrompt(assignment team.Assignment) (string, error) {

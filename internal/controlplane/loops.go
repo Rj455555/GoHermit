@@ -11,6 +11,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/loopstore"
 	"github.com/Rj455555/GoHermit/internal/session"
+	"github.com/Rj455555/GoHermit/internal/team"
 	"github.com/Rj455555/GoHermit/internal/teamtemplate"
 )
 
@@ -251,6 +252,24 @@ func (s *Service) dryRunRoles(ctx context.Context, definition loop.Definition) (
 	roles := make([]loop.RoleAvailability, 0, len(teamValidationRoles))
 	for _, role := range teamValidationRoles {
 		roleSelection := selections[role]
+		if roleSelection.EmployeeID != "" {
+			resolved, resolveErr := s.resolveTeamEmployeeRole(ctx, team.Role(role), roleSelection)
+			if resolveErr != nil {
+				roles = append(roles, loop.RoleAvailability{
+					Role: role, EmployeeID: roleSelection.EmployeeID,
+					Detail: "Employee readiness: " + resolveErr.Error(),
+				})
+				continue
+			}
+			roles = append(roles, loop.RoleAvailability{
+				Role: role, Company: resolved.runtime.Selection.Company,
+				Access: resolved.runtime.Selection.Access, Model: resolved.runtime.Selection.Model,
+				CredentialConfigured: true, Detail: "Employee assignment ready",
+				EmployeeID:       resolved.compact.EmployeeID,
+				EmployeeRevision: resolved.compact.EmployeeRevision,
+			})
+			continue
+		}
 		roles = append(roles, s.roleAvailability(ctx, role, roleSelection.Company, roleSelection.Access, roleSelection.Model))
 	}
 	return roles, nil

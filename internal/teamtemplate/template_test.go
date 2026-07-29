@@ -329,6 +329,127 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSchemaV1MigratesWithoutInventingEmployeeAssignment(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "team-template.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := validTemplate()
+	legacy.SchemaVersion = LegacySchemaV1
+	legacy.Default.MaxModelCalls = 7
+	legacy.Default.MaxTokens = 12345
+	explorer := legacy.Roles[string(team.RoleExplorer)]
+	explorer.MaxModelCalls = 3
+	explorer.MaxTokens = 4567
+	legacy.Roles[string(team.RoleExplorer)] = explorer
+	raw, _ := json.Marshal(legacy)
+	if err = os.WriteFile(store.Path(), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SchemaVersion != SchemaVersion || got.Default.EmployeeID != "" {
+		t.Fatalf("migration invented assignment or wrong version: %+v", got)
+	}
+	if got.Default != legacy.Default ||
+		got.Roles[string(team.RoleExplorer)] != legacy.Roles[string(team.RoleExplorer)] {
+		t.Fatalf("legacy selection changed: got=%+v want=%+v", got.Default, legacy.Default)
+	}
+}
+
+func TestSchemaV1RejectsV2OnlyEmployeeID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "team-template.json")
+	raw := []byte(`{
+		"schema_version": 1,
+		"name": "legacy",
+		"default": {
+			"company": "deepseek",
+			"access": "deepseek",
+			"model": "deepseek-chat",
+			"employee_id": "employee-a"
+		},
+		"updated_at": "2026-07-29T00:00:00Z"
+	}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Load(); err == nil {
+		t.Fatal("schema-v1 employee_id was silently accepted")
+	}
+}
+
+func TestSchemaV2LoadsEmployeeBinding(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "team-template.json")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := validTemplate()
+	template.Roles[string(team.RoleExplorer)] = RoleSelection{EmployeeID: "employee-a"}
+	if err = store.Save(template); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.SchemaVersion != SchemaVersion ||
+		loaded.Roles[string(team.RoleExplorer)].EmployeeID != "employee-a" {
+		t.Fatalf("schema-v2 Employee binding = %+v", loaded)
+	}
+}
+
+func TestDecodeRejectsInvalidUTF8AndMultipleJSONValues(t *testing.T) {
+	tests := map[string][]byte{
+		"invalid UTF-8": append(
+			[]byte(`{"schema_version":2,"name":"core","default":{"company":"deepseek","access":"deepseek","model":"deepseek-chat"},"updated_at":"2026-07-29T00:00:00Z","roles":{"explorer":{"company":"deepseek","access":"deepseek","model":"`),
+			append([]byte{0xff}, []byte(`"}}}`)...)...,
+		),
+		"multiple JSON values": []byte(`{"schema_version":2,"name":"core","default":{"company":"deepseek","access":"deepseek","model":"deepseek-chat"},"updated_at":"2026-07-29T00:00:00Z"} {}`),
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "team-template.json")
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := NewStore(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = store.Load(); err == nil {
+				t.Fatal("invalid wire payload was accepted")
+			}
+		})
+	}
+}
+
+func TestEmployeeSelectionRequiresSafeIDAndAtomicModelOverride(t *testing.T) {
+	template := validTemplate()
+	template.Roles[string(team.RoleExplorer)] = RoleSelection{EmployeeID: "employee-a"}
+	if err := Validate(template); err != nil {
+		t.Fatalf("Employee default model path rejected: %v", err)
+	}
+	template.Roles[string(team.RoleExplorer)] = RoleSelection{
+		EmployeeID: "employee-a", Company: "deepseek",
+	}
+	if err := Validate(template); err == nil {
+		t.Fatal("partial mission model override must fail closed")
+	}
+	for _, id := range []string{"../outside", "/absolute", `%2e%2e`, `employee\outside`} {
+		template.Roles[string(team.RoleExplorer)] = RoleSelection{EmployeeID: id}
+		if err := Validate(template); err == nil {
+			t.Fatalf("unsafe employee_id %q was accepted", id)
+		}
+	}
+}
+
 func TestExportRedactsSecretFields(t *testing.T) {
 	template := validTemplate()
 	template.Name = "core api_key=abc123"
