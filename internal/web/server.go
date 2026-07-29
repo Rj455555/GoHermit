@@ -219,14 +219,14 @@ func isDeclaredReactRoute(requestPath string) bool {
 }
 
 func validEmployeeReactID(value string) bool {
-	if value == "" || len(value) > 128 {
+	if value == "" || len(value) > 128 || value == "." || value == ".." {
 		return false
 	}
-	for index, character := range value {
+	for _, character := range value {
 		alphaNumeric := (character >= 'a' && character <= 'z') ||
 			(character >= 'A' && character <= 'Z') ||
 			(character >= '0' && character <= '9')
-		if alphaNumeric || (index > 0 && (character == '.' || character == '_' || character == '-')) {
+		if alphaNumeric || character == '.' || character == '_' || character == '-' {
 			continue
 		}
 		return false

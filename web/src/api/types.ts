@@ -452,7 +452,10 @@ export interface InvocationSummary {
 export type EmployeeState = 'active' | 'disabled' | 'archived'
 export type EmployeeTaskState =
   | 'queued'
+  | 'prepared'
+  | 'waiting_owner'
   | 'running'
+  | 'verifying'
   | 'completed'
   | 'failed'
   | 'cancelled'

@@ -90,6 +90,7 @@ export function TasksWorkbenchPage() {
     record: EmployeeRecord
     knowledge: EmployeeKnowledge
     memory: MemoryFact[]
+    skills: Awaited<ReturnType<typeof getEmployeeSkills>>
   } | null>(null)
   const [prompt, setPrompt] = useState('')
   const [projectId, setProjectId] = useState('')
@@ -139,9 +140,9 @@ export function TasksWorkbenchPage() {
       getEmployeeSkills(employeeId, { signal: controller.signal }),
       getEmployeeKnowledge(employeeId, { signal: controller.signal }),
       getEmployeeMemory(employeeId, { signal: controller.signal }),
-    ]).then(([record, , knowledge, memory]) => {
+    ]).then(([record, skills, knowledge, memory]) => {
       if (epoch !== contextEpoch.current) return
-      setContext({ record, knowledge, memory: memory.facts })
+      setContext({ record, skills, knowledge, memory: memory.facts })
       setCapabilities(record.employee.permission_policy.allowed_capabilities.join('\n'))
       setNetwork(record.employee.permission_policy.network_allowed)
       setBudget(record.employee.budget_policy)
@@ -156,14 +157,22 @@ export function TasksWorkbenchPage() {
     const employee = params.get('employee')
     const state = params.get('state')
     const project = params.get('project')
+    const time = params.get('time')
+    const timeWindow = time === '24h' ? 24 * 60 * 60 * 1000
+      : time === '7d' ? 7 * 24 * 60 * 60 * 1000
+        : time === '30d' ? 30 * 24 * 60 * 60 * 1000
+          : 0
     return (!employee || task.employee_id === employee)
       && (!state || task.state === state)
       && (!project || task.project_binding.id === project)
+      && (!timeWindow || Date.parse(task.updated_at) >= Date.now() - timeWindow)
   }), [params, tasks])
 
   const promptBytes = utf8Bytes(prompt)
-  const selectedSkills = context?.record.employee.skill_bindings.filter((binding) =>
-    skillKeys.includes(`${binding.skill_id}\0${binding.version}`)) ?? []
+  const availableSkills = context?.skills.bindings.filter((item) =>
+    item.status === 'current' && item.binding.enabled) ?? []
+  const selectedSkills = availableSkills.map((item) => item.binding).filter((binding) =>
+    skillKeys.includes(`${binding.skill_id}\0${binding.version}`))
   const knowledgeInput = context?.knowledge.sources.flatMap((source) => {
     const citations = context.knowledge.indexes
       .filter((index) => index.source_id === source.id)
@@ -176,6 +185,8 @@ export function TasksWorkbenchPage() {
 
   async function create() {
     if (!context || !projectId || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES) return
+    const epoch = contextEpoch.current
+    const owner = employeeId
     setCreating(true)
     try {
       const task = await createEmployeeTask(employeeId, {
@@ -193,9 +204,11 @@ export function TasksWorkbenchPage() {
           budget,
         },
       })
+      if (epoch !== contextEpoch.current || owner !== employeeId) return
       setPrompt('')
       await navigate(`/tasks/${encodeURIComponent(task.id)}`)
     } catch (caught) {
+      if (epoch !== contextEpoch.current || owner !== employeeId) return
       actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
     } finally {
       setCreating(false)
@@ -206,6 +219,19 @@ export function TasksWorkbenchPage() {
     return <ErrorState title={t('tasks.loadError')} description={t('common.retryDescription')} />
   }
   const activeEmployees = employees.filter((item) => item.state === 'active')
+  const projectOptions = Array.from(new Map(tasks.map((task) => [
+    task.project_binding.id,
+    { id: task.project_binding.id, label: task.project_binding.label },
+  ])).values())
+  const taskStates = [
+    'queued', 'prepared', 'waiting_owner', 'running', 'verifying',
+    'interrupted', 'completed', 'failed', 'cancelled',
+  ] as const
+  const setFilter = (name: 'employee' | 'project' | 'state' | 'time', value: string) => {
+    const next = new URLSearchParams(params)
+    if (value) next.set(name, value); else next.delete(name)
+    setParams(next)
+  }
   return (
     <article className="feature-page">
       <PageHeader title={t('pages.tasks.title')} description={t('tasks.description')} />
@@ -218,7 +244,7 @@ export function TasksWorkbenchPage() {
           <p data-testid="task-prompt-bytes">{promptBytes} / {MAX_PROMPT_BYTES}</p>
           <label>{t('tasks.project')}<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">{t('common.select')}</option>{context?.record.project_bindings.map((project) => <option key={project.id} value={project.id}>{project.label}</option>)}</select></label>
         </div>
-        <fieldset><legend>{t('tasks.exactSkills')}</legend>{context?.record.employee.skill_bindings.filter((item) => item.enabled).map((binding) => {
+        <fieldset><legend>{t('tasks.exactSkills')}</legend>{availableSkills.map(({ binding }) => {
           const key = `${binding.skill_id}\0${binding.version}`
           return <label key={key}><input type="checkbox" checked={skillKeys.includes(key)} onChange={(event) => setSkillKeys((current) => event.target.checked ? [...current, key] : current.filter((item) => item !== key))} />{binding.skill_id}@{binding.version} · {binding.digest}</label>
         })}</fieldset>
@@ -234,16 +260,10 @@ export function TasksWorkbenchPage() {
         <button type="button" disabled={creating || !connectivity.canMutate || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || !projectId} onClick={() => void create()}>{t('tasks.createQueued')}</button>
       </section>
       <div className="filter-row">
-        <label>{t('tasks.employee')}<select value={params.get('employee') ?? ''} onChange={(event) => {
-          const next = new URLSearchParams(params)
-          if (event.target.value) next.set('employee', event.target.value); else next.delete('employee')
-          setParams(next)
-        }}><option value="">{t('employees.all')}</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label>
-        <label>{t('tasks.state')}<select value={params.get('state') ?? ''} onChange={(event) => {
-          const next = new URLSearchParams(params)
-          if (event.target.value) next.set('state', event.target.value); else next.delete('state')
-          setParams(next)
-        }}><option value="">{t('employees.all')}</option>{['queued', 'running', 'interrupted', 'completed', 'failed', 'cancelled'].map((state) => <option key={state} value={state}>{translatedEnum(t, 'taskStatus', state)}</option>)}</select></label>
+        <label>{t('tasks.employeeFilter')}<select aria-label={t('tasks.employeeFilter')} value={params.get('employee') ?? ''} onChange={(event) => setFilter('employee', event.target.value)}><option value="">{t('employees.all')}</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label>
+        <label>{t('tasks.projectFilter')}<select aria-label={t('tasks.projectFilter')} value={params.get('project') ?? ''} onChange={(event) => setFilter('project', event.target.value)}><option value="">{t('employees.all')}</option>{projectOptions.map((project) => <option key={project.id} value={project.id}>{project.label}</option>)}</select></label>
+        <label>{t('tasks.stateFilter')}<select aria-label={t('tasks.stateFilter')} value={params.get('state') ?? ''} onChange={(event) => setFilter('state', event.target.value)}><option value="">{t('employees.all')}</option>{taskStates.map((state) => <option key={state} value={state}>{translatedEnum(t, 'taskStatus', state)}</option>)}</select></label>
+        <label>{t('tasks.timeFilter')}<select aria-label={t('tasks.timeFilter')} value={params.get('time') ?? ''} onChange={(event) => setFilter('time', event.target.value)}><option value="">{t('tasks.timeAll')}</option><option value="24h">{t('tasks.time24h')}</option><option value="7d">{t('tasks.time7d')}</option><option value="30d">{t('tasks.time30d')}</option></select></label>
       </div>
       <ul className="entity-list">{filtered.map((task) => <li key={task.id}><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{task.prompt}</Link><span>{translatedEnum(t, 'taskStatus', task.state)} · {task.project_binding.label}</span></li>)}</ul>
     </article>
@@ -311,19 +331,41 @@ export function TaskWorkbenchDetailPage() {
 
   async function mutate(action: 'start' | 'cancel' | 'resume') {
     if (!task || !connectivity.canMutate) return
+    const epoch = epochRef.current
+    const owner = task.id
     setBusy(true)
     try {
       const next = action === 'start' ? await startEmployeeTask(task.id)
         : action === 'cancel' ? await cancelEmployeeTask(task.id)
           : await resumeEmployeeTask(task.id)
+      if (epoch !== epochRef.current) return
       setTask(next)
       setPrepared(false)
       await refresh()
     } catch (caught) {
+      if (epoch !== epochRef.current) return
       actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
       if (caught instanceof ApiError && caught.status === 409) await refresh()
     } finally {
-      setBusy(false)
+      if (owner === taskId) setBusy(false)
+    }
+  }
+
+  async function prepare() {
+    if (!task || !connectivity.canMutate) return
+    const epoch = epochRef.current
+    setBusy(true)
+    try {
+      const next = await getEmployeeTask(task.id)
+      if (epoch !== epochRef.current) return
+      setTask(next)
+      setPrepared(true)
+    } catch (caught) {
+      if (epoch === epochRef.current) {
+        actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+      }
+    } finally {
+      if (epoch === epochRef.current) setBusy(false)
     }
   }
 
@@ -339,14 +381,19 @@ export function TaskWorkbenchDetailPage() {
 
   async function approval(requestId: string, decision: 'approve' | 'deny') {
     if (!task?.session_id || !connectivity.canMutate) return
+    const epoch = epochRef.current
+    const owner = task.id
     setBusy(true)
     try {
       await decideApproval(task.session_id, requestId, decision)
+      if (epoch !== epochRef.current) return
       await refresh()
     } catch (caught) {
-      actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+      if (epoch === epochRef.current) {
+        actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+      }
     } finally {
-      setBusy(false)
+      if (owner === taskId) setBusy(false)
     }
   }
 
@@ -360,7 +407,7 @@ export function TaskWorkbenchDetailPage() {
       <p data-testid="task-status">{translatedEnum(t, 'taskStatus', task.state)}</p>
       {!connectivity.canMutate ? <p className="stale-notice">{t('mutation.offline')}</p> : null}
       <div className="button-row">
-        {task.state === 'queued' && !task.run_id && !prepared ? <button type="button" disabled={!canMutate} onClick={() => void getEmployeeTask(task.id).then((next) => { setTask(next); setPrepared(true) })}>{t('tasks.prepare')}</button> : null}
+        {task.state === 'queued' && !task.run_id && !prepared ? <button type="button" disabled={!canMutate} onClick={() => void prepare()}>{t('tasks.prepare')}</button> : null}
         {task.state === 'queued' && !task.run_id && prepared ? <button type="button" disabled={!canMutate} onClick={() => void mutate('start')}>{t('tasks.start')}</button> : null}
         {task.state === 'interrupted' ? <button type="button" disabled={!canMutate} onClick={() => void mutate('resume')}>{t('tasks.resume')}</button> : null}
         {!TERMINAL.has(task.state) && task.state !== 'interrupted' ? <button type="button" disabled={!canMutate} onClick={confirmCancel}>{t('tasks.cancel')}</button> : null}

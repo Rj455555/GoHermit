@@ -1,11 +1,11 @@
 import { I18nextProvider } from 'react-i18next'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18n } from '../../i18n/i18n'
-import { UIProvider } from '../../state/UIContext'
+import { UIProvider, useUI } from '../../state/UIContext'
 import { EmployeeDetailPage, EmployeesPage } from './EmployeesPage'
 
 const api = vi.hoisted(() => ({
@@ -79,7 +79,9 @@ function renderEmployees(path = '/employees') {
   return render(
     <I18nextProvider i18n={i18n}>
       <UIProvider>
+        <DialogProbe />
         <MemoryRouter initialEntries={[path]}>
+          <NavigationProbe />
           <Routes>
             <Route path="/employees" element={<EmployeesPage />} />
             <Route path="/employees/:employeeId" element={<EmployeeDetailPage />} />
@@ -88,6 +90,48 @@ function renderEmployees(path = '/employees') {
       </UIProvider>
     </I18nextProvider>,
   )
+}
+
+function NavigationProbe() {
+  const navigate = useNavigate()
+  return <button type="button" onClick={() => void navigate('/employees/employee-b?tab=activity')}>Go Employee B</button>
+}
+
+function DialogProbe() {
+  const { state, actions } = useUI()
+  if (!state.dialog) return null
+  return (
+    <div role="dialog">
+      <button type="button" onClick={() => actions.closeDialog()}>Cancel dialog</button>
+      <button type="button" onClick={() => {
+        const confirm = state.dialog?.onConfirm
+        actions.closeDialog()
+        confirm?.()
+      }}>Confirm dialog</button>
+    </div>
+  )
+}
+
+async function advanceWizardToReview(
+  user: ReturnType<typeof userEvent.setup>,
+  { selectSkill = true }: { selectSkill?: boolean } = {},
+) {
+  await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+  await user.type(screen.getByLabelText('Employee ID'), 'employee.v2')
+  await user.type(screen.getByLabelText('Name'), 'Ada')
+  await user.type(screen.getByLabelText('Job title'), 'Engineer')
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await user.type(screen.getByLabelText('Charter'), 'Ship verified releases.')
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  if (selectSkill) {
+    await user.click(screen.getByRole('checkbox', { name: /Release/u }))
+  }
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await user.click(screen.getByRole('button', { name: 'Next' }))
 }
 
 beforeEach(() => {
@@ -139,7 +183,7 @@ beforeEach(() => {
   })
   api.createEmployee.mockResolvedValue({
     ...employeeRecord,
-    employee: { ...employeeRecord.employee, id: 'employee.v2', name: 'Ada' },
+    employee: { ...employeeRecord.employee, id: 'employee.v2', name: 'Ada', revision: 1 },
     project_bindings: [{
       id: 'project-employee.v2',
       employee_id: 'employee.v2',
@@ -155,6 +199,10 @@ beforeEach(() => {
     }],
   })
   api.addEmployeeKnowledge.mockResolvedValue({})
+  api.updateEmployeeSkills.mockResolvedValue({
+    ...employeeRecord,
+    employee: { ...employeeRecord.employee, id: 'employee.v2', name: 'Ada', revision: 2 },
+  })
   api.dryRunEmployee.mockResolvedValue({
     employee_id: 'employee.v2',
     revision: 1,
@@ -253,7 +301,58 @@ describe('Employees Phase 4 pages', () => {
         mutation_allowed: false,
         network_allowed: true,
       })],
-    })))
+    }), expect.anything()))
+  })
+
+  it('edits every backend-supported Employee setting with the model catalog', async () => {
+    const user = userEvent.setup()
+    api.updateEmployee.mockImplementation((_id: string, input: typeof employeeRecord) => Promise.resolve({
+      employee: input.employee,
+      project_bindings: input.project_bindings,
+    }))
+    renderEmployees('/employees/employee-ada')
+
+    await screen.findByLabelText('Name')
+    await user.selectOptions(screen.getByLabelText('Avatar'), 'emoji')
+    await user.clear(screen.getByLabelText('Avatar value'))
+    await user.type(screen.getByLabelText('Avatar value'), '🚀')
+    fireEvent.change(screen.getByLabelText('Responsibilities'), { target: { value: 'Build\nVerify' } })
+    fireEvent.change(screen.getByLabelText('Behavior boundaries'), { target: { value: 'Never publish secrets' } })
+    await user.selectOptions(screen.getByLabelText('Company'), 'openai')
+    await user.selectOptions(screen.getByLabelText('Access'), 'codex')
+    await user.selectOptions(screen.getByLabelText('Model'), 'gpt')
+    await user.selectOptions(screen.getByLabelText('Agent'), 'coding')
+    fireEvent.change(screen.getByLabelText('Capabilities'), { target: { value: 'read\nwrite' } })
+    await user.click(screen.getByLabelText('Allow network'))
+    await user.clear(screen.getByLabelText('Maximum model calls'))
+    await user.type(screen.getByLabelText('Maximum model calls'), '6')
+    await user.clear(screen.getByLabelText('Maximum tokens'))
+    await user.type(screen.getByLabelText('Maximum tokens'), '6000')
+    await user.clear(screen.getByLabelText('Timeout seconds'))
+    await user.type(screen.getByLabelText('Timeout seconds'), '900')
+    await user.clear(screen.getByLabelText('Maximum running tasks'))
+    await user.type(screen.getByLabelText('Maximum running tasks'), '2')
+    await user.click(screen.getByLabelText('Generate Memory candidates'))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.updateEmployee).toHaveBeenCalled())
+    const updateInput = api.updateEmployee.mock.calls[0]?.[1] as {
+      expected_revision: number
+      employee: typeof employeeRecord.employee
+    } | undefined
+    expect(updateInput?.expected_revision).toBe(summary.revision)
+    expect(updateInput?.employee).toMatchObject({
+      avatar: { kind: 'emoji', value: '🚀' },
+      responsibilities: ['Build', 'Verify'],
+      behavior_boundaries: ['Never publish secrets'],
+      default_selection: { company: 'openai', access: 'codex', model: 'gpt' },
+      agent_profile: 'coding',
+      permission_policy: {
+        allowed_capabilities: ['read', 'write'],
+        network_allowed: true,
+      },
+      concurrency_policy: { max_running_tasks: 2 },
+    })
   })
 
   it('edits Native Skill configuration and enabled state without accepting invalid JSON', async () => {
@@ -326,11 +425,150 @@ describe('Employees Phase 4 pages', () => {
         },
         { ...adapterBinding, configuration: {} },
       ],
+      expect.anything(),
     ))
 
     fireEvent.change(configuration, { target: { value: '{invalid' } })
     await user.click(screen.getByRole('button', { name: 'Save Skills' }))
     expect(api.updateEmployeeSkills).toHaveBeenCalledOnce()
+  })
+
+  it('unions Catalog and persisted bindings so missing Skills can be removed and drift upgraded', async () => {
+    const user = userEvent.setup()
+    const missing = {
+      skill_id: 'missing', version: '1.0.0', digest: '1'.repeat(64),
+      configuration: {}, enabled: true,
+    }
+    const stale = {
+      skill_id: 'release', version: '1.0.0', digest: '2'.repeat(64),
+      configuration: { mode: 'safe' }, enabled: true,
+    }
+    const activeRecord = {
+      ...employeeRecord,
+      employee: { ...employeeRecord.employee, skill_bindings: [missing, stale] },
+    }
+    api.getEmployee.mockResolvedValue(activeRecord)
+    api.getEmployeeSkills.mockResolvedValue({
+      employee_id: summary.id,
+      revision: summary.revision,
+      bindings: [
+        { binding: missing, status: 'missing' },
+        { binding: stale, status: 'digest_drift', kind: 'native' },
+      ],
+    })
+    api.updateEmployeeSkills.mockResolvedValue({
+      ...activeRecord,
+      employee: { ...activeRecord.employee, revision: 5 },
+    })
+    renderEmployees('/employees/employee-ada?tab=skills')
+
+    expect((await screen.findAllByText(/missing@1.0.0/u)).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: 'Remove Skill missing@1.0.0' }))
+    await user.click(screen.getByRole('button', { name: 'Upgrade to current digest release@1.0.0' }))
+    await user.click(screen.getByRole('button', { name: 'Save Skills' }))
+
+    await waitFor(() => expect(api.updateEmployeeSkills).toHaveBeenCalledWith(
+      summary.id,
+      summary.revision,
+      [expect.objectContaining({ skill_id: 'release', digest: 'd'.repeat(64) })],
+      expect.anything(),
+    ))
+  })
+
+  it('requires confirmation before Knowledge delete and Memory reject/forget mutations', async () => {
+    const user = userEvent.setup()
+    api.getEmployeeKnowledge.mockResolvedValue({
+      employee_id: summary.id,
+      sources: [{
+        schema_version: 1,
+        id: 'guide',
+        employee_id: summary.id,
+        kind: 'manual_text',
+        title: 'Guide',
+        digest: 'd'.repeat(64),
+        status: 'ready',
+      }],
+      indexes: [],
+      results: [],
+    })
+    api.getEmployeeMemoryCandidates.mockResolvedValue({
+      candidates: [{
+        schema_version: 1,
+        id: 'candidate-1',
+        employee_id: summary.id,
+        category: 'release',
+        value: 'candidate',
+        provenance: [],
+        created_at: now,
+        digest: 'c'.repeat(64),
+      }],
+    })
+    api.getEmployeeMemory.mockResolvedValue({
+      facts: [{
+        schema_version: 1,
+        id: 'fact-1',
+        candidate_id: 'candidate-1',
+        employee_id: summary.id,
+        category: 'release',
+        value: 'fact',
+        provenance: [],
+        created_at: now,
+        updated_at: now,
+        owner_edited: false,
+        digest: 'f'.repeat(64),
+      }],
+    })
+    renderEmployees('/employees/employee-ada?tab=knowledge')
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    expect(api.deleteEmployeeKnowledge).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Cancel dialog' }))
+    expect(api.deleteEmployeeKnowledge).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Memory' }))
+    await user.click(await screen.findByRole('button', { name: 'Reject' }))
+    expect(api.rejectEmployeeMemoryCandidate).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm dialog' }))
+    await waitFor(() => expect(api.rejectEmployeeMemoryCandidate).toHaveBeenCalledOnce())
+
+    await user.click(screen.getByRole('button', { name: 'Forget' }))
+    expect(api.forgetEmployeeMemory).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm dialog' }))
+    await waitFor(() => expect(api.forgetEmployeeMemory).toHaveBeenCalledOnce())
+  })
+
+  it('drops a delayed Employee A Activity page after routing to Employee B', async () => {
+    const user = userEvent.setup()
+    let resolveLate: ((value: { events: Array<Record<string, unknown>> }) => void) | undefined
+    const late = new Promise<{ events: Array<Record<string, unknown>> }>((resolve) => {
+      resolveLate = resolve
+    })
+    api.getEmployee.mockImplementation((id: string) => Promise.resolve({
+      ...employeeRecord,
+      employee: { ...employeeRecord.employee, id, name: id === 'employee-b' ? 'Employee B' : 'Employee A' },
+    }))
+    api.getEmployeeActivity.mockImplementation(async (id: string, query: { cursor?: string }) => {
+      if (id === 'employee-ada' && query.cursor) return late
+      return id === 'employee-b'
+        ? { events: [{ schema_version: 1, id: 'b-event', employee_id: id, type: 'updated', time: now, subject_id: 'B-only' }] }
+        : { events: [{ schema_version: 1, id: 'a-event', employee_id: id, type: 'updated', time: now, subject_id: 'A-first' }], next_cursor: 'next' }
+    })
+    renderEmployees('/employees/employee-ada?tab=activity')
+
+    await user.click(await screen.findByRole('button', { name: 'Load more' }))
+    await user.click(screen.getByRole('button', { name: 'Go Employee B' }))
+    expect(await screen.findByText(/B-only/u)).toBeVisible()
+    resolveLate?.({
+      events: [{
+        schema_version: 1,
+        id: 'a-late',
+        employee_id: 'employee-ada',
+        type: 'updated',
+        time: now,
+        subject_id: 'A-late',
+      }],
+    })
+    await waitFor(() => expect(screen.queryByText(/A-late/u)).not.toBeInTheDocument())
   })
 
   it('uses the approved nine-step order and ready server catalog', async () => {
@@ -353,14 +591,17 @@ describe('Employees Phase 4 pages', () => {
     const user = userEvent.setup()
     api.getEmployeeSkills.mockResolvedValue({
       employee_id: 'employee.v2',
-      revision: 1,
+      revision: 2,
       bindings: [{
-        skill_id: 'release',
-        version: '1.0.0',
-        digest: 'd'.repeat(64),
-        configuration: { mode: 'safe' },
-        enabled: true,
-        catalog_status: 'ready',
+        binding: {
+          skill_id: 'release',
+          version: '1.0.0',
+          digest: 'd'.repeat(64),
+          configuration: { mode: 'safe' },
+          enabled: true,
+        },
+        status: 'current',
+        kind: 'native',
       }],
     })
     api.getEmployeeKnowledge.mockResolvedValue({
@@ -458,19 +699,88 @@ describe('Employees Phase 4 pages', () => {
         id: 'employee.v2',
         responsibilities: ['Build', 'Verify'],
         behavior_boundaries: ['Never publish secrets'],
-        skill_bindings: [{
-          skill_id: 'release',
-          version: '1.0.0',
-          digest: 'd'.repeat(64),
-          configuration: { mode: 'safe' },
-        }],
+        skill_bindings: [],
       },
     })
+    expect(api.updateEmployeeSkills).toHaveBeenCalledWith(
+      'employee.v2',
+      1,
+      [expect.objectContaining({
+        skill_id: 'release',
+        version: '1.0.0',
+        digest: 'd'.repeat(64),
+        configuration: { mode: 'safe' },
+      })],
+    )
     expect(api.addEmployeeKnowledge).toHaveBeenCalledWith('employee.v2', expect.objectContaining({
       id: 'release-guide',
       manual_text: 'Run verification first.',
     }))
     expect(api.dryRunEmployee).toHaveBeenCalledWith('employee.v2')
     await user.click(screen.getByRole('button', { name: 'Open Employee' }))
+  })
+
+  it('does not report Ready when Skill validation rejects and retries without recreating', async () => {
+    const user = userEvent.setup()
+    api.updateEmployeeSkills
+      .mockRejectedValueOnce(new Error('invalid Native configuration'))
+      .mockResolvedValueOnce({
+        ...employeeRecord,
+        employee: { ...employeeRecord.employee, id: 'employee.v2', revision: 2 },
+      })
+    api.getEmployeeSkills.mockResolvedValue({
+      employee_id: 'employee.v2',
+      revision: 2,
+      bindings: [{
+        binding: {
+          skill_id: 'release',
+          version: '1.0.0',
+          digest: 'd'.repeat(64),
+          configuration: {},
+          enabled: true,
+        },
+        status: 'current',
+        kind: 'native',
+      }],
+    })
+    api.getEmployeeKnowledge.mockResolvedValue({
+      employee_id: 'employee.v2', sources: [], indexes: [], results: [],
+    })
+    renderEmployees()
+
+    await advanceWizardToReview(user)
+    expect(await screen.findByTestId('employee-readiness')).toHaveTextContent('Blocked')
+    expect(screen.getByText(/was persisted/i)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Retry validation' }))
+
+    await waitFor(() => expect(api.updateEmployeeSkills).toHaveBeenCalledTimes(2))
+    expect(api.createEmployee).toHaveBeenCalledOnce()
+  })
+
+  it('does not report Ready after Catalog digest drift during creation', async () => {
+    const user = userEvent.setup()
+    api.getEmployeeSkills.mockResolvedValue({
+      employee_id: 'employee.v2',
+      revision: 2,
+      bindings: [{
+        binding: {
+          skill_id: 'release',
+          version: '1.0.0',
+          digest: 'd'.repeat(64),
+          configuration: {},
+          enabled: true,
+        },
+        status: 'digest_drift',
+        kind: 'native',
+      }],
+    })
+    api.getEmployeeKnowledge.mockResolvedValue({
+      employee_id: 'employee.v2', sources: [], indexes: [], results: [],
+    })
+    renderEmployees()
+
+    await advanceWizardToReview(user)
+    expect(await screen.findByTestId('employee-readiness')).toHaveTextContent('Blocked')
+    expect(api.createEmployee).toHaveBeenCalledOnce()
   })
 })

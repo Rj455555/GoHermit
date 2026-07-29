@@ -1,5 +1,5 @@
 import { I18nextProvider } from 'react-i18next'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -95,9 +95,42 @@ function renderTasks(path = '/tasks') {
     <I18nextProvider i18n={i18n}>
       <UIProvider>
         <MemoryRouter initialEntries={[path]}>
+          <TaskNavigationProbe />
           <Routes>
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
+            <Route path="/elsewhere" element={<p>Elsewhere</p>} />
+          </Routes>
+        </MemoryRouter>
+      </UIProvider>
+    </I18nextProvider>,
+  )
+}
+
+function TaskNavigationProbe() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  return (
+    <>
+      <output data-testid="task-owner-location">{location.pathname}</output>
+      <button type="button" onClick={() => void navigate('/elsewhere')}>Leave task</button>
+    </>
+  )
+}
+
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.search}</output>
+}
+
+function renderTasksWithLocation(path = '/tasks') {
+  return render(
+    <I18nextProvider i18n={i18n}>
+      <UIProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <LocationProbe />
+          <Routes>
+            <Route path="/tasks" element={<TasksPage />} />
           </Routes>
         </MemoryRouter>
       </UIProvider>
@@ -201,5 +234,95 @@ describe('Employee Tasks Phase 4 pages', () => {
     expect(screen.getByRole('heading', { name: 'Verification' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Approvals' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Artifacts' })).toBeVisible()
+  })
+
+  it('keeps complete Employee, Project, State and Time filters in the URL', async () => {
+    const user = userEvent.setup()
+    renderTasksWithLocation('/tasks')
+    await screen.findByText('Prepare release.')
+
+    await user.selectOptions(screen.getByLabelText('Employee filter'), employee.id)
+    await user.selectOptions(screen.getByLabelText('Project filter'), 'project-main')
+    await user.selectOptions(screen.getByLabelText('State filter'), 'waiting_owner')
+    await user.selectOptions(screen.getByLabelText('Time filter'), '7d')
+
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      'employee=employee-ada&project=project-main&state=waiting_owner&time=7d',
+    )
+    for (const [state, label] of [
+      ['queued', 'Queued'],
+      ['prepared', 'Prepared'],
+      ['waiting_owner', 'Waiting for owner'],
+      ['running', 'Running'],
+      ['verifying', 'Verifying'],
+      ['interrupted', 'Interrupted'],
+      ['completed', 'Completed'],
+      ['failed', 'Failed'],
+      ['cancelled', 'Cancelled'],
+    ] as const) {
+      expect(screen.getByRole('option', { name: label })).toHaveValue(state)
+    }
+  })
+
+  it('only offers authoritative current Skill bindings for Task creation', async () => {
+    api.getEmployee.mockResolvedValue({
+      employee: {
+        ...employee,
+        skill_bindings: [{
+          skill_id: 'stale',
+          version: '1.0.0',
+          digest: 'a'.repeat(64),
+          configuration: {},
+          enabled: true,
+        }, {
+          skill_id: 'current',
+          version: '1.0.0',
+          digest: 'b'.repeat(64),
+          configuration: {},
+          enabled: true,
+        }],
+      },
+      project_bindings: [],
+    })
+    api.getEmployeeSkills.mockResolvedValue({
+      employee_id: employee.id,
+      revision: 3,
+      bindings: [{
+        binding: {
+          skill_id: 'stale', version: '1.0.0', digest: 'a'.repeat(64),
+          configuration: {}, enabled: true,
+        },
+        status: 'digest_drift',
+      }, {
+        binding: {
+          skill_id: 'current', version: '1.0.0', digest: 'b'.repeat(64),
+          configuration: {}, enabled: true,
+        },
+        status: 'current',
+      }],
+    })
+    renderTasks()
+
+    expect(await screen.findByRole('checkbox', { name: /current@1.0.0/u })).toBeVisible()
+    expect(screen.queryByRole('checkbox', { name: /stale@1.0.0/u })).not.toBeInTheDocument()
+  })
+
+  it('does not commit a delayed Task mutation after routing away', async () => {
+    const user = userEvent.setup()
+    let resolveStart: ((value: typeof queuedTask) => void) | undefined
+    const delayedStart = new Promise<typeof queuedTask>((resolve) => {
+      resolveStart = resolve
+    })
+    renderTasks('/tasks/task-queued')
+
+    await user.click(await screen.findByRole('button', { name: 'Prepare' }))
+    api.startEmployeeTask.mockReturnValue(delayedStart)
+    await user.click(await screen.findByRole('button', { name: 'Start' }))
+    await user.click(screen.getByRole('button', { name: 'Leave task' }))
+    expect(screen.getByTestId('task-owner-location')).toHaveTextContent('/elsewhere')
+
+    resolveStart?.({ ...queuedTask, state: 'running' })
+    await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledOnce())
+    expect(api.getEmployeeTask).toHaveBeenCalledTimes(2)
   })
 })

@@ -757,7 +757,8 @@ export function decodeCancellation(value: unknown): {
 
 const EMPLOYEE_STATES = ['active', 'disabled', 'archived'] as const
 const EMPLOYEE_TASK_STATES = [
-  'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted',
+  'queued', 'prepared', 'waiting_owner', 'running', 'verifying',
+  'completed', 'failed', 'cancelled', 'interrupted',
 ] as const
 
 function decodeEmployeeSummaryValue(value: unknown): EmployeeSummary {

@@ -1,5 +1,5 @@
 import { I18nextProvider } from 'react-i18next'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -57,7 +57,16 @@ const definition = {
   agent_selection: { company: 'openai', access: 'codex', model: 'gpt', agent: 'team' },
   team_template_ref: 'default',
   plan_mode: 'review',
-  verification_recipe: { checks: [], independent_verifier: true, max_repair_attempts: 0 },
+  verification_recipe: {
+    checks: [{
+      id: 'unit',
+      command: ['go', 'test', '-run', 'Test Name', './...'],
+      required: true,
+      timeout_seconds: 90,
+    }],
+    independent_verifier: true,
+    max_repair_attempts: 0,
+  },
   budget: { max_model_calls: 12, max_tokens: 120_000, timeout_seconds: 1_200 },
   approval_policy: { require_for_mutation: false },
   workspace_policy: { read_only: true, require_clean_git: false },
@@ -109,6 +118,7 @@ function renderLoops(path = '/loops') {
     <I18nextProvider i18n={i18n}>
       <UIProvider>
         <MemoryRouter initialEntries={[path]}>
+          <LoopNavigationProbe />
           <Routes>
             <Route path="/loops" element={<LoopsPage />} />
             <Route path="/loops/:loopId" element={<LoopDetailPage />} />
@@ -118,6 +128,11 @@ function renderLoops(path = '/loops') {
       </UIProvider>
     </I18nextProvider>,
   )
+}
+
+function LoopNavigationProbe() {
+  const navigate = useNavigate()
+  return <button type="button" onClick={() => void navigate('/loops/second-loop')}>Go second loop</button>
 }
 
 beforeEach(() => {
@@ -232,20 +247,19 @@ describe('Loops Phase 4 pages', () => {
     expect(api.getSession).toHaveBeenCalledWith('session-1', expect.anything())
   })
 
-  it('edits verification checks as structured command arguments', async () => {
+  it('round-trips verification argv without parsing or joining arguments', async () => {
     const user = userEvent.setup()
+    api.updateLoop.mockImplementation((_id: string, next: LoopDefinition) => Promise.resolve(next))
     renderLoops('/loops/daily-review')
 
     expect(await screen.findByRole('heading', { name: 'Verification checks' })).toBeVisible()
+    expect(screen.getByLabelText('Command argument 4')).toHaveValue('Test Name')
     fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Verified daily review' } })
     fireEvent.change(screen.getByLabelText('Workspace identity'), { target: { value: '/workspace/release' } })
     fireEvent.change(screen.getByLabelText('Mission'), { target: { value: 'Review and verify.' } })
     fireEvent.change(screen.getByLabelText('Team template reference'), { target: { value: 'release-team' } })
-    await user.click(screen.getByRole('button', { name: 'Add check' }))
-    await user.type(screen.getByLabelText('Check ID'), 'unit')
-    await user.type(screen.getByLabelText('Command arguments'), 'go test ./...')
-    fireEvent.change(screen.getByLabelText('Check timeout (seconds)'), { target: { value: '90' } })
-    await user.click(screen.getByRole('checkbox', { name: 'Required check' }))
+    await user.click(screen.getByRole('button', { name: 'Add argument' }))
+    await user.type(screen.getByLabelText('Command argument 6'), '--count=1')
     await user.click(screen.getByRole('checkbox', { name: 'Enabled' }))
     await user.click(screen.getByRole('checkbox', { name: 'Read-only workspace' }))
     await user.click(screen.getByRole('checkbox', { name: 'Require a clean Git workspace' }))
@@ -266,8 +280,8 @@ describe('Loops Phase 4 pages', () => {
     expect(savedDefinition.revision).toBe(2)
     expect(savedDefinition.verification_recipe.checks[0]).toMatchObject({
       id: 'unit',
-      command: ['go', 'test', './...'],
-      required: false,
+      command: ['go', 'test', '-run', 'Test Name', './...', '--count=1'],
+      required: true,
       timeout_seconds: 90,
     })
     expect(savedDefinition).toMatchObject({
@@ -282,6 +296,30 @@ describe('Loops Phase 4 pages', () => {
       output_policy: { include_diff: true },
       budget: { max_model_calls: 18, max_tokens: 180000, timeout_seconds: 1800 },
     })
+  })
+
+  it('does not commit a delayed Loop mutation after routing to another Definition', async () => {
+    const user = userEvent.setup()
+    let resolveSave: ((value: LoopDefinition) => void) | undefined
+    const delayedSave = new Promise<LoopDefinition>((resolve) => {
+      resolveSave = resolve
+    })
+    api.getLoop.mockImplementation((id: string) => Promise.resolve({
+      ...definition,
+      id,
+      name: id === 'second-loop' ? 'Second loop' : definition.name,
+    }))
+    api.updateLoop.mockReturnValue(delayedSave)
+    renderLoops('/loops/daily-review')
+
+    await screen.findByRole('heading', { name: definition.name })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(screen.getByRole('button', { name: 'Go second loop' }))
+    expect(await screen.findByRole('heading', { name: 'Second loop' })).toBeVisible()
+
+    resolveSave?.({ ...definition, name: 'Stale saved loop' } as LoopDefinition)
+    await waitFor(() => expect(api.updateLoop).toHaveBeenCalledOnce())
+    expect(screen.getByRole('heading', { name: 'Second loop' })).toBeVisible()
   })
 
   it('configures Team roles with active Employees and an explicit model path', async () => {

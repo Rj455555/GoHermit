@@ -89,7 +89,7 @@ function normalizedDefinition(definition: LoopDefinition): LoopDefinition {
       ...definition.verification_recipe,
       checks: definition.verification_recipe.checks.map((check) => ({
         ...check,
-        command: check.command.join(' ').trim().split(/\s+/).filter(Boolean).slice(0, 8),
+        command: [...check.command],
       })),
     },
   }
@@ -224,7 +224,50 @@ function DefinitionForm({
           <fieldset key={index}>
             <legend>{t('loops.checkNumber', { number: index + 1 })}</legend>
             <label>{t('loops.checkId')}<input aria-label={t('loops.checkId')} value={check.id} onChange={(event) => onChange({ ...value, verification_recipe: { ...value.verification_recipe, checks: checks.map((item, itemIndex) => itemIndex === index ? { ...item, id: event.target.value } : item) } })} /></label>
-            <label>{t('loops.commandArguments')}<input aria-label={t('loops.commandArguments')} value={check.command.join(' ')} onChange={(event) => onChange({ ...value, verification_recipe: { ...value.verification_recipe, checks: checks.map((item, itemIndex) => itemIndex === index ? { ...item, command: [event.target.value] } : item) } })} /></label>
+            <fieldset>
+              <legend>{t('loops.commandArguments')}</legend>
+              {check.command.map((argument, argumentIndex) => (
+                <div className="button-row" key={argumentIndex}>
+                  <label>{t('loops.commandArgument', { number: argumentIndex + 1 })}
+                    <input
+                      aria-label={t('loops.commandArgument', { number: argumentIndex + 1 })}
+                      value={argument}
+                      onChange={(event) => onChange({
+                        ...value,
+                        verification_recipe: {
+                          ...value.verification_recipe,
+                          checks: checks.map((item, itemIndex) => itemIndex === index
+                            ? {
+                                ...item,
+                                command: item.command.map((current, currentIndex) =>
+                                  currentIndex === argumentIndex ? event.target.value : current),
+                              }
+                            : item),
+                        },
+                      })}
+                    />
+                  </label>
+                  <button type="button" onClick={() => onChange({
+                    ...value,
+                    verification_recipe: {
+                      ...value.verification_recipe,
+                      checks: checks.map((item, itemIndex) => itemIndex === index
+                        ? { ...item, command: item.command.filter((_, currentIndex) => currentIndex !== argumentIndex) }
+                        : item),
+                    },
+                  })}>{t('common.remove')}</button>
+                </div>
+              ))}
+              <button type="button" disabled={check.command.length >= 32} onClick={() => onChange({
+                ...value,
+                verification_recipe: {
+                  ...value.verification_recipe,
+                  checks: checks.map((item, itemIndex) => itemIndex === index
+                    ? { ...item, command: [...item.command, ''] }
+                    : item),
+                },
+              })}>{t('loops.addArgument')}</button>
+            </fieldset>
             <label>{t('loops.checkTimeout')}<input type="number" min="0" value={check.timeout_seconds} onChange={(event) => onChange({ ...value, verification_recipe: { ...value.verification_recipe, checks: checks.map((item, itemIndex) => itemIndex === index ? { ...item, timeout_seconds: parsePositive(event.target.value, item.timeout_seconds) } : item) } })} /></label>
             <label><input type="checkbox" checked={check.required} onChange={(event) => onChange({ ...value, verification_recipe: { ...value.verification_recipe, checks: checks.map((item, itemIndex) => itemIndex === index ? { ...item, required: event.target.checked } : item) } })} /> {t('loops.required')}</label>
             <button type="button" onClick={() => onChange({ ...value, verification_recipe: { ...value.verification_recipe, checks: checks.filter((_, itemIndex) => itemIndex !== index) } })}>{t('common.remove')}</button>
@@ -247,11 +290,14 @@ export function LoopsPage() {
   const [info, setInfo] = useState<Info | null>(null)
   const [importText, setImportText] = useState('')
   const [strictError, setStrictError] = useState('')
+  const pageEpoch = useRef(0)
 
   useEffect(() => {
+    const epoch = ++pageEpoch.current
     const controller = new AbortController()
     void Promise.all([listLoops({ signal: controller.signal }), getInfo({ signal: controller.signal })])
       .then(([page, catalog]) => {
+        if (epoch !== pageEpoch.current) return
         setLoops(page.loops)
         setInfo(catalog)
         setDraft((current) => current.agent_selection.company ? current : {
@@ -261,23 +307,30 @@ export function LoopsPage() {
         })
       })
       .catch(() => { if (!controller.signal.aborted) actions.showToast({ messageKey: 'mutation.failed', tone: 'error' }) })
-    return () => controller.abort()
+    return () => {
+      pageEpoch.current += 1
+      controller.abort()
+    }
   }, [actions, connectivity.generation])
 
   async function saveNew() {
     if (!connectivity.canMutate) return
+    const epoch = pageEpoch.current
     setCreating(true)
     try {
       const saved = await createLoop(normalizedDefinition(draft))
+      if (epoch !== pageEpoch.current) return
       void navigate(`/loops/${encodeURIComponent(saved.id)}`)
     } catch (error) {
+      if (epoch !== pageEpoch.current) return
       actions.showToast({ messageKey: mutationKey(error), tone: 'error' })
     } finally {
-      setCreating(false)
+      if (epoch === pageEpoch.current) setCreating(false)
     }
   }
 
   async function importStrict() {
+    const epoch = pageEpoch.current
     setStrictError('')
     let value: unknown
     try {
@@ -289,8 +342,10 @@ export function LoopsPage() {
     }
     try {
       const saved = await importLoop(value)
+      if (epoch !== pageEpoch.current) return
       void navigate(`/loops/${encodeURIComponent(saved.id)}`)
     } catch (error) {
+      if (epoch !== pageEpoch.current) return
       setStrictError(error instanceof ApiError && error.status === 409 ? t('mutation.conflict') : t('loops.rejectedImport'))
     }
   }
@@ -464,6 +519,7 @@ export function LoopDetailPage() {
   }, [loopId])
 
   useEffect(() => {
+    setBusy(false)
     void refresh()
     return () => {
       requestEpoch.current += 1
@@ -473,27 +529,37 @@ export function LoopDetailPage() {
 
   async function mutate(action: 'save' | 'start' | 'dry-run') {
     if (!loopId || !definition || !connectivity.canMutate) return
+    const owner = loopId
+    const epoch = requestEpoch.current
     setBusy(true)
     try {
       if (action === 'save') {
-        setDefinition(await updateLoop(loopId, normalizedDefinition(definition)))
+        const updated = await updateLoop(loopId, normalizedDefinition(definition))
+        if (epoch !== requestEpoch.current || owner !== loopId) return
+        setDefinition(updated)
         setReport(null)
       } else if (action === 'start') {
         await startLoopInvocation(loopId)
+        if (epoch !== requestEpoch.current || owner !== loopId) return
         await refresh()
       } else {
-        setReport(await dryRunLoop(loopId))
+        const nextReport = await dryRunLoop(loopId)
+        if (epoch !== requestEpoch.current || owner !== loopId) return
+        setReport(nextReport)
       }
     } catch (error) {
+      if (epoch !== requestEpoch.current || owner !== loopId) return
       actions.showToast({ messageKey: mutationKey(error), tone: 'error' })
       if (error instanceof ApiError && error.status === 409) await refresh()
     } finally {
-      setBusy(false)
+      if (owner === loopId) setBusy(false)
     }
   }
 
   async function saveTeam() {
     if (!team || !connectivity.canMutate) return
+    const owner = loopId
+    const epoch = requestEpoch.current
     const incomplete = Object.values(team.roles).some((selection) => selection.employee_id && (
       [selection.company, selection.access, selection.model].some(Boolean)
       && ![selection.company, selection.access, selection.model].every(Boolean)
@@ -505,11 +571,13 @@ export function LoopDetailPage() {
     setBusy(true)
     try {
       await importTeamTemplate(team)
+      if (epoch !== requestEpoch.current || owner !== loopId) return
       actions.showToast({ messageKey: 'toast.saved', tone: 'success' })
     } catch (error) {
+      if (epoch !== requestEpoch.current || owner !== loopId) return
       actions.showToast({ messageKey: mutationKey(error), tone: 'error' })
     } finally {
-      setBusy(false)
+      if (owner === loopId) setBusy(false)
     }
   }
 
@@ -601,11 +669,19 @@ export function LoopInvocationPage() {
       confirmKey: 'loops.cancel',
       tone: 'warning',
       onConfirm: () => {
+        const owner = invocation.id
+        const epoch = requestEpoch.current
         void (async () => {
           try {
-            setInvocation(await cancelLoopInvocation(invocation.id))
+            const updated = await cancelLoopInvocation(invocation.id)
+            if (
+              epoch !== requestEpoch.current ||
+              owner !== invocationId
+            ) return
+            setInvocation(updated)
             await refresh()
           } catch (error) {
+            if (epoch !== requestEpoch.current || owner !== invocationId) return
             actions.showToast({ messageKey: mutationKey(error), tone: 'error' })
           }
         })()
@@ -615,10 +691,14 @@ export function LoopInvocationPage() {
 
   async function decide(requestId: string, decision: 'approve' | 'deny') {
     if (!invocation?.session_id || !connectivity.canMutate) return
+    const owner = invocation.id
+    const epoch = requestEpoch.current
     try {
       await decideApproval(invocation.session_id, requestId, decision)
+      if (epoch !== requestEpoch.current || owner !== invocationId) return
       await refresh()
     } catch (error) {
+      if (epoch !== requestEpoch.current || owner !== invocationId) return
       actions.showToast({ messageKey: mutationKey(error), tone: 'error' })
     }
   }

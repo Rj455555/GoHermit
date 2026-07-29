@@ -718,6 +718,42 @@ async function handleApi(request, response, url) {
     return true
   }
   const employeeSkillsMatch = pathname.match(/^\/api\/employees\/([^/]+)\/skills$/u)
+  if (request.method === 'PUT' && employeeSkillsMatch) {
+    const employeeId = decodeURIComponent(employeeSkillsMatch[1])
+    const record = createdEmployees.get(employeeId)
+    if (!record) {
+      json(response, 404, { code: 'not_found' })
+      return true
+    }
+    const input = await body(request)
+    if (input.expected_revision !== record.employee.revision) {
+      json(response, 409, { code: 'revision_conflict' })
+      return true
+    }
+    const valid = Array.isArray(input.bindings) && input.bindings.every((binding) =>
+      binding.skill_id === 'native-review'
+      && binding.version === '1.0.0'
+      && binding.digest === '0'.repeat(64)
+      && binding.configuration
+      && typeof binding.configuration === 'object'
+      && !Array.isArray(binding.configuration))
+    if (!valid) {
+      json(response, 400, { code: 'invalid_skill_binding' })
+      return true
+    }
+    const updated = {
+      ...record,
+      employee: {
+        ...record.employee,
+        revision: record.employee.revision + 1,
+        skill_bindings: structuredClone(input.bindings),
+        updated_at: now,
+      },
+    }
+    createdEmployees.set(employeeId, updated)
+    json(response, 200, updated)
+    return true
+  }
   if (request.method === 'GET' && employeeSkillsMatch) {
     const employeeId = decodeURIComponent(employeeSkillsMatch[1])
     const record = createdEmployees.get(employeeId)
@@ -1204,6 +1240,16 @@ const server = createServer(async (request, response) => {
     if (asset) {
       response.setHeader('Content-Type', types[extname(asset)] || 'application/octet-stream')
       createReadStream(asset).pipe(response)
+      return
+    }
+    const employeeRoute = pathname.match(/^\/employees\/([A-Za-z0-9_.-]{1,128})$/u)
+    if (
+      employeeRoute
+      && employeeRoute[1] !== '.'
+      && employeeRoute[1] !== '..'
+    ) {
+      response.setHeader('Content-Type', types['.html'])
+      createReadStream(resolve(root, 'index.html')).pipe(response)
       return
     }
     if (extname(pathname)) {

@@ -10,6 +10,7 @@ import {
   getInfo,
   listProjects,
   listSkills,
+  updateEmployeeSkills,
 } from '../../api/endpoints'
 import { ApiError } from '../../api/errors'
 import type {
@@ -93,6 +94,8 @@ export function EmployeeWizard({ onClose, onCreated }: {
   const [persisted, setPersisted] = useState<EmployeeRecord | null>(null)
   const [readiness, setReadiness] = useState<EmployeeDryRun | null>(null)
   const [postCreate, setPostCreate] = useState({ skills: 0, knowledge: 0 })
+  const [skillsPersisted, setSkillsPersisted] = useState(false)
+  const [knowledgePersisted, setKnowledgePersisted] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -161,20 +164,25 @@ export function EmployeeWizard({ onClose, onCreated }: {
     }
   }
 
-  async function prepareReview() {
-    if (persisted) return
-    setBusy(true)
+  async function validatePersisted(
+    initialRecord: EmployeeRecord,
+    skillsAlreadySaved: boolean,
+    knowledgeAlreadySaved: boolean,
+  ) {
+    let current = initialRecord
     try {
-      const project = projectBinding()
-      const draft = {
-        ...employee,
-        skill_bindings: bindings(),
-        project_binding_ids: [project.id],
+      const selectedBindings = bindings()
+      if (!skillsAlreadySaved) {
+        current = await updateEmployeeSkills(
+          current.employee.id,
+          current.employee.revision,
+          selectedBindings,
+        )
+        setPersisted(current)
+        setSkillsPersisted(true)
       }
-      const record = await createEmployee({ employee: draft, project_bindings: [project] })
-      setPersisted(record)
-      if (knowledge.kind) {
-        await addEmployeeKnowledge(record.employee.id, {
+      if (knowledge.kind && !knowledgeAlreadySaved) {
+        await addEmployeeKnowledge(current.employee.id, {
           id: knowledge.id,
           kind: knowledge.kind,
           title: knowledge.title,
@@ -182,17 +190,77 @@ export function EmployeeWizard({ onClose, onCreated }: {
             ? { manual_text: knowledge.content }
             : { relative_path: knowledge.content }),
         })
+        setKnowledgePersisted(true)
       }
       const [report, skillProjection, knowledgeProjection] = await Promise.all([
-        dryRunEmployee(record.employee.id),
-        getEmployeeSkills(record.employee.id),
-        getEmployeeKnowledge(record.employee.id),
+        dryRunEmployee(current.employee.id),
+        getEmployeeSkills(current.employee.id),
+        getEmployeeKnowledge(current.employee.id),
       ])
-      setReadiness(report)
+      const skillReady = selectedBindings.length === skillProjection.bindings.length
+        && selectedBindings.every((selected) => skillProjection.bindings.some((item) =>
+          item.status === 'current'
+          && item.binding.skill_id === selected.skill_id
+          && item.binding.version === selected.version
+          && item.binding.digest === selected.digest))
+      const knowledgeReady = knowledgeProjection.sources.every((source) => source.status === 'ready')
+      setReadiness({
+        ...report,
+        revision: current.employee.revision,
+        ready: report.ready && skillReady && knowledgeReady,
+        checks: [
+          ...report.checks,
+          {
+            name: 'skills',
+            ready: skillReady,
+            detail: skillReady ? 'validated by server' : 'missing or stale Skill binding',
+          },
+          {
+            name: 'knowledge',
+            ready: knowledgeReady,
+            detail: knowledgeReady ? 'ready' : 'Knowledge source failed',
+          },
+        ],
+      })
       setPostCreate({
         skills: skillProjection.bindings.length,
         knowledge: knowledgeProjection.sources.length,
       })
+    } catch (error) {
+      setReadiness({
+        employee_id: current.employee.id,
+        revision: current.employee.revision,
+        ready: false,
+        checks: [{
+          name: 'server_validation',
+          ready: false,
+          detail: 'The persisted Employee still requires repair.',
+        }],
+      })
+      actions.showToast({ messageKey: mutationKey(error), tone: 'error' })
+    }
+  }
+
+  async function prepareReview() {
+    if (busy) return
+    setBusy(true)
+    try {
+      let record = persisted
+      if (!record) {
+        const project = projectBinding()
+        const draft = {
+          ...employee,
+          skill_bindings: [],
+          project_binding_ids: [project.id],
+        }
+        record = await createEmployee({ employee: draft, project_bindings: [project] })
+        setPersisted(record)
+      }
+      await validatePersisted(
+        record,
+        persisted ? skillsPersisted : false,
+        persisted ? knowledgePersisted : false,
+      )
     } catch (error) {
       actions.showToast({ messageKey: mutationKey(error), tone: 'error' })
     } finally {
@@ -326,13 +394,14 @@ export function EmployeeWizard({ onClose, onCreated }: {
             <ul>{readiness.checks.map((check) => <li key={check.name}>{check.name}: {check.ready ? t('employees.ready') : t('employees.blocked')} · {check.detail}</li>)}</ul>
             {!readiness.ready ? <p>{t('employees.persistedRepair')}</p> : null}
           </> : <p>{t('employees.serverReadiness')}</p>}
+          {persisted && !readiness?.ready ? <button type="button" disabled={busy} onClick={() => void prepareReview()}>{t('employees.retryValidation')}</button> : null}
         </>
       ) : null}
 
       <div className="button-row">
         <button type="button" onClick={onClose}>{t('actions.cancel')}</button>
         {step > 0 && !persisted ? <button type="button" onClick={() => setStep((current) => current - 1)}>{t('employees.previous')}</button> : null}
-        {step < 8 ? <button type="button" disabled={busy || !catalogReady} onClick={() => void next()}>{t('employees.next')}</button> : <button type="button" disabled={busy || !persisted || !readiness} onClick={() => persisted && onCreated(persisted)}>{readiness?.ready ? t('employees.openEmployee') : t('employees.openRepair')}</button>}
+        {step < 8 ? <button type="button" disabled={busy || !catalogReady} onClick={() => void next()}>{t('employees.next')}</button> : <button type="button" disabled={busy || !persisted} onClick={() => persisted && onCreated(persisted)}>{readiness?.ready ? t('employees.openEmployee') : t('employees.openRepair')}</button>}
       </div>
     </section>
   )
