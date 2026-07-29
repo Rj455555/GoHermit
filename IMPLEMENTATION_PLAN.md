@@ -21,7 +21,7 @@
 - Phase 9: `OWNER_APPROVED`; security Gate Head
   `0739329024adeb38fb703cda9d51747ea9910d7d` squash-merged through PR #42
   into `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`.
-- Phase 10: `IN_PROGRESS` on clean branch
+- Phase 10: `COMPLETE_WAITING_FOR_OWNER` on clean branch
   `agent/electronic-employees-v0.7-phase10`, merge-base
   `36987d92291c2781bfa3b997bdaab8002bd9c019`.
 - Required terminal status after Phase 10 delivery:
@@ -77,15 +77,15 @@
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` |
 | 9 | Team Role to Employee mapping | `OWNER_APPROVED` |
-| 10 | Evals, Docker, docs, and v0.7 release closeout | `IN_PROGRESS` |
+| 10 | Evals, Docker, docs, and v0.7 release closeout | `COMPLETE_WAITING_FOR_OWNER` |
 
 ### Current phase scope
 
 - Phases 1 through 9 are Owner-approved, merged, and closed to further
   implementation.
 - Phase 10 cross-module evals, Docker/persistence acceptance, v0.7
-  documentation, AI handoff, version, changelog, and acceptance-blocking
-  minimal fixes are the only authorized scope.
+  documentation, AI handoff, version, and changelog are implemented and
+  validated. Only evidence synchronization and Owner review remain.
 - Existing Session/Run/Plan/Approval/Verification/Event/Tool/recovery remains
   the only execution truth and kernel.
 - Keep every post-v0.7 product capability blocked; Phase 10 may not add product
@@ -129,7 +129,7 @@ STATUS: WAITING_FOR_PHASE_10_APPROVAL
 
 ---
 
-Plan status: `PHASE_10_IN_PROGRESS`
+Plan status: `PHASE_10_COMPLETE_WAITING_FOR_OWNER`
 Baseline: `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`
 Feature branch: `agent/electronic-employees-v0.7-phase10`
 Merge-base: `36987d92291c2781bfa3b997bdaab8002bd9c019`
@@ -1158,7 +1158,7 @@ push, and Draft PR evidence, then stops for Owner approval.
 | 7 | Manual Execution Lifecycle | `OWNER_APPROVED` | Recovery Gate approved and PR #40 squash-merged as `d8194df`; full Phase 7 is in `origin/main` |
 | 8 | Employees and Tasks Web UI | `OWNER_APPROVED` | Gate implementation `47d413b`; evidence `00d724a`; PR #41 squash-merged as `01cfe8c26324708b806d7cd1f946adbbea0306f2` |
 | 9 | Team Role to Employee mapping | `OWNER_APPROVED` | Implementation `9bb56fc`; security Gate `bc66781`; reviewed Head `0739329`; PR #42 squash-merged as `36987d92291c2781bfa3b997bdaab8002bd9c019` |
-| 10 | Evals, Docker, docs, and v0.7 release closeout | `IN_PROGRESS` | Clean branch `agent/electronic-employees-v0.7-phase10`; merge-base `36987d92291c2781bfa3b997bdaab8002bd9c019` |
+| 10 | Evals, Docker, docs, and v0.7 release closeout | `COMPLETE_WAITING_FOR_OWNER` | Plan start `9a6bb72`; implementation `b16ac00`; Push CI `30423367130` green; final evidence Head/CI recorded in Draft PR |
 
 ### Phase 1: Employee Domain and ADR
 
@@ -2984,7 +2984,7 @@ Phase 9 hidden-Session and wire-migration Gate revision evidence
 
 ### Phase 10: Evals, Docker, docs, and v0.7 release closeout
 
-Status: `IN_PROGRESS`. Clean branch
+Status: `COMPLETE_WAITING_FOR_OWNER`. Clean branch
 `agent/electronic-employees-v0.7-phase10` was created directly from
 `origin/main@36987d92291c2781bfa3b997bdaab8002bd9c019`; this is also its
 merge-base. Phases 1–9 are the final merged implementation baseline.
@@ -3019,6 +3019,112 @@ Exit: all final tests and GitHub CI pass; container is healthy and Workbench is
 browser-accessible; persistent data survives rebuild; docs/version/handoff are
 consistent; no generated files or protected user files are committed; Phase 10
 commit is pushed and Draft PR is ready for Owner review.
+
+Phase 10 implementation and acceptance evidence (2026-07-29):
+
+- Baseline and commits:
+  - PR #42 was revalidated at reviewed Head
+    `0739329024adeb38fb703cda9d51747ea9910d7d`, changed from Draft to Ready,
+    and squash-merged without auto-merge as
+    `36987d92291c2781bfa3b997bdaab8002bd9c019`;
+  - clean branch `agent/electronic-employees-v0.7-phase10` was created from
+    that exact `origin/main` SHA and retains it as merge-base;
+  - Phase 10 plan-start commit:
+    `9a6bb7229ff2637dba8e5318eece7978896f47f0`;
+  - implementation/docs/version commit:
+    `b16ac00d0f28bac69d10ffe65b3c8ea528005ecb`.
+- Actual files:
+  - cross-module eval and persistent fixture:
+    `internal/evals/v07_contracts_test.go`;
+  - real Compose/image/health/rebuild acceptance:
+    `internal/evals/docker_acceptance.sh`,
+    `.github/workflows/ci.yml`;
+  - version: `internal/app/app.go`;
+  - minimum AI handoff path: root `AGENTS.md`, `docs/ai/context.md`,
+    `docs/ai/employees.md`, `docs/ai/handoff-v0.7.md`;
+  - closeout documentation:
+    `docs/adr/0013-first-class-electronic-employees.md`,
+    `docs/ai/next-development-plan.md`, `docs/roadmap.md`, `CHANGELOG.md`,
+    and `README.md`.
+- Deterministic cross-module evals:
+  - directly verify `0.7.0-dev`, Employee identity/revision/ProjectBinding
+    snapshot isolation, exact policy intersection and Skill-only narrowing,
+    SKILL.md Adapter zero capability, Knowledge and Employee Memory isolation,
+    Project/Employee Memory separation, explicit acceptance, Forget, and
+    Store reopen;
+  - build a valid persistent Employee, queued Task, deterministic Knowledge
+    Index/Citation, accepted Memory Fact, Session, and Loop fixture using the
+    real domain and Store APIs; Task creation is asserted to leave SessionID
+    and RunID empty;
+  - an AST-backed regression manifest pins the existing behavioral tests for
+    explicit Start, zero-Run Prepare, at-most-once Start/reconciliation,
+    cancel/resume/restart, completed Tool non-replay, external Workspace
+    change, mutation verification, immutable Team assignment/recovery,
+    private Memory/Handoff isolation, hidden Session public denial, strict
+    TeamTemplate v1 migration, old Session compatibility, public API/SSE, and
+    browser refresh;
+  - default evals use no Provider and make no paid or network model call.
+- Docker and persistent data acceptance:
+  - the Docker CI job now uses the real generated fixture rather than
+    placeholder files;
+  - it runs `docker compose config`, requires the rendered host binding to be
+    `127.0.0.1`, builds the image, starts the service, waits for real
+    `/api/health`, checks `/api/info` reports `0.7.0-dev`, and confirms the
+    Workbench is reachable;
+  - it verifies Employee, Task, Knowledge, Memory, Loop, and Session files,
+    records SHA-256 manifests for `/data` and the workspace Session Store,
+    destroys/rebuilds/recreates the container, then requires byte-identical
+    manifests and a second healthy Workbench;
+  - it scans persistent content for credential-shaped data. The Compose and
+    Dockerfile product configuration and all existing data schemas remain
+    unchanged; no eager or destructive migration was added.
+- Local validation:
+  - Phase 10 scoped evals and direct regression packages: PASS;
+  - `go test ./internal/evals -cover -count=1`: PASS, 80.2% statements;
+  - `go test ./... -count=1`: PASS;
+  - `go test -race ./... -count=1`: PASS;
+  - `go vet ./...`: PASS;
+  - native CLI/Web builds and Linux amd64, Windows amd64, and Darwin arm64
+    CLI/Web cross-builds: PASS;
+  - JavaScript syntax for `app.js`, `loops.js`, `employees.js`, and
+    `tasks.js`: PASS;
+  - Playwright full suite: 13/13 PASS;
+  - Employees/Loops/Tasks repeated stability suite: 90/90 PASS
+    (`--repeat-each=10`);
+  - `bash -n internal/evals/docker_acceptance.sh`, `gofmt`,
+    `git diff --check`, and credential-shaped staged-diff scan: PASS.
+- Implementation-Head GitHub CI:
+  - Push CI
+    [30423367130](https://github.com/Rj455555/GoHermit/actions/runs/30423367130):
+    Go normal/race/vet/native/cross-build, Web E2E, and the actual Docker
+    Compose/image/health/rebuild persistence job all PASS;
+  - `live-smoke` is skipped by workflow design and no paid model is called.
+- Documentation and version:
+  - `AGENTS.md` → `context.md` → `employees.md` → `handoff-v0.7.md` is the
+    minimum sufficient AI reading path;
+  - the documents describe entity relationships, context/policy layers,
+    Prepare/Start, projected status, Team Assignment, hidden Sessions,
+    recovery, API, Stores/schemas, accepted risks, and gated v0.8 candidates;
+  - version reports `0.7.0-dev`; no Release, tag, public deployment, or
+    distributable package was created.
+- Deviations and remaining bounded risk:
+  - `.github/workflows/ci.yml` is an acceptance-only change outside the
+    originally listed documentation/eval paths; it was necessary to execute
+    the Owner-required Docker persistence rebuild on a host with Docker;
+  - root `AGENTS.md`, `README.md`, and the workflow are additional closeout
+    files required for the requested minimum handoff, version accuracy, and
+    actual acceptance; no runtime capability was added;
+  - the macOS development host has no Docker CLI, so actual Docker acceptance
+    runs in the Linux GitHub Docker job and is not claimed as a local result;
+  - existing accepted risks remain: per-file atomicity without cross-file
+    transactions, in-process locks, one Workspace/one writer, private hidden
+    Worker output retained for internal recovery, loopback-only unauthenticated
+    Web, conservative exact Memory echo detection, newest-100 global Task view,
+    and no default paid-provider inference;
+  - final evidence commit SHA and its Push/PR CI are recorded in the Draft PR
+    rather than creating a self-referential evidence commit chain;
+  - no Graphify/CodeGraph/browser/test output, build artifact, or protected
+    untracked user file is committed.
 
 ## 22. Non-goals
 
@@ -3137,7 +3243,8 @@ v0.7 is done only when:
 - Git contains no credential, runtime evidence, Graphify/CodeGraph/browser/test
   output, protected untracked file, or build artifact.
 
-Phases 1 through 9 are Owner-approved and merged. Phase 10 is the only
-authorized implementation scope and may not add new product capability.
+Phases 1 through 9 are Owner-approved and merged. Phase 10 implementation and
+acceptance are complete and awaiting Owner approval; no new product capability
+was added.
 
-STATUS: PHASE_10_IN_PROGRESS
+STATUS: WAITING_FOR_PHASE_10_APPROVAL
