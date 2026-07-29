@@ -857,7 +857,7 @@ Required SSE connection/sequence tests:
 | Plan Gate | Owner reapproval at `c4074a2963e0b210804d08b2bfcab5b1e010762f` | complete | SSE ownership, SPA fallback, CodeGraph, temporary Embed boundary, and toolchain plan approved |
 | Phase 1 | `APPROVAL: REACT_PHASE_1_APPROVED` at `4f06a1e970923ba9c8b981c5fb151ef324f56e65` | complete; approved | minimal React/TypeScript/Vite workspace, committed deterministic Embed artifact, old UI boundary, and validations below |
 | Phase 2 | `APPROVAL: REACT_PHASE_2_REAPPROVED` at `019c6e70df32b4116f92d5007515def6f53421a8` | complete; approved | BrowserRouter shell, zh-CN/en-US i18n, corrected action-scoped Session sidebar focus, isolated ConfirmDialog, shared feedback primitives, deterministic Embed artifact, and independent React E2E |
-| Phase 3 | `AUTHORIZED_PHASE: PHASE_3_ONLY` at `019c6e70df32b4116f92d5007515def6f53421a8` | `GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | typed API/DTO boundary, corrected Active Run mutation ownership, visible mutation failures, Session-owned SSE recovery, localized runtime metadata, bounded API/history/streaming data, deterministic Embed artifact, and Phase 3 browser coverage |
+| Phase 3 | `AUTHORIZED_PHASE: PHASE_3_ONLY` at `019c6e70df32b4116f92d5007515def6f53421a8` | `SECOND_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | typed API/DTO boundary, corrected Active Run mutation ownership, visible mutation failures, Session-owned SSE recovery, delta-free bounded Activity projection, consistent fatal recovery state, localized runtime metadata, bounded API/history/streaming data, deterministic Embed artifact, and Phase 3 browser coverage |
 | Phases 4–5 | not authorized | not started | no Employees/Tasks/Loops editor migration, React serving-root cutover, Docker/CI migration, or legacy deletion |
 
 ### 11.1 Phase 1 execution evidence
@@ -930,3 +930,17 @@ Required SSE connection/sequence tests:
 `Phase 3: GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
 
 `STATUS: WAITING_FOR_REACT_PHASE_3_REAPPROVAL`
+
+### 11.6 Phase 3 second Gate revision evidence
+
+- Delta retention boundary: `model_delta` is handled before Activity projection and never enters the bounded Activity array. Activity retains only display-required, bounded metadata and excludes message text, raw payloads, errors, and other transient model content. The existing 256 KiB streaming cap remains subscriber-local; after truncation that subscriber ignores further deltas without closing or replacing the shared Session EventSource, while another Run-filtered subscriber continues receiving its events. Terminal/model-completed events refresh the authoritative Session projection and clear the temporary stream/truncation state.
+- Delta regression coverage: unit and shared-registry integration tests send 100 maximum-size 32 KiB chunks and prove `streamingText` never exceeds 256 KiB, Activity contains no `model_delta` or chunk content, the shared source is neither closed nor replaced, and the other Run subscriber remains functional.
+- Fatal recovery ownership: Hook fatal UI is now derived from the shared Connection status instead of a subscriber-local boolean. A subscriber that remounts during deferred disposal, or a second subscriber joining an already-fatal Connection, synchronously receives `fatal` and exposes the reconnect action. Explicit reconnect preserves the Session high-water, subscribers, and Run filters, closes the prior source, and creates exactly one shared replacement EventSource. StrictMode-style immediate unsubscribe/remount does not lose the recovery entry or create a duplicate connection.
+- Frontend verification: frozen install, typecheck, zero-warning lint, 119/119 Vitest assertions, coverage, production build, and React Playwright passed. Coverage is 95.25% statements/lines, 83.68% branches, and 92.44% functions. React Playwright passed 22/22; the complete Phase 3 Agent/Settings/SSE suite passed 110/110 with `--repeat-each=10`; legacy Playwright remained 13/13.
+- Deterministic build: two clean builds produced the same three-file set and byte-identical SHA-256 manifest: CSS `c64e4ae018f0a04d7e433c68641e9bb6aa25f437e462d4eefd891421c860831e`, JS `7568e0ebea07aeb47970a994d93c6b4b0990c882c8fee815acba6b21e772dedf`, and `index.html` `c5ce9b4b731aa6e7a14b734227f0f1e2212a6d85f7e774ac90949c32865de71c`. The artifact contains no production sourcemap, workspace absolute path, or source-map marker.
+- Go and scope verification: `go test ./internal/web -count=1`, `go test ./... -count=1`, `go test -race ./... -count=1`, `go vet ./...`, `go build ./cmd/hermit`, and `go build ./cmd/hermit-web` passed. Legacy Web tests remain green. No Go API, Store, Schema, Agent Runtime, Docker, CI, dependency, lockfile, React serving-root, Phase 4/5 feature, deployment, or Mac mini Docker service changed.
+- Hygiene: authorized-path, Markdown structure, `git diff --check`, single-lockfile/alternate-lockfile, credential-shaped data, machine-path, generated-artifact, and protected-file checks passed. The protected untracked path-list SHA-256 remains `530153626b098db04ebade3e1ff76660b58d7d6a0243b4b060b986f7a533b223`; protected files remain unmodified and unstaged.
+
+`Phase 3: SECOND_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER`
+
+`STATUS: WAITING_FOR_REACT_PHASE_3_SECOND_REAPPROVAL`

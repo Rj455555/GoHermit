@@ -223,4 +223,68 @@ describe('Session EventSource registry', () => {
     two.unsubscribe()
     await Promise.resolve()
   })
+
+  it('reuses fatal connection during remount and reports fatal to every late subscriber', async () => {
+    const firstStatuses: string[] = []
+    const first = subscribeSessionEvents('session-1', 10, {
+      runId: 'run-1',
+      onEvent: vi.fn(),
+      onStatus: (status) => firstStatuses.push(status),
+    })
+    source().emit('tool_completed', event({
+      type: 'tool_completed',
+      sequence: 3,
+      run_id: 'run-1',
+    }))
+    for (let count = 0; count < 5; count += 1) {
+      source().emit('task_started', event({ type: 'task_started', sequence: 0 }))
+    }
+    expect(firstStatuses).toEqual(['fatal'])
+    first.unsubscribe()
+
+    const remountStatuses: string[] = []
+    const lateStatuses: string[] = []
+    const remountEvents: RuntimeEvent[] = []
+    const lateEvents: RuntimeEvent[] = []
+    const remount = subscribeSessionEvents('session-1', 10, {
+      runId: 'run-1',
+      onEvent: (value) => remountEvents.push(value),
+      onStatus: (status) => remountStatuses.push(status),
+    })
+    const late = subscribeSessionEvents('session-1', 10, {
+      runId: 'run-2',
+      onEvent: (value) => lateEvents.push(value),
+      onStatus: (status) => lateStatuses.push(status),
+    })
+    await Promise.resolve()
+
+    expect(sources).toHaveLength(1)
+    expect(remountStatuses).toEqual(['fatal'])
+    expect(lateStatuses).toEqual(['fatal'])
+    expect(getSessionEventDiagnostics('session-1')).toMatchObject({
+      fatal: true,
+      highWater: 3,
+      subscribers: 2,
+    })
+
+    reconnectSessionEvents('session-1')
+    expect(sources).toHaveLength(2)
+    expect(source(1).url).toBe('/api/sessions/session-1/events?after=3')
+    expect(getSessionEventDiagnostics('session-1')).toMatchObject({
+      fatal: false,
+      highWater: 3,
+      subscribers: 2,
+    })
+    source(1).emit('tool_completed', event({
+      type: 'tool_completed',
+      sequence: 4,
+      run_id: 'run-2',
+    }))
+    expect(remountEvents).toEqual([])
+    expect(lateEvents.map((value) => value.sequence)).toEqual([4])
+
+    remount.unsubscribe()
+    late.unsubscribe()
+    await Promise.resolve()
+  })
 })

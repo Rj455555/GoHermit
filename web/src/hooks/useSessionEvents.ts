@@ -23,6 +23,22 @@ const REFRESH_EVENT_TYPES = new Set([
   'approval_consumed',
 ])
 
+function activityProjection(event: RuntimeEvent): RuntimeEvent {
+  return {
+    type: event.type,
+    time: event.time,
+    session_id: event.session_id,
+    run_id: event.run_id,
+    mission_id: event.mission_id,
+    work_item_id: event.work_item_id,
+    agent_id: event.agent_id,
+    plan_step_id: event.plan_step_id,
+    sequence: event.sequence,
+    turn: event.turn,
+    tool: event.tool,
+  }
+}
+
 export function useSessionEvents({
   sessionId,
   frontier,
@@ -39,7 +55,6 @@ export function useSessionEvents({
   const [streamingText, setStreamingText] = useState('')
   const [events, setEvents] = useState<RuntimeEvent[]>([])
   const [status, setStatus] = useState<'connected' | 'reconnecting' | 'fatal'>('connected')
-  const [fatal, setFatal] = useState(false)
   const [truncated, setTruncated] = useState(false)
 
   useEffect(() => {
@@ -49,7 +64,6 @@ export function useSessionEvents({
   useEffect(() => {
     setStreamingText('')
     setEvents([])
-    setFatal(false)
     setTruncated(false)
     streamTruncatedRef.current = false
     setStatus('connected')
@@ -57,12 +71,7 @@ export function useSessionEvents({
     const subscription = subscribeSessionEvents(sessionId, frontier, {
       runId,
       onEvent(event) {
-        setEvents((current) => [...current.slice(-(MAX_ACTIVITY_EVENTS - 1)), event])
-        if (event.type === 'model_started') {
-          setStreamingText('')
-          setTruncated(false)
-          streamTruncatedRef.current = false
-        } else if (event.type === 'model_delta') {
+        if (event.type === 'model_delta') {
           if (streamTruncatedRef.current) return
           setStreamingText((current) => {
             const next = current + (event.message ?? '')
@@ -73,6 +82,16 @@ export function useSessionEvents({
             }
             return next
           })
+          return
+        }
+        setEvents((current) => [
+          ...current.slice(-(MAX_ACTIVITY_EVENTS - 1)),
+          activityProjection(event),
+        ])
+        if (event.type === 'model_started') {
+          setStreamingText('')
+          setTruncated(false)
+          streamTruncatedRef.current = false
         }
         if (REFRESH_EVENT_TYPES.has(event.type)) {
           refreshRef.current()
@@ -83,19 +102,14 @@ export function useSessionEvents({
           }
         }
       },
-      onStatus(nextStatus) {
-        setStatus(nextStatus)
-        if (nextStatus !== 'fatal') setFatal(false)
-      },
+      onStatus: setStatus,
       onReconnect() {
         setStreamingText('')
         setTruncated(false)
         streamTruncatedRef.current = false
-        setFatal(false)
         refreshRef.current()
       },
       onFatalError() {
-        setFatal(true)
         setStatus('fatal')
       },
     })
@@ -104,11 +118,17 @@ export function useSessionEvents({
 
   const reconnect = useCallback(() => {
     if (sessionId !== undefined) {
-      setFatal(false)
       setStatus('reconnecting')
       reconnectSessionEvents(sessionId)
     }
   }, [sessionId])
 
-  return { streamingText, events, status, fatal, truncated, reconnect }
+  return {
+    streamingText,
+    events,
+    status,
+    fatal: status === 'fatal',
+    truncated,
+    reconnect,
+  }
 }

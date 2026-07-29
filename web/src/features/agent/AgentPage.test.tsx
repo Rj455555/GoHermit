@@ -196,6 +196,19 @@ describe('Agent pages', () => {
     expect(api.getSession).toHaveBeenCalledWith('session-1', expect.anything())
   })
 
+  it('exposes the event-stream recovery action whenever the Hook reports fatal status', async () => {
+    sessionEventMock.status = 'fatal'
+    sessionEventMock.fatal = true
+    const user = userEvent.setup()
+    renderAgent('/agent/sessions/session-1')
+
+    const reconnect = await screen.findByRole('button', {
+      name: i18n.t('session.reconnectEvents'),
+    })
+    await user.click(reconnect)
+    expect(sessionEventMock.reconnect).toHaveBeenCalledOnce()
+  })
+
   it('keeps Composer input after failure and clears it after a successful explicit Run start', async () => {
     api.getSession.mockResolvedValue({
       session: {

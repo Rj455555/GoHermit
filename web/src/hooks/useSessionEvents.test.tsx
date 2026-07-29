@@ -93,49 +93,60 @@ describe('useSessionEvents projection', () => {
     expect(refresh).toHaveBeenCalledTimes(2)
   })
 
-  it('truncates only the local transient stream and clears it from terminal truth', () => {
+  it('keeps 100 maximum deltas out of Activity and clears local truncation from terminal truth', () => {
     const refresh = vi.fn()
     const { result } = renderHook(() =>
       useSessionEvents({ sessionId: 'session-1', frontier: 0, runId: 'run-1', onRefresh: refresh }),
     )
     const chunk = 'x'.repeat(32 << 10)
     act(() => {
-      for (let index = 0; index < 9; index += 1) {
+      for (let index = 0; index < 100; index += 1) {
         stream.options?.onEvent(event('model_delta', { message: chunk }))
       }
-      for (let index = 1; index <= 105; index += 1) {
-        stream.options?.onEvent(event('session_updated', { sequence: index }))
-      }
+      stream.options?.onEvent(event('tool_completed', {
+        sequence: 1,
+        tool: 'literal_tool',
+        message: chunk,
+        error: chunk,
+      }))
     })
 
     expect(result.current.truncated).toBe(true)
     expect(result.current.fatal).toBe(false)
     expect(result.current.status).toBe('connected')
     expect(new TextEncoder().encode(result.current.streamingText).byteLength).toBe(256 << 10)
-    expect(result.current.events).toHaveLength(100)
+    expect(result.current.events).toHaveLength(1)
+    expect(result.current.events[0]).toMatchObject({
+      type: 'tool_completed',
+      sequence: 1,
+      tool: 'literal_tool',
+    })
+    expect(result.current.events.some((value) => value.type === 'model_delta')).toBe(false)
+    expect(result.current.events.some((value) => value.message === chunk || value.error === chunk)).toBe(false)
     const truncatedText = result.current.streamingText
 
     act(() => {
       stream.options?.onEvent(event('model_delta', { message: 'ignored' }))
-      stream.options?.onEvent(event('model_completed', { sequence: 106 }))
+      stream.options?.onEvent(event('model_completed', { sequence: 2, message: chunk }))
     })
     expect(result.current.streamingText).toBe('')
     expect(result.current.streamingText).not.toBe(`${truncatedText}ignored`)
     expect(result.current.truncated).toBe(false)
+    expect(result.current.events.some((value) => value.message === chunk)).toBe(false)
     expect(refresh).toHaveBeenCalledOnce()
     expect(stream.reconnectSessionEvents).not.toHaveBeenCalled()
   })
 
-  it('clears fatal UI when the user explicitly reconnects', () => {
+  it('derives fatal UI from status even when this subscriber did not witness the fatal event', () => {
     const { result } = renderHook(() =>
       useSessionEvents({ sessionId: 'session-1', frontier: 0, runId: 'run-1', onRefresh: vi.fn() }),
     )
-    act(() => stream.options?.onFatalError())
+    act(() => stream.options?.onStatus('fatal'))
     expect(result.current.fatal).toBe(true)
 
     act(() => result.current.reconnect())
-    act(() => stream.options?.onStatus('reconnecting'))
     expect(result.current.fatal).toBe(false)
     expect(result.current.status).toBe('reconnecting')
+    expect(stream.reconnectSessionEvents).toHaveBeenCalledOnce()
   })
 })
