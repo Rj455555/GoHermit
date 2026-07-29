@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { apiRequest } from './client'
+import { apiRequest, apiRequestNoContent } from './client'
 import { decodeSessionDetail } from './decoders'
 import { ApiError } from './errors'
 
@@ -116,6 +116,23 @@ describe('apiRequest', () => {
       }),
     ).rejects.toMatchObject({ code: 'network_error' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('accepts only a 204 response for an empty-body mutation', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response('{}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(apiRequestNoContent('/api/employees/employee-1/knowledge/source-1', {
+      method: 'DELETE',
+    })).resolves.toBeUndefined()
+    await expect(apiRequestNoContent('/api/employees/employee-1/knowledge/source-1', {
+      method: 'DELETE',
+    })).rejects.toMatchObject({ code: 'invalid_response' })
   })
 
   it('allows a valid Session response above 1 MiB but below the 16 MiB endpoint limit', async () => {

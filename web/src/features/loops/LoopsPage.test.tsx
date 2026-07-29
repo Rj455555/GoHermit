@@ -1,11 +1,12 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18n } from '../../i18n/i18n'
 import { UIProvider } from '../../state/UIContext'
+import type { LoopDefinition, TeamTemplate } from '../../api/types'
 import { LoopDetailPage, LoopInvocationPage, LoopsPage } from './LoopsPage'
 
 const api = vi.hoisted(() => ({
@@ -23,8 +24,10 @@ const api = vi.hoisted(() => ({
   listEmployees: vi.fn(),
   getTeamTemplate: vi.fn(),
   importTeamTemplate: vi.fn(),
+  dryRunEmployee: vi.fn(),
   getSession: vi.fn(),
   listApprovals: vi.fn(),
+  decideApproval: vi.fn(),
 }))
 
 vi.mock('../../api/endpoints', () => api)
@@ -76,6 +79,30 @@ const invocation = {
   created_at: now,
   started_at: now,
 }
+const employee = {
+  id: 'employee.builder',
+  revision: 4,
+  state: 'active',
+  name: 'Builder',
+  job_title: 'Engineer',
+  agent_profile: 'builder',
+  project_count: 1,
+  created_at: now,
+  updated_at: now,
+}
+const team = {
+  schema_version: 2,
+  name: 'default',
+  default: { company: 'openai', access: 'codex', model: 'gpt-5' },
+  roles: {
+    builder: {
+      company: '',
+      access: '',
+      model: '',
+      employee_id: employee.id,
+    },
+  },
+}
 
 function renderLoops(path = '/loops') {
   return render(
@@ -101,6 +128,67 @@ beforeEach(() => {
   api.getLoop.mockResolvedValue(definition)
   api.listLoopInvocations.mockResolvedValue({ invocations: [invocation], limit: 50 })
   api.getLoopInvocation.mockResolvedValue(invocation)
+  api.getInfo.mockResolvedValue({
+    version: 'test',
+    workspace: '/workspace/gohermit',
+    model: {
+      provider: 'openai',
+      protocol: 'responses',
+      base_url: '',
+      model: 'gpt-5',
+      api_key_env: 'OPENAI_API_KEY',
+      api_key_configured: true,
+    },
+    selection: { company: 'openai', access: 'codex', model: 'gpt-5', agent: 'team' },
+    companies: [{
+      id: 'openai',
+      label: 'OpenAI',
+      access: [{
+        id: 'codex',
+        label: 'Codex',
+        auth_type: 'oauth_external',
+        description: '',
+        supported: true,
+        models: [{ id: 'gpt-5', label: 'GPT-5', provider: 'openai' }],
+      }],
+    }],
+    available_companies: [{
+      id: 'openai',
+      label: 'OpenAI',
+      access: [{
+        id: 'codex',
+        label: 'Codex',
+        auth_type: 'oauth_external',
+        description: '',
+        supported: true,
+        models: [{ id: 'gpt-5', label: 'GPT-5', provider: 'openai' }],
+      }],
+    }],
+    agents: [{ id: 'team', label: 'Team', description: '', read_only: false, tool_policy: 'full' }],
+    auth_status: {},
+    active: false,
+    owner: { configured: true },
+  })
+  api.listEmployees.mockResolvedValue({ employees: [employee], next_cursor: '' })
+  api.getTeamTemplate.mockResolvedValue(team)
+  api.dryRunEmployee.mockResolvedValue({
+    employee_id: employee.id,
+    revision: employee.revision,
+    ready: true,
+    checks: [{ name: 'provider', ready: true, detail: 'ready' }],
+  })
+  api.listApprovals.mockResolvedValue({ approvals: [] })
+  api.getSession.mockResolvedValue({
+    session: {
+      id: 'session-1',
+      next_event_sequence: 4,
+      runs: [],
+      tool_calls: [],
+      test_results: [],
+      approval_requests: [],
+    },
+    messages: [],
+  })
   api.dryRunLoop.mockResolvedValue({
     loop_id: definition.id,
     definition_revision: 2,
@@ -142,5 +230,91 @@ describe('Loops Phase 4 pages', () => {
     expect(await screen.findByTestId('loop-timeline')).toHaveTextContent('invocation-1')
     expect(api.getLoopInvocation).toHaveBeenCalledWith('invocation-1', expect.anything())
     expect(api.getSession).toHaveBeenCalledWith('session-1', expect.anything())
+  })
+
+  it('edits verification checks as structured command arguments', async () => {
+    const user = userEvent.setup()
+    renderLoops('/loops/daily-review')
+
+    expect(await screen.findByRole('heading', { name: 'Verification checks' })).toBeVisible()
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Verified daily review' } })
+    fireEvent.change(screen.getByLabelText('Workspace identity'), { target: { value: '/workspace/release' } })
+    fireEvent.change(screen.getByLabelText('Mission'), { target: { value: 'Review and verify.' } })
+    fireEvent.change(screen.getByLabelText('Team template reference'), { target: { value: 'release-team' } })
+    await user.click(screen.getByRole('button', { name: 'Add check' }))
+    await user.type(screen.getByLabelText('Check ID'), 'unit')
+    await user.type(screen.getByLabelText('Command arguments'), 'go test ./...')
+    fireEvent.change(screen.getByLabelText('Check timeout (seconds)'), { target: { value: '90' } })
+    await user.click(screen.getByRole('checkbox', { name: 'Required check' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Enabled' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Read-only workspace' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Require a clean Git workspace' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Require approval for mutation' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Include diff in output' }))
+    fireEvent.change(screen.getByLabelText('Maximum model calls'), { target: { value: '18' } })
+    fireEvent.change(screen.getByLabelText('Maximum tokens'), { target: { value: '180000' } })
+    fireEvent.change(screen.getByLabelText('Timeout (seconds)'), { target: { value: '1800' } })
+    await user.selectOptions(screen.getByLabelText('Plan mode'), 'auto')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.updateLoop).toHaveBeenCalled())
+    const [savedId, savedDefinition] = api.updateLoop.mock.calls[0] as unknown as [
+      string,
+      LoopDefinition,
+    ]
+    expect(savedId).toBe(definition.id)
+    expect(savedDefinition.revision).toBe(2)
+    expect(savedDefinition.verification_recipe.checks[0]).toMatchObject({
+      id: 'unit',
+      command: ['go', 'test', './...'],
+      required: false,
+      timeout_seconds: 90,
+    })
+    expect(savedDefinition).toMatchObject({
+      enabled: false,
+      description: 'Verified daily review',
+      workspace_identity: '/workspace/release',
+      task_source: { type: 'fixed_prompt', prompt: 'Review and verify.' },
+      team_template_ref: 'release-team',
+      plan_mode: 'auto',
+      workspace_policy: { read_only: false, require_clean_git: true },
+      approval_policy: { require_for_mutation: true },
+      output_policy: { include_diff: true },
+      budget: { max_model_calls: 18, max_tokens: 180000, timeout_seconds: 1800 },
+    })
+  })
+
+  it('configures Team roles with active Employees and an explicit model path', async () => {
+    const user = userEvent.setup()
+    renderLoops('/loops/daily-review')
+
+    expect(await screen.findByRole('heading', { name: 'Team roles' })).toBeVisible()
+    expect(screen.queryByRole('textbox', { name: 'Team' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('team-role-builder')).toHaveValue(employee.id)
+    expect(screen.getByText(/Builder · r4 · Ready/)).toBeVisible()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Use Mission model override for builder' }))
+    await user.click(screen.getByRole('button', { name: 'Save team' }))
+
+    await waitFor(() => expect(api.importTeamTemplate).toHaveBeenCalled())
+    const [savedTeam] = api.importTeamTemplate.mock.calls[0] as unknown as [TeamTemplate]
+    expect(savedTeam.schema_version).toBe(2)
+    expect(savedTeam.roles.builder).toMatchObject({
+      employee_id: employee.id,
+      company: 'openai',
+      access: 'codex',
+      model: 'gpt-5',
+    })
+  })
+
+  it('shows Invocation evidence as structured projections instead of raw JSON', async () => {
+    renderLoops('/loops/daily-review/invocations/invocation-1')
+
+    expect(await screen.findByRole('heading', { name: 'Definition snapshot' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Plan' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Tools' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Verification' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Approvals' })).toBeVisible()
+    expect(screen.queryByText(/"definition_snapshot"/)).not.toBeInTheDocument()
   })
 })

@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 
-const client = vi.hoisted(() => ({ apiRequest: vi.fn().mockResolvedValue({}) }))
+const client = vi.hoisted(() => ({
+  apiRequest: vi.fn().mockResolvedValue({}),
+  apiRequestNoContent: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('./client', () => client)
 
 import {
   approvePlan,
+  acceptEmployeeMemoryCandidate,
+  addEmployeeKnowledge,
   cancelEmployeeTask,
   cancelLoopInvocation,
   cancelRun,
@@ -13,6 +18,7 @@ import {
   createLoop,
   createSession,
   decideApproval,
+  deleteEmployeeKnowledge,
   deleteProviderCredentials,
   forgetOwnerFact,
   getEmployee,
@@ -32,6 +38,7 @@ import {
   getTeamTemplate,
   importLoop,
   importTeamTemplate,
+  editEmployeeMemory,
   listApprovals,
   listEmployees,
   listEmployeeTasks,
@@ -42,6 +49,9 @@ import {
   listProjects,
   listSkills,
   mutateEmployeeLifecycle,
+  forgetEmployeeMemory,
+  refreshEmployeeKnowledge,
+  rejectEmployeeMemoryCandidate,
   resumeEmployeeTask,
   resumeRun,
   saveOwner,
@@ -138,8 +148,20 @@ describe('Phase 3 endpoint map', () => {
       getEmployeeSkills('employee one'),
       updateEmployeeSkills('employee one', 1, []),
       getEmployeeKnowledge('employee one'),
+      addEmployeeKnowledge('employee one', {
+        id: 'source-1',
+        kind: 'manual_text',
+        title: 'Guide',
+        manual_text: 'bounded text',
+      }),
+      refreshEmployeeKnowledge('employee one', 'source one'),
+      deleteEmployeeKnowledge('employee one', 'source one'),
       getEmployeeMemory('employee one'),
       getEmployeeMemoryCandidates('employee one'),
+      acceptEmployeeMemoryCandidate('employee one', 'candidate one'),
+      rejectEmployeeMemoryCandidate('employee one', 'candidate one'),
+      editEmployeeMemory('employee one', 'fact one', 'updated'),
+      forgetEmployeeMemory('employee one', 'fact one'),
       getEmployeeActivity('employee one'),
       listEmployeeTasks('employee one', { limit: 500 }),
       createEmployeeTask('employee one', { prompt: 'literal' }),
@@ -157,7 +179,12 @@ describe('Phase 3 endpoint map', () => {
       getLoopInvocation('invocation one'),
       cancelLoopInvocation('invocation one'),
       getTeamTemplate(),
-      importTeamTemplate({ schema_version: 1 }),
+      importTeamTemplate({
+        schema_version: 2,
+        name: 'Team',
+        default: { company: 'openai', access: 'codex', model: 'gpt' },
+        roles: {},
+      }),
     ])
 
     const paths = client.apiRequest.mock.calls.map(([path]) => path as string)
@@ -167,5 +194,8 @@ describe('Phase 3 endpoint map', () => {
     expect(paths).toContain('/api/loops/loop%20one/dry-run')
     expect(paths).toContain('/api/loop-invocations/invocation%20one/cancel')
     expect(paths).not.toContain('/api/tasks/task%20one/events')
+    const emptyPaths = client.apiRequestNoContent.mock.calls.map(([path]) => path as string)
+    expect(emptyPaths).toContain('/api/employees/employee%20one/knowledge/source%20one')
+    expect(emptyPaths).toContain('/api/employees/employee%20one/memory/fact%20one')
   })
 })

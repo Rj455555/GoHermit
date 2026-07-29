@@ -223,7 +223,12 @@ const loopDefinition = {
   team_template_ref: 'default',
   plan_mode: 'review',
   verification_recipe: {
-    checks: ['go test ./...'],
+    checks: [{
+      id: 'unit',
+      command: ['go', 'test', './...'],
+      required: true,
+      timeout_seconds: 300,
+    }],
     independent_verifier: true,
     max_repair_attempts: 1,
   },
@@ -260,6 +265,21 @@ const employeeSummary = {
   created_at: now,
   updated_at: now,
 }
+const activeEmployeeSummary = {
+  ...employeeSummary,
+  id: 'employee-builder',
+  revision: 2,
+  state: 'active',
+  name: 'Builder',
+  job_title: 'Implementation Engineer',
+}
+const skillBinding = {
+  skill_id: 'native-review',
+  version: '1.0.0',
+  digest: 'b'.repeat(64),
+  configuration: { mode: 'strict' },
+  enabled: true,
+}
 const employeeRecord = {
   employee: {
     ...employeeSummary,
@@ -273,7 +293,7 @@ const employeeRecord = {
       access: selection.access,
       model: selection.model,
     },
-    skill_bindings: [],
+    skill_bindings: [skillBinding],
     project_binding_ids: ['project-main'],
     permission_policy: { allowed_capabilities: ['read'], network_allowed: false },
     budget_policy: { max_model_calls: 8, max_tokens: 8000, timeout_seconds: 1200 },
@@ -287,6 +307,7 @@ const employeeRecord = {
   },
   project_bindings: [{
     id: 'project-main',
+    employee_id: employeeSummary.id,
     label: 'GoHermit',
     workspace_real_path: '/test/workspace',
     workspace_fingerprint: 'f'.repeat(64),
@@ -294,7 +315,79 @@ const employeeRecord = {
     mutation_allowed: true,
     allowed_tool_capabilities: ['read'],
     network_allowed: false,
+    budget_override: { max_model_calls: 4, max_tokens: 4000, timeout_seconds: 600 },
+    created_at: now,
+    updated_at: now,
   }],
+}
+const citation = {
+  schema_version: 1,
+  id: 'citation-handbook',
+  employee_id: employeeSummary.id,
+  source_id: 'handbook',
+  path: 'docs/handbook.md',
+  heading: 'Release',
+  start_line: 1,
+  end_line: 3,
+  digest: 'c'.repeat(64),
+  snippet: 'Keep release evidence.',
+}
+const knowledgeProjection = {
+  employee_id: employeeSummary.id,
+  sources: [{
+    schema_version: 1,
+    id: 'handbook',
+    employee_id: employeeSummary.id,
+    kind: 'project_docs',
+    title: 'Release handbook',
+    relative_path: 'docs/handbook.md',
+    digest: 'd'.repeat(64),
+    status: 'ready',
+  }],
+  indexes: [{
+    schema_version: 1,
+    employee_id: employeeSummary.id,
+    source_id: 'handbook',
+    source_digest: 'd'.repeat(64),
+    documents: [{
+      path: 'docs/handbook.md',
+      digest: 'c'.repeat(64),
+      terms: ['release', 'evidence'],
+      citations: [citation],
+    }],
+  }],
+  results: [{ source_id: 'handbook', title: 'Release handbook', score: 100, citation }],
+}
+const provenance = [{
+  source_type: 'employee_task',
+  source_id: 'task-queued',
+  source_task_id: 'task-queued',
+  source_session_id: 'session-1',
+  source_run_id: 'run-task-1',
+  verified_at: now,
+}]
+const memoryFact = {
+  schema_version: 1,
+  id: 'memory-release',
+  employee_id: employeeSummary.id,
+  category: 'workflow',
+  value: 'Always retain release evidence.',
+  provenance,
+  created_at: now,
+  digest: 'e'.repeat(64),
+  candidate_id: 'candidate-release',
+  updated_at: now,
+  owner_edited: false,
+}
+const memoryCandidate = {
+  schema_version: 1,
+  id: 'candidate-next',
+  employee_id: employeeSummary.id,
+  category: 'quality',
+  value: 'Run the bounded verification recipe.',
+  provenance,
+  created_at: now,
+  digest: 'f'.repeat(64),
 }
 let employeeTask = {
   schema_version: 1,
@@ -305,6 +398,13 @@ let employeeTask = {
   state: 'queued',
   created_at: now,
   updated_at: now,
+  employee_snapshot: {
+    schema_version: 1,
+    employee_id: employeeSummary.id,
+    revision: employeeSummary.revision,
+    captured_at: now,
+    digest: '9'.repeat(64),
+  },
   skills: [],
   knowledge: [],
   memory_facts: [],
@@ -323,8 +423,34 @@ let employeeTask = {
     budget: { max_model_calls: 4, max_tokens: 4000, timeout_seconds: 600 },
   },
   snapshot_digest: 'a'.repeat(64),
-  artifacts: [],
+  artifacts: [{
+    schema_version: 1,
+    id: 'artifact-release',
+    employee_id: employeeSummary.id,
+    task_id: 'task-queued',
+    session_id: 'session-1',
+    run_id: 'run-task-1',
+    path: 'reports/release.txt',
+    digest: '8'.repeat(64),
+    verified_at: now,
+  }],
 }
+let teamTemplate = {
+  schema_version: 2,
+  name: 'default',
+  default: { company: selection.company, access: selection.access, model: selection.model },
+  roles: {
+    builder: {
+      company: '',
+      access: '',
+      model: '',
+      employee_id: activeEmployeeSummary.id,
+    },
+  },
+  updated_at: now,
+}
+const createdEmployees = new Map()
+const createdKnowledge = new Map()
 const initialEmployeeTask = structuredClone(employeeTask)
 const streams = new Map()
 const stats = {
@@ -348,6 +474,10 @@ function sessionSummary(session) {
     last_run_status: lastRun?.status,
     selection: session.selection,
   }
+}
+
+function wait(milliseconds) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))
 }
 
 function json(response, status, value) {
@@ -497,7 +627,37 @@ async function handleApi(request, response, url) {
     return true
   }
   if (request.method === 'GET' && pathname === '/api/employees') {
-    json(response, 200, { employees: [employeeSummary] })
+    const state = url.searchParams.get('state')
+    const employees = [
+      activeEmployeeSummary,
+      employeeSummary,
+      ...[...createdEmployees.values()].map((record) => record.employee),
+    ]
+      .filter((employee) => !state || employee.state === state)
+    json(response, 200, { employees, next_cursor: '' })
+    return true
+  }
+  if (request.method === 'POST' && pathname === '/api/employees') {
+    const input = await body(request)
+    const employee = {
+      ...input.employee,
+      revision: 1,
+      state: 'active',
+      project_count: input.project_bindings.length,
+      created_at: now,
+      updated_at: now,
+    }
+    const project_bindings = input.project_bindings.map((binding) => ({
+      ...binding,
+      employee_id: employee.id,
+      workspace_fingerprint: '7'.repeat(64),
+      created_at: now,
+      updated_at: now,
+    }))
+    const record = { employee, project_bindings }
+    createdEmployees.set(employee.id, record)
+    createdKnowledge.set(employee.id, { employee_id: employee.id, sources: [], indexes: [], results: [] })
+    json(response, 201, record)
     return true
   }
   if (request.method === 'GET' && pathname === '/api/projects') {
@@ -505,39 +665,146 @@ async function handleApi(request, response, url) {
     return true
   }
   if (request.method === 'GET' && pathname === '/api/skills') {
-    json(response, 200, { skills: [] })
+    json(response, 200, { skills: [{
+      skill_id: skillBinding.skill_id,
+      version: skillBinding.version,
+      digest: '0'.repeat(64),
+      kind: 'native',
+      title: 'Native review',
+      description: 'Review a bounded workspace.',
+      requested_capabilities: ['read'],
+      configuration_schema: { type: 'object' },
+    }] })
     return true
   }
   if (request.method === 'GET' && pathname === '/api/employees/employee-ada') {
     json(response, 200, employeeRecord)
     return true
   }
+  const isolationEmployeeMatch = pathname.match(/^\/api\/employees\/employee-(alpha|beta)$/u)
+  if (request.method === 'GET' && isolationEmployeeMatch) {
+    const suffix = isolationEmployeeMatch[1]
+    if (suffix === 'alpha') await wait(300)
+    const id = `employee-${suffix}`
+    const record = structuredClone(employeeRecord)
+    record.employee = {
+      ...record.employee,
+      id,
+      name: suffix === 'alpha' ? 'Alpha Employee' : 'Beta Employee',
+    }
+    record.project_bindings = record.project_bindings.map((binding) => ({
+      ...binding,
+      employee_id: id,
+    }))
+    json(response, 200, record)
+    return true
+  }
+  const employeeMatch = pathname.match(/^\/api\/employees\/([^/]+)$/u)
+  if (request.method === 'GET' && employeeMatch) {
+    const record = createdEmployees.get(decodeURIComponent(employeeMatch[1]))
+    if (!record) {
+      json(response, 404, { code: 'not_found' })
+      return true
+    }
+    json(response, 200, record)
+    return true
+  }
   if (request.method === 'GET' && pathname === '/api/employees/employee-ada/skills') {
     json(response, 200, {
       employee_id: employeeSummary.id,
       revision: employeeSummary.revision,
-      bindings: [],
+      bindings: [{ binding: skillBinding, status: 'digest_drift', kind: 'native' }],
+    })
+    return true
+  }
+  const employeeSkillsMatch = pathname.match(/^\/api\/employees\/([^/]+)\/skills$/u)
+  if (request.method === 'GET' && employeeSkillsMatch) {
+    const employeeId = decodeURIComponent(employeeSkillsMatch[1])
+    const record = createdEmployees.get(employeeId)
+    if (!record) {
+      json(response, 404, { code: 'not_found' })
+      return true
+    }
+    json(response, 200, {
+      employee_id: employeeId,
+      revision: record.employee.revision,
+      bindings: record.employee.skill_bindings.map((binding) => ({
+        binding,
+        status: 'current',
+        kind: 'native',
+      })),
     })
     return true
   }
   if (request.method === 'GET' && pathname === '/api/employees/employee-ada/knowledge') {
-    json(response, 200, { sources: [], indexes: [], results: [] })
+    json(response, 200, knowledgeProjection)
+    return true
+  }
+  const employeeKnowledgeMatch = pathname.match(/^\/api\/employees\/([^/]+)\/knowledge$/u)
+  if (request.method === 'GET' && employeeKnowledgeMatch) {
+    const employeeId = decodeURIComponent(employeeKnowledgeMatch[1])
+    const projection = createdKnowledge.get(employeeId)
+    if (!projection) {
+      json(response, 404, { code: 'not_found' })
+      return true
+    }
+    json(response, 200, projection)
+    return true
+  }
+  if (request.method === 'POST' && employeeKnowledgeMatch) {
+    const employeeId = decodeURIComponent(employeeKnowledgeMatch[1])
+    const input = await body(request)
+    const source = {
+      ...input,
+      schema_version: 1,
+      employee_id: employeeId,
+      digest: '6'.repeat(64),
+      status: 'ready',
+    }
+    const projection = createdKnowledge.get(employeeId)
+    if (!projection) {
+      json(response, 404, { code: 'not_found' })
+      return true
+    }
+    projection.sources.push(source)
+    json(response, 201, source)
     return true
   }
   if (request.method === 'GET' && pathname === '/api/employees/employee-ada/memory') {
-    json(response, 200, { facts: [] })
+    json(response, 200, { employee_id: employeeSummary.id, facts: [memoryFact] })
     return true
   }
   if (request.method === 'GET' && pathname === '/api/employees/employee-ada/memory-candidates') {
-    json(response, 200, { candidates: [] })
+    json(response, 200, { employee_id: employeeSummary.id, candidates: [memoryCandidate] })
     return true
   }
   if (request.method === 'GET' && pathname === '/api/employees/employee-ada/activity') {
-    json(response, 200, { events: [] })
+    json(response, 200, { events: [{
+      schema_version: 1,
+      id: 'activity-archive',
+      employee_id: employeeSummary.id,
+      type: 'employee_archived',
+      time: now,
+      employee_revision: employeeSummary.revision,
+    }], next_cursor: '' })
     return true
   }
   if (request.method === 'GET' && pathname === '/api/employees/employee-ada/tasks') {
     json(response, 200, { tasks: [employeeTask] })
+    return true
+  }
+  const employeeDryRunMatch = pathname.match(/^\/api\/employees\/([^/]+)\/dry-run$/u)
+  if (request.method === 'POST' && employeeDryRunMatch) {
+    const employeeId = decodeURIComponent(employeeDryRunMatch[1])
+    const summary = employeeId === activeEmployeeSummary.id
+      ? activeEmployeeSummary
+      : createdEmployees.get(employeeId)?.employee ?? employeeSummary
+    json(response, 200, {
+      employee_id: employeeId,
+      revision: summary.revision,
+      ready: employeeId !== employeeSummary.id,
+      checks: [{ name: 'provider', ready: true, detail: 'ready' }],
+    })
     return true
   }
   if (request.method === 'GET' && pathname === '/api/employee-tasks/task-queued') {
@@ -560,6 +827,24 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'GET' && pathname === '/api/loops/daily-review') {
     json(response, 200, loopDefinition)
+    return true
+  }
+  const isolationLoopMatch = pathname.match(/^\/api\/loops\/loop-(alpha|beta)$/u)
+  if (request.method === 'GET' && isolationLoopMatch) {
+    const suffix = isolationLoopMatch[1]
+    if (suffix === 'alpha') await wait(300)
+    json(response, 200, {
+      ...loopDefinition,
+      id: `loop-${suffix}`,
+      name: suffix === 'alpha' ? 'Alpha Loop' : 'Beta Loop',
+    })
+    return true
+  }
+  const isolationLoopHistoryMatch = pathname.match(
+    /^\/api\/loops\/loop-(alpha|beta)\/invocations$/u,
+  )
+  if (request.method === 'GET' && isolationLoopHistoryMatch) {
+    json(response, 200, { invocations: [], limit: 50 })
     return true
   }
   if (request.method === 'PUT' && pathname === '/api/loops/daily-review') {
@@ -588,11 +873,12 @@ async function handleApi(request, response, url) {
     return true
   }
   if (request.method === 'GET' && pathname === '/api/team-template/export') {
-    json(response, 200, { schema_version: 1, roles: [] })
+    json(response, 200, teamTemplate)
     return true
   }
   if (request.method === 'POST' && pathname === '/api/team-template/import') {
-    json(response, 200, await body(request))
+    teamTemplate = { ...await body(request), updated_at: now }
+    json(response, 200, teamTemplate)
     return true
   }
   if (request.method === 'GET' && pathname === '/api/loop-invocations/invocation-1') {
@@ -884,6 +1170,8 @@ const server = createServer(async (request, response) => {
       loginSession = null
       loginPolls = 0
       employeeTask = structuredClone(initialEmployeeTask)
+      createdEmployees.clear()
+      createdKnowledge.clear()
       stats.maxSSE = stats.activeSSE
       stats.urls = []
       stats.runStarts = 0

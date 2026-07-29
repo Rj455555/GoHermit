@@ -1,4 +1,4 @@
-import { apiRequest, type ApiRequestOptions } from './client'
+import { apiRequest, apiRequestNoContent, type ApiRequestOptions } from './client'
 import {
   decodeApprovals,
   decodeCancellation,
@@ -6,8 +6,13 @@ import {
   decodeConfigured,
   decodeBoundedProjection,
   decodeDryRun,
+  decodeEmployeeActivity,
+  decodeEmployeeDryRun,
+  decodeEmployeeKnowledge,
   decodeEmployeeList,
   decodeEmployeeRecord,
+  decodeEmployeeMemory,
+  decodeEmployeeMemoryCandidates,
   decodeEmployeeSkills,
   decodeEmployeeTask,
   decodeEmployeeTasks,
@@ -20,7 +25,10 @@ import {
   decodeLoopInvocationList,
   decodeLoops,
   decodeOwnerProfile,
+  decodeProjects,
   decodeSkillCatalog,
+  decodeMemoryFact,
+  decodeTeamTemplate,
   decodeRunReference,
   decodeSessionCreated,
   decodeSessionDetail,
@@ -33,9 +41,14 @@ import type {
   PlanMode,
   ProjectBinding,
   SkillBinding,
+  TeamTemplate,
 } from './types'
 
 type ReadOptions = Pick<ApiRequestOptions, 'signal'>
+type ProjectBindingDraft = Omit<
+  ProjectBinding,
+  'employee_id' | 'workspace_fingerprint' | 'created_at' | 'updated_at'
+> & Partial<Pick<ProjectBinding, 'employee_id' | 'workspace_fingerprint' | 'created_at' | 'updated_at'>>
 
 function segment(value: string): string {
   return encodeURIComponent(value)
@@ -63,7 +76,7 @@ export const listEmployees = (
 export const getEmployee = (employeeId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/employees/${segment(employeeId)}`, decodeEmployeeRecord, options)
 export const createEmployee = (
-  input: { employee: Employee; project_bindings: ProjectBinding[] },
+  input: { employee: Employee; project_bindings: ProjectBindingDraft[] },
   options: ReadOptions = {},
 ) => apiRequest('/api/employees', decodeEmployeeRecord, {
   ...options,
@@ -92,11 +105,11 @@ export const mutateEmployeeLifecycle = (
 export const dryRunEmployee = (employeeId: string, options: ReadOptions = {}) =>
   apiRequest(
     `/api/employees/${segment(employeeId)}/dry-run`,
-    decodeBoundedProjection,
+    decodeEmployeeDryRun,
     { ...options, method: 'POST' },
   )
 export const listProjects = (options: ReadOptions = {}) =>
-  apiRequest('/api/projects', decodeBoundedProjection, options)
+  apiRequest('/api/projects', decodeProjects, options)
 export const listSkills = (options: ReadOptions = {}) =>
   apiRequest('/api/skills', decodeSkillCatalog, options)
 export const getEmployeeSkills = (employeeId: string, options: ReadOptions = {}) =>
@@ -112,13 +125,96 @@ export const updateEmployeeSkills = (
   body: { expected_revision: expectedRevision, bindings },
 })
 export const getEmployeeKnowledge = (employeeId: string, options: ReadOptions = {}) =>
-  apiRequest(`/api/employees/${segment(employeeId)}/knowledge?limit=32`, decodeBoundedProjection, options)
+  apiRequest(`/api/employees/${segment(employeeId)}/knowledge?limit=32`, decodeEmployeeKnowledge, options)
+export const addEmployeeKnowledge = (
+  employeeId: string,
+  source: {
+    id: string
+    kind: 'manual_text' | 'file' | 'project_docs'
+    title: string
+    manual_text?: string | undefined
+    relative_path?: string | undefined
+  },
+  options: ReadOptions = {},
+) => apiRequest(`/api/employees/${segment(employeeId)}/knowledge`, decodeEmployeeKnowledge, {
+  ...options,
+  method: 'POST',
+  body: source,
+})
+export const refreshEmployeeKnowledge = (
+  employeeId: string,
+  sourceId: string,
+  options: ReadOptions = {},
+) => apiRequest(
+  `/api/employees/${segment(employeeId)}/knowledge/${segment(sourceId)}/refresh`,
+  decodeEmployeeKnowledge,
+  { ...options, method: 'POST' },
+)
+export const deleteEmployeeKnowledge = (
+  employeeId: string,
+  sourceId: string,
+  options: ReadOptions = {},
+) => apiRequestNoContent(
+  `/api/employees/${segment(employeeId)}/knowledge/${segment(sourceId)}`,
+  { ...options, method: 'DELETE' },
+)
 export const getEmployeeMemory = (employeeId: string, options: ReadOptions = {}) =>
-  apiRequest(`/api/employees/${segment(employeeId)}/memory`, decodeBoundedProjection, options)
+  apiRequest(`/api/employees/${segment(employeeId)}/memory`, decodeEmployeeMemory, options)
 export const getEmployeeMemoryCandidates = (employeeId: string, options: ReadOptions = {}) =>
-  apiRequest(`/api/employees/${segment(employeeId)}/memory-candidates`, decodeBoundedProjection, options)
-export const getEmployeeActivity = (employeeId: string, options: ReadOptions = {}) =>
-  apiRequest(`/api/employees/${segment(employeeId)}/activity?limit=100`, decodeBoundedProjection, options)
+  apiRequest(
+    `/api/employees/${segment(employeeId)}/memory-candidates`,
+    decodeEmployeeMemoryCandidates,
+    options,
+  )
+export const acceptEmployeeMemoryCandidate = (
+  employeeId: string,
+  candidateId: string,
+  options: ReadOptions = {},
+) => apiRequest(
+  `/api/employees/${segment(employeeId)}/memory-candidates/${segment(candidateId)}/accept`,
+  decodeMemoryFact,
+  { ...options, method: 'POST' },
+)
+export const rejectEmployeeMemoryCandidate = (
+  employeeId: string,
+  candidateId: string,
+  options: ReadOptions = {},
+) => apiRequestNoContent(
+  `/api/employees/${segment(employeeId)}/memory-candidates/${segment(candidateId)}`,
+  { ...options, method: 'DELETE' },
+)
+export const editEmployeeMemory = (
+  employeeId: string,
+  factId: string,
+  value: string,
+  options: ReadOptions = {},
+) => apiRequest(
+  `/api/employees/${segment(employeeId)}/memory/${segment(factId)}`,
+  decodeMemoryFact,
+  { ...options, method: 'PUT', body: { value } },
+)
+export const forgetEmployeeMemory = (
+  employeeId: string,
+  factId: string,
+  options: ReadOptions = {},
+) => apiRequestNoContent(
+  `/api/employees/${segment(employeeId)}/memory/${segment(factId)}`,
+  { ...options, method: 'DELETE' },
+)
+export const getEmployeeActivity = (
+  employeeId: string,
+  query: { limit?: number; cursor?: string } = {},
+  options: ReadOptions = {},
+) => {
+  const values = new URLSearchParams()
+  values.set('limit', String(Math.min(100, Math.max(1, query.limit ?? 100))))
+  if (query.cursor) values.set('cursor', query.cursor)
+  return apiRequest(
+    `/api/employees/${segment(employeeId)}/activity?${values.toString()}`,
+    decodeEmployeeActivity,
+    options,
+  )
+}
 export const listEmployeeTasks = (
   employeeId: string,
   query: { limit?: number } = {},
@@ -198,8 +294,11 @@ export const cancelLoopInvocation = (invocationId: string, options: ReadOptions 
     method: 'POST',
   })
 export const getTeamTemplate = (options: ReadOptions = {}) =>
-  apiRequest('/api/team-template/export', decodeBoundedProjection, options)
-export const importTeamTemplate = (input: Record<string, unknown>, options: ReadOptions = {}) =>
+  apiRequest('/api/team-template/export', decodeTeamTemplate, options)
+export const importTeamTemplate = (
+  input: TeamTemplate | Record<string, unknown>,
+  options: ReadOptions = {},
+) =>
   apiRequest('/api/team-template/import', decodeBoundedProjection, {
     ...options,
     method: 'POST',

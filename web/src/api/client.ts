@@ -155,3 +155,34 @@ export async function apiRequest<T>(
     throw new ApiError('network_error')
   }
 }
+
+export async function apiRequestNoContent(
+  path: string,
+  options: ApiRequestOptions,
+): Promise<void> {
+  const safePath = validateApiPath(path)
+  const method = options.method ?? 'DELETE'
+  try {
+    const init: RequestInit = { method, credentials: 'same-origin' }
+    if (options.signal !== undefined) init.signal = options.signal
+    const response = await fetch(safePath, init)
+    if (!response.ok) {
+      await safelyCancel(response.body)
+      throw new ApiError('http_error', response.status)
+    }
+    if (response.status !== 204) {
+      await safelyCancel(response.body)
+      throw new ApiError('invalid_response', response.status)
+    }
+    await safelyCancel(response.body)
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    if (
+      error instanceof DOMException &&
+      (error.name === 'AbortError' || options.signal?.aborted === true)
+    ) {
+      throw new ApiError('aborted')
+    }
+    throw new ApiError('network_error')
+  }
+}

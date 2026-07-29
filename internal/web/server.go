@@ -201,7 +201,11 @@ func isDeclaredReactRoute(requestPath string) bool {
 	}
 	if len(parts) == 2 {
 		switch parts[0] {
-		case "employees", "tasks", "loops":
+		case "employees":
+			return validEmployeeReactID(parts[1])
+		case "loops":
+			return validLoopReactID(parts[1])
+		case "tasks":
 			return validReactID(parts[1])
 		}
 	}
@@ -209,9 +213,43 @@ func isDeclaredReactRoute(requestPath string) bool {
 		return validReactID(parts[2])
 	}
 	if len(parts) == 4 && parts[0] == "loops" && parts[2] == "invocations" {
-		return validReactID(parts[1]) && validReactID(parts[3])
+		return validLoopReactID(parts[1]) && validReactID(parts[3])
 	}
 	return false
+}
+
+func validEmployeeReactID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for index, character := range value {
+		alphaNumeric := (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9')
+		if alphaNumeric || (index > 0 && (character == '.' || character == '_' || character == '-')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// Loop IDs follow the Loop domain's bounded-text contract. Path separators,
+// encoded-path sentinels, controls, and ambiguous dot segments stay excluded
+// at the serving boundary even though ordinary dots and Unicode are legal.
+func validLoopReactID(value string) bool {
+	if value == "" || len(value) > 128 || value == "." || value == ".." ||
+		strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f ||
+			character == '/' || character == '\\' || character == '%' ||
+			character == '?' || character == '#' {
+			return false
+		}
+	}
+	return true
 }
 
 func validReactID(value string) bool {

@@ -28,6 +28,7 @@ import {
   decodeSessionDetail,
   decodeSessionList,
   decodeSkillCatalog,
+  decodeTeamTemplate,
 } from './decoders'
 
 const now = '2026-07-29T08:00:00Z'
@@ -107,6 +108,7 @@ describe('endpoint decoders', () => {
     }
     const project = {
       id: 'project-1',
+      employee_id: 'employee-1',
       label: 'Literal project',
       workspace_real_path: '/literal/path',
       workspace_fingerprint: 'fingerprint',
@@ -114,6 +116,9 @@ describe('endpoint decoders', () => {
       mutation_allowed: false,
       allowed_tool_capabilities: ['read'],
       network_allowed: false,
+      budget_override: { max_model_calls: 3, max_tokens: 3000, timeout_seconds: 300 },
+      created_at: now,
+      updated_at: now,
     }
     const task = {
       schema_version: 1,
@@ -124,9 +129,33 @@ describe('endpoint decoders', () => {
       state: 'queued',
       created_at: now,
       updated_at: now,
-      skills: [{ skill_id: 'review', version: '1.0.0' }],
-      knowledge: [{ source_id: 'source-1', citation_ids: ['citation-1'] }],
-      memory_facts: [{ id: 'fact-1', category: 'literal', value: 'unchanged' }],
+      cancelled_at: now,
+      employee_snapshot: {
+        schema_version: 1,
+        employee_id: 'employee-1',
+        revision: 2,
+        captured_at: now,
+        digest: 'employee-snapshot-digest',
+      },
+      skills: [{
+        skill_id: 'review',
+        version: '1.0.0',
+        digest: 'skill-digest',
+        configuration: { mode: 'strict' },
+        enabled: true,
+      }],
+      knowledge: [{
+        source_id: 'source-1',
+        source_digest: 'source-digest',
+        citations: [{
+          citation_id: 'citation-1',
+          path: 'docs/guide.md',
+          digest: 'citation-digest',
+          start_line: 10,
+          end_line: 14,
+        }],
+      }],
+      memory_facts: [{ fact_id: 'fact-1', digest: 'memory-digest' }],
       project_binding: {
         id: project.id,
         label: project.label,
@@ -135,6 +164,7 @@ describe('endpoint decoders', () => {
         mutation_allowed: project.mutation_allowed,
         allowed_tool_capabilities: project.allowed_tool_capabilities,
         network_allowed: project.network_allowed,
+        budget_override: project.budget_override,
       },
       policy: {
         allowed_capabilities: ['read'],
@@ -142,7 +172,17 @@ describe('endpoint decoders', () => {
         budget: { max_model_calls: 4, max_tokens: 4000, timeout_seconds: 600 },
       },
       snapshot_digest: 'snapshot',
-      artifacts: [{ id: 'artifact-1', path: 'literal/file.go' }],
+      artifacts: [{
+        schema_version: 1,
+        id: 'artifact-1',
+        employee_id: 'employee-1',
+        task_id: 'task-1',
+        session_id: 'session-1',
+        run_id: 'run-1',
+        path: 'literal/file.go',
+        digest: 'artifact-digest',
+        verified_at: now,
+      }],
     }
     const definition = {
       id: 'loop-1',
@@ -156,7 +196,12 @@ describe('endpoint decoders', () => {
       team_template_ref: 'default',
       plan_mode: 'review',
       verification_recipe: {
-        checks: ['go test ./...'],
+        checks: [{
+          id: 'unit',
+          command: ['go', 'test', './...'],
+          required: true,
+          timeout_seconds: 120,
+        }],
         independent_verifier: true,
         max_repair_attempts: 1,
       },
@@ -200,9 +245,23 @@ describe('endpoint decoders', () => {
       bindings: [{ binding: employee.skill_bindings[0], status: 'current', kind: 'native' }],
     }).bindings).toHaveLength(1)
     expect(decodeBoundedProjection({ facts: [] })).toEqual({ facts: [] })
-    expect(decodeEmployeeTask(task).prompt).toBe('Literal prompt')
+    const decodedTask = decodeEmployeeTask(task)
+    expect(decodedTask.prompt).toBe('Literal prompt')
+    expect(decodedTask.skills[0]).toEqual(task.skills[0])
+    expect(decodedTask.knowledge[0]?.citations[0]).toEqual(task.knowledge[0]?.citations[0])
+    expect(decodedTask.memory_facts[0]).toEqual({ fact_id: 'fact-1', digest: 'memory-digest' })
+    expect(decodedTask.employee_snapshot.digest).toBe('employee-snapshot-digest')
+    expect(decodedTask.cancelled_at).toBe(now)
+    expect(decodedTask.project_binding.budget_override).toEqual(project.budget_override)
     expect(decodeEmployeeTasks({ tasks: [task] }).tasks).toHaveLength(1)
-    expect(decodeLoopDefinition(definition).revision).toBe(3)
+    const decodedDefinition = decodeLoopDefinition(definition)
+    expect(decodedDefinition.revision).toBe(3)
+    expect(decodedDefinition.verification_recipe.checks[0]).toEqual({
+      id: 'unit',
+      command: ['go', 'test', './...'],
+      required: true,
+      timeout_seconds: 120,
+    })
     expect(decodeLoopDefinitions({ loops: [definition] }).loops).toHaveLength(1)
     expect(decodeLoopInvocation(invocation).id).toBe('invocation-1')
     expect(decodeLoopInvocationList({ invocations: [invocation], limit: 50 }).limit).toBe(50)
@@ -223,6 +282,20 @@ describe('endpoint decoders', () => {
       ready: true,
       reasons: [],
     }).ready).toBe(true)
+    expect(decodeTeamTemplate({
+      schema_version: 2,
+      name: 'default',
+      default: { company: 'openai', access: 'codex', model: 'gpt' },
+      roles: {
+        builder: {
+          company: '',
+          access: '',
+          model: '',
+          employee_id: 'employee-builder',
+        },
+      },
+      updated_at: now,
+    }).roles.builder?.employee_id).toBe('employee-builder')
   })
 
   it('defaults a missing next_event_sequence to zero', () => {

@@ -480,6 +480,7 @@ export interface SkillBinding {
 
 export interface ProjectBinding {
   id: string
+  employee_id: string
   label: string
   workspace_real_path: string
   workspace_fingerprint: string
@@ -487,6 +488,15 @@ export interface ProjectBinding {
   mutation_allowed: boolean
   allowed_tool_capabilities: string[]
   network_allowed: boolean
+  budget_override?: BudgetPolicy | undefined
+  created_at: string
+  updated_at: string
+}
+
+export interface BudgetPolicy {
+  max_model_calls: number
+  max_tokens: number
+  timeout_seconds: number
 }
 
 export interface Employee extends EmployeeSummary {
@@ -507,6 +517,8 @@ export interface Employee extends EmployeeSummary {
     max_context_facts: number
     max_context_bytes: number
   }
+  disabled_at?: string | undefined
+  archived_at?: string | undefined
 }
 
 export interface EmployeeRecord {
@@ -531,6 +543,113 @@ export interface EmployeeSkillStatus {
   kind?: 'native' | 'skill_md_adapter' | undefined
 }
 
+export interface EmployeeDryRun {
+  employee_id: string
+  revision: number
+  ready: boolean
+  checks: Array<{ name: string; ready: boolean; detail: string }>
+}
+
+export interface ProjectCatalogItem {
+  id: string
+  label: string
+  workspace_real_path: string
+  workspace_fingerprint: string
+}
+
+export interface KnowledgeCitation {
+  schema_version: number
+  id: string
+  employee_id: string
+  source_id: string
+  path: string
+  heading?: string | undefined
+  start_line: number
+  end_line: number
+  digest: string
+  snippet: string
+}
+
+export interface KnowledgeSource {
+  schema_version: number
+  id: string
+  employee_id: string
+  kind: 'manual_text' | 'file' | 'project_docs'
+  title: string
+  relative_path?: string | undefined
+  manual_text?: string | undefined
+  digest: string
+  status: 'ready' | 'failed'
+  error?: string | undefined
+}
+
+export interface KnowledgeIndex {
+  schema_version: number
+  employee_id: string
+  source_id: string
+  source_digest: string
+  documents: Array<{
+    path: string
+    digest: string
+    terms: string[]
+    citations: KnowledgeCitation[]
+  }>
+}
+
+export interface EmployeeKnowledge {
+  employee_id: string
+  sources: KnowledgeSource[]
+  indexes: KnowledgeIndex[]
+  results: Array<{
+    source_id: string
+    title: string
+    score: number
+    citation: KnowledgeCitation
+  }>
+}
+
+export interface MemoryProvenance {
+  source_type: string
+  source_id: string
+  source_task_id?: string | undefined
+  source_session_id?: string | undefined
+  source_run_id?: string | undefined
+  verified_at: string
+}
+
+export interface MemoryCandidate {
+  schema_version: number
+  id: string
+  employee_id: string
+  category: string
+  value: string
+  provenance: MemoryProvenance[]
+  created_at: string
+  digest: string
+}
+
+export interface MemoryFact extends MemoryCandidate {
+  candidate_id: string
+  updated_at: string
+  owner_edited: boolean
+}
+
+export interface EmployeeActivity {
+  events: Array<{
+    schema_version: number
+    id: string
+    employee_id: string
+    type: string
+    time: string
+    employee_revision?: number | undefined
+    subject_id?: string | undefined
+    task_id?: string | undefined
+    session_id?: string | undefined
+    run_id?: string | undefined
+  }>
+  next_cursor?: string | undefined
+}
+
 export interface EmployeeTask {
   schema_version: number
   id: string
@@ -540,13 +659,27 @@ export interface EmployeeTask {
   state: EmployeeTaskState
   created_at: string
   updated_at: string
-  skills: Array<{ skill_id: string; version: string }>
-  knowledge: Array<{ source_id: string; citation_ids: string[] }>
-  memory_facts: Array<{
-    id: string
-    category?: string | undefined
-    value?: string | undefined
+  cancelled_at?: string | undefined
+  employee_snapshot: {
+    schema_version: number
+    employee_id: string
+    revision: number
+    captured_at: string
+    digest: string
+  }
+  skills: SkillBinding[]
+  knowledge: Array<{
+    source_id: string
+    source_digest: string
+    citations: Array<{
+      citation_id: string
+      path: string
+      digest: string
+      start_line: number
+      end_line: number
+    }>
   }>
+  memory_facts: Array<{ fact_id: string; digest: string }>
   project_binding: {
     id: string
     label: string
@@ -555,6 +688,7 @@ export interface EmployeeTask {
     mutation_allowed: boolean
     allowed_tool_capabilities: string[]
     network_allowed: boolean
+    budget_override?: BudgetPolicy | undefined
   }
   policy: {
     allowed_capabilities: string[]
@@ -564,7 +698,17 @@ export interface EmployeeTask {
   snapshot_digest: string
   session_id?: string | undefined
   run_id?: string | undefined
-  artifacts: Array<{ id?: string; kind?: string; path?: string; digest?: string }>
+  artifacts: Array<{
+    schema_version: number
+    id: string
+    employee_id: string
+    task_id: string
+    session_id: string
+    run_id: string
+    path: string
+    digest: string
+    verified_at: string
+  }>
 }
 
 export interface LoopDefinition extends LoopSummary {
@@ -576,7 +720,12 @@ export interface LoopDefinition extends LoopSummary {
   team_template_ref: string
   plan_mode: PlanMode
   verification_recipe: {
-    checks: string[]
+    checks: Array<{
+      id: string
+      command: string[]
+      required: boolean
+      timeout_seconds: number
+    }>
     independent_verifier: boolean
     max_repair_attempts: number
   }
@@ -606,4 +755,21 @@ export interface DryRunReport {
   requires_approval: boolean
   ready: boolean
   reasons: string[]
+}
+
+export interface TeamRoleSelection {
+  company: string
+  access: string
+  model: string
+  employee_id?: string | undefined
+  max_model_calls?: number | undefined
+  max_tokens?: number | undefined
+}
+
+export interface TeamTemplate {
+  schema_version: number
+  name: string
+  default: TeamRoleSelection
+  roles: Record<string, TeamRoleSelection>
+  updated_at?: string | undefined
 }

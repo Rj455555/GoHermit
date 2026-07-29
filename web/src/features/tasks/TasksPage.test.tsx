@@ -12,6 +12,9 @@ const api = vi.hoisted(() => ({
   listEmployees: vi.fn(),
   listEmployeeTasks: vi.fn(),
   getEmployee: vi.fn(),
+  getEmployeeSkills: vi.fn(),
+  getEmployeeKnowledge: vi.fn(),
+  getEmployeeMemory: vi.fn(),
   getEmployeeTask: vi.fn(),
   getSession: vi.fn(),
   listApprovals: vi.fn(),
@@ -57,6 +60,13 @@ const queuedTask = {
   state: 'queued',
   created_at: now,
   updated_at: now,
+  employee_snapshot: {
+    schema_version: 1,
+    employee_id: employee.id,
+    revision: 3,
+    captured_at: now,
+    digest: 'e'.repeat(64),
+  },
   skills: [],
   knowledge: [],
   memory_facts: [],
@@ -103,6 +113,44 @@ beforeEach(() => {
   api.listEmployeeTasks.mockResolvedValue({ tasks: [queuedTask] })
   api.getEmployeeTask.mockResolvedValue(queuedTask)
   api.listApprovals.mockResolvedValue({ approvals: [] })
+  api.getEmployee.mockResolvedValue({
+    employee: {
+      ...employee,
+      schema_version: 1,
+      avatar: { kind: 'initials', value: 'A' },
+      charter: 'Ship releases',
+      responsibilities: [],
+      behavior_boundaries: [],
+      default_selection: { company: 'openai', access: 'codex', model: 'gpt' },
+      skill_bindings: [],
+      project_binding_ids: ['project-main'],
+      permission_policy: { allowed_capabilities: ['read'], network_allowed: false },
+      budget_policy: { max_model_calls: 4, max_tokens: 4000, timeout_seconds: 600 },
+      concurrency_policy: { max_running_tasks: 1 },
+      memory_policy: {
+        candidate_generation: true,
+        promotion: 'owner_confirmation',
+        max_context_facts: 8,
+        max_context_bytes: 8192,
+      },
+    },
+    project_bindings: [{
+      id: 'project-main',
+      employee_id: employee.id,
+      label: 'GoHermit',
+      workspace_real_path: '/workspace',
+      workspace_fingerprint: 'f'.repeat(64),
+      read_allowed: true,
+      mutation_allowed: true,
+      allowed_tool_capabilities: ['read'],
+      network_allowed: false,
+      created_at: now,
+      updated_at: now,
+    }],
+  })
+  api.getEmployeeSkills.mockResolvedValue({ employee_id: employee.id, revision: 3, bindings: [] })
+  api.getEmployeeKnowledge.mockResolvedValue({ employee_id: employee.id, sources: [], indexes: [], results: [] })
+  api.getEmployeeMemory.mockResolvedValue({ employee_id: employee.id, facts: [] })
 })
 
 describe('Employee Tasks Phase 4 pages', () => {
@@ -129,5 +177,29 @@ describe('Employee Tasks Phase 4 pages', () => {
     expect(api.startEmployeeTask).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Start' }))
     await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledOnce())
+  })
+
+  it('requires an explicit project selection and shows UTF-8 prompt bytes', async () => {
+    const user = userEvent.setup()
+    renderTasks()
+
+    await screen.findByText('Prepare release.')
+    await user.type(screen.getByLabelText('Task prompt'), '中😀')
+    expect(screen.getByTestId('task-prompt-bytes')).toHaveTextContent('7 / 16384')
+    expect(screen.getByRole('button', { name: 'Create as queued' })).toBeDisabled()
+    await user.selectOptions(screen.getByLabelText('Project'), 'project-main')
+    expect(screen.getByRole('button', { name: 'Create as queued' })).toBeEnabled()
+  })
+
+  it('renders execution evidence as structured sections, not raw JSON', async () => {
+    renderTasks('/tasks/task-queued')
+
+    await screen.findByTestId('task-status')
+    expect(screen.queryByText(/\{"plan"/u)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Plan' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Tools' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Verification' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Approvals' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Artifacts' })).toBeVisible()
   })
 })

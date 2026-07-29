@@ -27,6 +27,10 @@ import { PageHeader } from '../../components/PageHeader'
 import { useSessionEvents } from '../../hooks/useSessionEvents'
 import { translatedEnum } from '../../i18n/enumLabel'
 import { useUI } from '../../state/UIContext'
+import {
+  TasksWorkbenchPage,
+  TaskWorkbenchDetailPage,
+} from './TasksWorkbench'
 
 function mutationKey(error: unknown) {
   if (error instanceof ApiError && error.code === 'network_error') return 'mutation.offline'
@@ -50,7 +54,7 @@ async function loadBoundedEmployeeTasks(employees: EmployeeSummary[]) {
   return tasks
 }
 
-export function TasksPage() {
+export function LegacyTasksPage() {
   const { t } = useTranslation()
   const { actions } = useUI()
   const navigate = useNavigate()
@@ -161,7 +165,7 @@ export function TasksPage() {
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
 
-export function TaskDetailPage() {
+export function LegacyTaskDetailPage() {
   const { taskId } = useParams()
   const { t } = useTranslation()
   const { actions } = useUI()
@@ -266,4 +270,12 @@ export function TaskDetailPage() {
       </section>
     </article>
   )
+}
+
+export function TasksPage() {
+  return <TasksWorkbenchPage />
+}
+
+export function TaskDetailPage() {
+  return <TaskWorkbenchDetailPage />
 }

@@ -31,10 +31,12 @@ import { ErrorState } from '../../components/ErrorState'
 import { PageHeader } from '../../components/PageHeader'
 import { translatedEnum } from '../../i18n/enumLabel'
 import { useUI } from '../../state/UIContext'
+import { EmployeeDetailPage as Phase4EmployeeDetailPage } from './EmployeeDetailPage'
+import { EmployeeWizard as Phase4EmployeeWizard } from './EmployeeWizard'
 
 const WIZARD_STEPS = [
-  'identity', 'charter', 'runtime', 'projects', 'skills',
-  'permissions', 'budget', 'memory', 'review',
+  'identity', 'modelAgent', 'charter', 'skills', 'knowledge',
+  'memory', 'projects', 'policy', 'review',
 ] as const
 
 function mutationKey(error: unknown) {
@@ -82,7 +84,7 @@ function defaultEmployee(): Employee {
   }
 }
 
-function EmployeeWizard({ onClose, onCreated }: {
+export function LegacyEmployeeWizard({ onClose, onCreated }: {
   onClose: () => void
   onCreated: (record: EmployeeRecord) => void
 }) {
@@ -93,7 +95,7 @@ function EmployeeWizard({ onClose, onCreated }: {
   const [skills, setSkills] = useState<SkillCatalogItem[]>([])
   const [catalogReady, setCatalogReady] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [readiness, setReadiness] = useState<Record<string, unknown> | null>(null)
+  const [readiness, setReadiness] = useState<Awaited<ReturnType<typeof dryRunEmployee>> | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -260,7 +262,7 @@ export function EmployeesPage() {
         description={t('employees.description')}
         actions={<button type="button" disabled={!connectivity.canMutate} onClick={() => setWizard(true)}>{t('employees.create')}</button>}
       />
-      {wizard ? <EmployeeWizard onClose={() => setWizard(false)} onCreated={(record) => { void navigate(`/employees/${encodeURIComponent(record.employee.id)}`) }} /> : null}
+      {wizard ? <Phase4EmployeeWizard onClose={() => setWizard(false)} onCreated={(record) => { void navigate(`/employees/${encodeURIComponent(record.employee.id)}`) }} /> : null}
       <label>{t('employees.state')}
         <select
           aria-label={t('employees.state')}
@@ -294,7 +296,7 @@ export function EmployeesPage() {
 type EmployeeTab = 'overview' | 'skills' | 'knowledge' | 'memory' | 'projects' | 'tasks' | 'activity'
 const TABS: EmployeeTab[] = ['overview', 'skills', 'knowledge', 'memory', 'projects', 'tasks', 'activity']
 
-export function EmployeeDetailPage() {
+export function LegacyEmployeeDetailPage() {
   const { employeeId } = useParams()
   const { t } = useTranslation()
   const { actions } = useUI()
@@ -415,4 +417,8 @@ export function EmployeeDetailPage() {
       )}
     </article>
   )
+}
+
+export function EmployeeDetailPage() {
+  return <Phase4EmployeeDetailPage />
 }

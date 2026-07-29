@@ -6,6 +6,9 @@ import type {
   CodexLoginSession,
   Company,
   DryRunReport,
+  EmployeeActivity,
+  EmployeeDryRun,
+  EmployeeKnowledge,
   Employee,
   EmployeeRecord,
   EmployeeSkillStatus,
@@ -21,6 +24,8 @@ import type {
   LoopDefinition,
   LoopInvocation,
   LoopSummary,
+  MemoryCandidate,
+  MemoryFact,
   Message,
   Mission,
   ModelOption,
@@ -35,6 +40,7 @@ import type {
   PlanStep,
   PlanStepStatus,
   ProviderReadiness,
+  ProjectCatalogItem,
   Run,
   RunStatus,
   RuntimeEvent,
@@ -46,6 +52,7 @@ import type {
   SessionStatus,
   SessionSummary,
   SkillCatalogItem,
+  TeamTemplate,
   TestResult,
   ToolRecord,
   WorkItem,
@@ -783,6 +790,7 @@ function decodeProjectBinding(value: unknown) {
   const source = object(value)
   return {
     id: id(source.id),
+    employee_id: id(source.employee_id),
     label: string(source.label, 8192),
     workspace_real_path: string(source.workspace_real_path, 4096),
     workspace_fingerprint: string(source.workspace_fingerprint, 256),
@@ -794,6 +802,11 @@ function decodeProjectBinding(value: unknown) {
       MAX_SMALL_COLLECTION,
     ),
     network_allowed: boolean(source.network_allowed),
+    budget_override: source.budget_override === undefined || source.budget_override === null
+      ? undefined
+      : decodeBudget(source.budget_override),
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
   }
 }
 
@@ -918,6 +931,206 @@ export function decodeEmployeeSkills(value: unknown): {
   }
 }
 
+export function decodeEmployeeDryRun(value: unknown): EmployeeDryRun {
+  const source = object(value)
+  return {
+    employee_id: id(source.employee_id),
+    revision: integer(source.revision),
+    ready: boolean(source.ready),
+    checks: array(source.checks, (entry) => {
+      const check = object(entry)
+      return {
+        name: id(check.name),
+        ready: boolean(check.ready),
+        detail: string(check.detail, 8192),
+      }
+    }, MAX_SMALL_COLLECTION),
+  }
+}
+
+export function decodeProjects(value: unknown): { projects: ProjectCatalogItem[] } {
+  const source = object(value)
+  return {
+    projects: array(source.projects, (entry) => {
+      const project = object(entry)
+      return {
+        id: id(project.id),
+        label: string(project.label, 8192),
+        workspace_real_path: string(project.workspace_real_path, 4096),
+        workspace_fingerprint: string(project.workspace_fingerprint, 256),
+      }
+    }, MAX_SMALL_COLLECTION),
+  }
+}
+
+function decodeCitation(value: unknown) {
+  const source = object(value)
+  return {
+    schema_version: integer(source.schema_version),
+    id: id(source.id),
+    employee_id: id(source.employee_id),
+    source_id: id(source.source_id),
+    path: string(source.path, 4096),
+    heading: optionalString(source.heading, 8192),
+    start_line: integer(source.start_line),
+    end_line: integer(source.end_line),
+    digest: string(source.digest, 256),
+    snippet: string(source.snippet, 16 << 10),
+  }
+}
+
+export function decodeEmployeeKnowledge(value: unknown): EmployeeKnowledge {
+  const source = object(value)
+  return {
+    employee_id: id(source.employee_id),
+    sources: array(source.sources, (entry) => {
+      const item = object(entry)
+      return {
+        schema_version: integer(item.schema_version),
+        id: id(item.id),
+        employee_id: id(item.employee_id),
+        kind: enumeration(item.kind, ['manual_text', 'file', 'project_docs'] as const),
+        title: string(item.title, 8192),
+        relative_path: optionalString(item.relative_path, 4096),
+        manual_text: optionalString(item.manual_text, 64 << 10),
+        digest: string(item.digest, 256),
+        status: enumeration(item.status, ['ready', 'failed'] as const),
+        error: optionalString(item.error, 8192),
+      }
+    }, 128),
+    indexes: array(source.indexes, (entry) => {
+      const item = object(entry)
+      return {
+        schema_version: integer(item.schema_version),
+        employee_id: id(item.employee_id),
+        source_id: id(item.source_id),
+        source_digest: string(item.source_digest, 256),
+        documents: array(item.documents, (documentValue) => {
+          const document = object(documentValue)
+          return {
+            path: string(document.path, 4096),
+            digest: string(document.digest, 256),
+            terms: array(document.terms, (term) => string(term, 64), 1024),
+            citations: array(document.citations, decodeCitation, 1024),
+          }
+        }, 256),
+      }
+    }, 128),
+    results: optionalArray(source.results, (entry) => {
+      const result = object(entry)
+      return {
+        source_id: id(result.source_id),
+        title: string(result.title, 8192),
+        score: integer(result.score),
+        citation: decodeCitation(result.citation),
+      }
+    }, 32),
+  }
+}
+
+function decodeProvenance(value: unknown) {
+  const source = object(value)
+  return {
+    source_type: id(source.source_type),
+    source_id: id(source.source_id),
+    source_task_id: optionalID(source.source_task_id),
+    source_session_id: optionalID(source.source_session_id),
+    source_run_id: optionalID(source.source_run_id),
+    verified_at: time(source.verified_at),
+  }
+}
+
+function decodeMemoryCandidateValue(value: unknown): MemoryCandidate {
+  const source = object(value)
+  return {
+    schema_version: integer(source.schema_version),
+    id: id(source.id),
+    employee_id: id(source.employee_id),
+    category: string(source.category, 8192),
+    value: string(source.value, 8192),
+    provenance: array(source.provenance, decodeProvenance, 16),
+    created_at: time(source.created_at),
+    digest: string(source.digest, 256),
+  }
+}
+
+function decodeMemoryFactValue(value: unknown): MemoryFact {
+  const source = object(value)
+  return {
+    ...decodeMemoryCandidateValue(source),
+    candidate_id: id(source.candidate_id),
+    updated_at: time(source.updated_at),
+    owner_edited: boolean(source.owner_edited),
+  }
+}
+
+export function decodeEmployeeMemory(value: unknown): { employee_id: string; facts: MemoryFact[] } {
+  const source = object(value)
+  return {
+    employee_id: id(source.employee_id),
+    facts: array(source.facts, decodeMemoryFactValue, 512),
+  }
+}
+
+export function decodeEmployeeMemoryCandidates(
+  value: unknown,
+): { employee_id: string; candidates: MemoryCandidate[] } {
+  const source = object(value)
+  return {
+    employee_id: id(source.employee_id),
+    candidates: array(source.candidates, decodeMemoryCandidateValue, 128),
+  }
+}
+
+export const decodeMemoryFact = decodeMemoryFactValue
+
+export function decodeEmployeeActivity(value: unknown): EmployeeActivity {
+  const source = object(value)
+  return {
+    events: array(source.events, (entry) => {
+      const event = object(entry)
+      return {
+        schema_version: integer(event.schema_version),
+        id: id(event.id),
+        employee_id: id(event.employee_id),
+        type: id(event.type),
+        time: time(event.time),
+        employee_revision: event.employee_revision === undefined
+          ? undefined
+          : integer(event.employee_revision),
+        subject_id: optionalID(event.subject_id),
+        task_id: optionalID(event.task_id),
+        session_id: optionalID(event.session_id),
+        run_id: optionalID(event.run_id),
+      }
+    }, MAX_SMALL_COLLECTION),
+    next_cursor: optionalString(source.next_cursor, 1024),
+  }
+}
+
+export function decodeTeamTemplate(value: unknown): TeamTemplate {
+  const source = object(value)
+  const decodeRole = (entry: unknown) => {
+    const role = object(entry)
+    return {
+      company: string(role.company, 256),
+      access: string(role.access, 256),
+      model: string(role.model, 256),
+      employee_id: optionalID(role.employee_id),
+      max_model_calls: role.max_model_calls === undefined ? undefined : integer(role.max_model_calls),
+      max_tokens: role.max_tokens === undefined ? undefined : integer(role.max_tokens),
+    }
+  }
+  const roles = object(source.roles ?? {})
+  return {
+    schema_version: integer(source.schema_version),
+    name: string(source.name, 8192),
+    default: decodeRole(source.default),
+    roles: Object.fromEntries(Object.entries(roles).map(([key, entry]) => [key, decodeRole(entry)])),
+    updated_at: optionalTime(source.updated_at),
+  }
+}
+
 export function decodeBoundedProjection(value: unknown): Record<string, unknown> {
   return boundedRecord(value)
 }
@@ -936,6 +1149,9 @@ function decodeTaskProject(value: unknown): EmployeeTask['project_binding'] {
       MAX_SMALL_COLLECTION,
     ),
     network_allowed: boolean(source.network_allowed),
+    budget_override: source.budget_override === undefined || source.budget_override === null
+      ? undefined
+      : decodeBudget(source.budget_override),
   }
 }
 
@@ -952,23 +1168,40 @@ export function decodeEmployeeTask(value: unknown): EmployeeTask {
     state: enumeration<EmployeeTaskState>(source.state, EMPLOYEE_TASK_STATES),
     created_at: time(source.created_at),
     updated_at: time(source.updated_at),
-    skills: array(source.skills, (entry) => {
-      const skill = object(entry)
-      return { skill_id: id(skill.skill_id), version: string(skill.version, 256) }
-    }, MAX_SMALL_COLLECTION),
+    cancelled_at: optionalTime(source.cancelled_at),
+    employee_snapshot: (() => {
+      const snapshot = object(source.employee_snapshot)
+      return {
+        schema_version: integer(snapshot.schema_version),
+        employee_id: id(snapshot.employee_id),
+        revision: integer(snapshot.revision),
+        captured_at: time(snapshot.captured_at),
+        digest: string(snapshot.digest, 256),
+      }
+    })(),
+    skills: array(source.skills, decodeSkillBinding, MAX_SMALL_COLLECTION),
     knowledge: array(source.knowledge, (entry) => {
       const knowledge = object(entry)
       return {
         source_id: id(knowledge.source_id),
-        citation_ids: array(knowledge.citation_ids, id, MAX_SMALL_COLLECTION),
+        source_digest: string(knowledge.source_digest, 256),
+        citations: array(knowledge.citations, (citationValue) => {
+          const citation = object(citationValue)
+          return {
+            citation_id: id(citation.citation_id),
+            path: string(citation.path, 4096),
+            digest: string(citation.digest, 256),
+            start_line: integer(citation.start_line),
+            end_line: integer(citation.end_line),
+          }
+        }, MAX_SMALL_COLLECTION),
       }
     }, MAX_SMALL_COLLECTION),
     memory_facts: array(source.memory_facts, (entry) => {
       const fact = object(entry)
       return {
-        id: id(fact.id),
-        category: optionalString(fact.category, 8192),
-        value: optionalString(fact.value),
+        fact_id: id(fact.fact_id),
+        digest: string(fact.digest, 256),
       }
     }, MAX_SMALL_COLLECTION),
     project_binding: decodeTaskProject(source.project_binding),
@@ -988,7 +1221,20 @@ export function decodeEmployeeTask(value: unknown): EmployeeTask {
     snapshot_digest: string(source.snapshot_digest, 256),
     session_id: optionalID(source.session_id),
     run_id: optionalID(source.run_id),
-    artifacts: optionalArray(source.artifacts, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
+    artifacts: optionalArray(source.artifacts, (entry) => {
+      const artifact = object(entry)
+      return {
+        schema_version: integer(artifact.schema_version),
+        id: id(artifact.id),
+        employee_id: id(artifact.employee_id),
+        task_id: id(artifact.task_id),
+        session_id: id(artifact.session_id),
+        run_id: id(artifact.run_id),
+        path: string(artifact.path, 4096),
+        digest: string(artifact.digest, 256),
+        verified_at: time(artifact.verified_at),
+      }
+    }, 128),
   }
 }
 
@@ -1028,7 +1274,15 @@ export function decodeLoopDefinition(value: unknown): LoopDefinition {
     team_template_ref: string(source.team_template_ref, 256),
     plan_mode: enumeration<PlanMode>(source.plan_mode, PLAN_MODES),
     verification_recipe: {
-      checks: array(verification.checks, (item) => string(item, 4096), MAX_SMALL_COLLECTION),
+      checks: array(verification.checks, (item) => {
+        const check = object(item)
+        return {
+          id: id(check.id),
+          command: array(check.command, (argument) => string(argument, 4096), 8),
+          required: boolean(check.required),
+          timeout_seconds: integer(check.timeout_seconds),
+        }
+      }, 16),
       independent_verifier: boolean(verification.independent_verifier),
       max_repair_attempts: integer(verification.max_repair_attempts),
     },
