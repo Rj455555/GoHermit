@@ -24,8 +24,8 @@ import (
 )
 
 func TestV07ReleaseVersion(t *testing.T) {
-	if app.Version != "0.7.0-dev" {
-		t.Fatalf("version = %q, want 0.7.0-dev", app.Version)
+	if app.Version != "0.8.0-dev" {
+		t.Fatalf("version = %q, want 0.8.0-dev", app.Version)
 	}
 }
 

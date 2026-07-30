@@ -46,6 +46,7 @@ type Invocation struct {
 	DefinitionSnapshot Definition `json:"definition_snapshot"`
 	Trigger            string     `json:"trigger"`
 	TaskSnapshot       string     `json:"task_snapshot"`
+	EmployeeTaskID     string     `json:"employee_task_id,omitempty"`
 	SessionID          string     `json:"session_id,omitempty"`
 	RunID              string     `json:"run_id,omitempty"`
 	Status             Status     `json:"status"`
@@ -64,8 +65,11 @@ func NewInvocation(def Definition, trigger, taskSnapshot string, now time.Time) 
 		return Invocation{}, err
 	}
 	trigger = clean(trigger)
-	if trigger != TriggerManual {
+	if trigger != TriggerManual && trigger != TriggerSchedule {
 		return Invocation{}, fmt.Errorf("unsupported trigger %q", trigger)
+	}
+	if trigger == TriggerSchedule && def.Schedule.Kind != ScheduleDaily {
+		return Invocation{}, errors.New("scheduled invocation requires a daily schedule")
 	}
 	if clean(taskSnapshot) == "" {
 		return Invocation{}, errors.New("invocation task snapshot is required")
@@ -204,8 +208,11 @@ func ValidateInvocation(inv Invocation) error {
 	default:
 		return fmt.Errorf("unsupported invocation status %q", inv.Status)
 	}
-	if inv.Trigger != TriggerManual {
+	if inv.Trigger != TriggerManual && inv.Trigger != TriggerSchedule {
 		return fmt.Errorf("unsupported trigger %q", inv.Trigger)
+	}
+	if inv.Trigger == TriggerSchedule && inv.DefinitionSnapshot.Schedule.Kind != ScheduleDaily {
+		return errors.New("scheduled invocation snapshot requires a daily schedule")
 	}
 	if clean(inv.TaskSnapshot) == "" || len(inv.TaskSnapshot) > MaxTextBytes {
 		return errors.New("invocation task snapshot is required and bounded")
@@ -216,7 +223,17 @@ func ValidateInvocation(inv Invocation) error {
 	if err := ValidateDefinition(inv.DefinitionSnapshot); err != nil {
 		return fmt.Errorf("invocation snapshot: %w", err)
 	}
+	if inv.EmployeeTaskID != "" && inv.DefinitionSnapshot.EmployeeID == "" {
+		return errors.New("employee task binding requires an Employee-owned loop")
+	}
+	if inv.DefinitionSnapshot.EmployeeID != "" &&
+		(inv.Status == Dispatched || inv.Status == Attached || inv.Status.Terminal()) &&
+		inv.Status != Blocked && inv.Status != Skipped &&
+		clean(inv.EmployeeTaskID) == "" {
+		return errors.New("Employee-owned dispatched invocation requires an Employee Task binding")
+	}
 	for _, field := range []SecretField{
+		{"employee task id", inv.EmployeeTaskID},
 		{"session id", inv.SessionID},
 		{"run id", inv.RunID},
 		{"failure code", inv.FailureCode},

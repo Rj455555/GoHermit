@@ -106,6 +106,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/loops", s.createLoop)
 	mux.HandleFunc("POST /api/loops/import", s.importLoop)
 	mux.HandleFunc("GET /api/loops/{id}", s.getLoop)
+	mux.HandleFunc("GET /api/loops/{id}/runtime", s.getLoopRuntime)
+	mux.HandleFunc("GET /api/loops/{id}/contract.md", s.getLoopContract)
 	mux.HandleFunc("PUT /api/loops/{id}", s.updateLoop)
 	mux.HandleFunc("POST /api/loops/{id}/dry-run", s.dryRunLoop)
 	mux.HandleFunc("GET /api/loops/{id}/invocations", s.listLoopInvocations)
@@ -129,6 +131,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings/logins/{session}", s.loginStatus)
 	mux.Handle("GET /", s.static)
 	return securityHeaders(rejectAnomalousPaths(mux))
+}
+
+// StartLoopScheduler starts the single-workspace scheduler. All execution
+// still flows through the Control Plane's existing Task/Session/Run paths.
+func (s *Server) StartLoopScheduler(ctx context.Context) {
+	s.svc.StartLoopScheduler(ctx)
 }
 
 func rejectAnomalousPaths(next http.Handler) http.Handler {

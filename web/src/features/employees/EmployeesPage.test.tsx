@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   listSkills: vi.fn(),
   dryRunEmployee: vi.fn(),
   listEmployeeTasks: vi.fn(),
+  listLoops: vi.fn(),
   getEmployeeSkills: vi.fn(),
   getEmployeeKnowledge: vi.fn(),
   getEmployeeMemory: vi.fn(),
@@ -146,6 +147,37 @@ beforeEach(() => {
   api.getEmployeeMemory.mockResolvedValue({ facts: [] })
   api.getEmployeeMemoryCandidates.mockResolvedValue({ candidates: [] })
   api.listEmployeeTasks.mockResolvedValue({ tasks: [] })
+  api.listLoops.mockResolvedValue({
+    loops: [{
+      id: 'release-archive',
+      schema_version: 1,
+      name: 'Release archive',
+      description: '',
+      employee_id: summary.id,
+      contract: {
+        goal: 'Archive verified release knowledge.',
+        boundaries: ['Keep provenance.'],
+        sop: ['Collect the release evidence.'],
+        definition_of_done: ['Archive is reviewable.'],
+        stop_conditions: ['Stop on conflicting evidence.'],
+      },
+      schedule: { kind: 'daily', local_time: '02:00', timezone: 'Asia/Shanghai' },
+      workspace_identity: '/workspace/gohermit',
+      enabled: true,
+      task_source: { type: 'fixed_prompt', prompt: 'Archive verified release knowledge.' },
+      agent_selection: { company: 'openai', access: 'codex', model: 'gpt', agent: 'coding' },
+      team_template_ref: 'default',
+      plan_mode: 'review',
+      verification_recipe: { checks: [], independent_verifier: true, max_repair_attempts: 0 },
+      budget: { max_model_calls: 8, max_tokens: 8000, timeout_seconds: 1200 },
+      approval_policy: { require_for_mutation: true },
+      workspace_policy: { read_only: true, require_clean_git: false },
+      output_policy: { include_diff: false, max_report_bytes: 65536 },
+      created_at: now,
+      updated_at: now,
+      revision: 1,
+    }],
+  })
   api.getEmployeeActivity.mockResolvedValue({ events: [] })
   api.getInfo.mockResolvedValue({
     workspace: '/workspace',
@@ -213,6 +245,18 @@ beforeEach(() => {
 })
 
 describe('Employees Phase 4 pages', () => {
+  it('shows the durable work loops owned by an Employee', async () => {
+    const user = userEvent.setup()
+    renderEmployees(`/employees/${summary.id}`)
+
+    await screen.findByRole('heading', { name: summary.name })
+    await user.click(screen.getByRole('button', { name: 'Loops' }))
+
+    expect(await screen.findByRole('heading', { name: 'Release archive' })).toBeVisible()
+    expect(screen.getByText('Archive verified release knowledge.')).toBeVisible()
+    expect(api.listLoops).toHaveBeenCalled()
+  })
+
   it('creates a conservative Employee immediately from only a display name', async () => {
     const user = userEvent.setup()
     renderEmployees()

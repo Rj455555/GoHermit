@@ -43,8 +43,8 @@ const (
 	// validation fails closed on anything else and new types are added
 	// explicitly later.
 	TaskSourceFixedPrompt = "fixed_prompt"
-	// TriggerManual is the only supported invocation trigger for now.
-	TriggerManual = "manual"
+	TriggerManual         = "manual"
+	TriggerSchedule       = "schedule"
 
 	// PlanAuto and PlanReview mirror session.PlanMode.
 	PlanAuto   = "auto"
@@ -128,6 +128,9 @@ type Definition struct {
 	SchemaVersion      int                `json:"schema_version"`
 	Name               string             `json:"name"`
 	Description        string             `json:"description,omitempty"`
+	EmployeeID         string             `json:"employee_id,omitempty"`
+	Contract           Contract           `json:"contract,omitempty"`
+	Schedule           Schedule           `json:"schedule,omitempty"`
 	WorkspaceIdentity  string             `json:"workspace_identity"`
 	Enabled            bool               `json:"enabled"`
 	TaskSource         TaskSource         `json:"task_source"`
@@ -161,6 +164,19 @@ func ValidateDefinition(d Definition) error {
 	}
 	if clean(d.WorkspaceIdentity) == "" {
 		return errors.New("loop definition workspace_identity is required")
+	}
+	if clean(d.EmployeeID) != "" {
+		if err := validateID("employee id", d.EmployeeID); err != nil {
+			return err
+		}
+		if err := validateContract(d.Contract); err != nil {
+			return err
+		}
+	} else if !d.Contract.Empty() {
+		return errors.New("loop contract requires an Employee owner")
+	}
+	if err := validateSchedule(d.Schedule); err != nil {
+		return err
 	}
 	if d.PlanMode != PlanAuto && d.PlanMode != PlanReview {
 		return fmt.Errorf("loop definition plan_mode must be %q or %q", PlanAuto, PlanReview)
@@ -267,6 +283,7 @@ func SecretFields(d Definition) []SecretField {
 	fields := []SecretField{
 		{"name", d.Name},
 		{"description", d.Description},
+		{"employee id", d.EmployeeID},
 		{"workspace identity", d.WorkspaceIdentity},
 		{"team template ref", d.TeamTemplateRef},
 		{"task prompt", d.TaskSource.Prompt},
@@ -274,6 +291,21 @@ func SecretFields(d Definition) []SecretField {
 		{"agent selection access", d.AgentSelection.Access},
 		{"agent selection model", d.AgentSelection.Model},
 		{"agent selection agent", d.AgentSelection.Agent},
+		{"schedule local time", d.Schedule.LocalTime},
+		{"schedule timezone", d.Schedule.Timezone},
+	}
+	fields = append(fields, SecretField{"contract goal", d.Contract.Goal})
+	for _, value := range d.Contract.Boundaries {
+		fields = append(fields, SecretField{"contract boundary", value})
+	}
+	for _, value := range d.Contract.SOP {
+		fields = append(fields, SecretField{"contract SOP", value})
+	}
+	for _, value := range d.Contract.DefinitionOfDone {
+		fields = append(fields, SecretField{"contract definition of done", value})
+	}
+	for _, value := range d.Contract.StopConditions {
+		fields = append(fields, SecretField{"contract stop condition", value})
 	}
 	for _, check := range d.VerificationRecipe.Checks {
 		fields = append(fields, SecretField{"check id", check.ID})
@@ -296,8 +328,25 @@ func redact(value string) string {
 // redactDefinition returns a copy of d with every secret-looking string
 // field blanked. A clean definition is returned unchanged.
 func redactDefinition(d Definition) Definition {
+	d = deepCopyDefinition(d)
 	d.Name = redact(d.Name)
 	d.Description = redact(d.Description)
+	d.EmployeeID = redact(d.EmployeeID)
+	d.Contract.Goal = redact(d.Contract.Goal)
+	for i := range d.Contract.Boundaries {
+		d.Contract.Boundaries[i] = redact(d.Contract.Boundaries[i])
+	}
+	for i := range d.Contract.SOP {
+		d.Contract.SOP[i] = redact(d.Contract.SOP[i])
+	}
+	for i := range d.Contract.DefinitionOfDone {
+		d.Contract.DefinitionOfDone[i] = redact(d.Contract.DefinitionOfDone[i])
+	}
+	for i := range d.Contract.StopConditions {
+		d.Contract.StopConditions[i] = redact(d.Contract.StopConditions[i])
+	}
+	d.Schedule.LocalTime = redact(d.Schedule.LocalTime)
+	d.Schedule.Timezone = redact(d.Schedule.Timezone)
 	d.WorkspaceIdentity = redact(d.WorkspaceIdentity)
 	d.TeamTemplateRef = redact(d.TeamTemplateRef)
 	d.TaskSource.Prompt = redact(d.TaskSource.Prompt)
@@ -317,6 +366,10 @@ func redactDefinition(d Definition) Definition {
 // deepCopyDefinition returns an independent copy of d so an invocation
 // snapshot is immune to later edits of the source definition.
 func deepCopyDefinition(d Definition) Definition {
+	d.Contract.Boundaries = append([]string(nil), d.Contract.Boundaries...)
+	d.Contract.SOP = append([]string(nil), d.Contract.SOP...)
+	d.Contract.DefinitionOfDone = append([]string(nil), d.Contract.DefinitionOfDone...)
+	d.Contract.StopConditions = append([]string(nil), d.Contract.StopConditions...)
 	if d.VerificationRecipe.Checks != nil {
 		checks := make([]RecipeCheck, len(d.VerificationRecipe.Checks))
 		for i, check := range d.VerificationRecipe.Checks {

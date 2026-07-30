@@ -97,6 +97,37 @@ func TestLoopDefinitionResourceAPI(t *testing.T) {
 	}
 }
 
+func TestEmployeeLoopExposesContractAndBoundedRuntimeProjection(t *testing.T) {
+	server := testServer(t)
+	handler := server.Handler()
+	definition := webLoopDefinition(server.Workspace, "knowledge-archive")
+	definition.EmployeeID = "employee-knowledge"
+	definition.Contract = loop.Contract{
+		Goal:             "Archive verified knowledge.",
+		Boundaries:       []string{"Keep provenance."},
+		SOP:              []string{"Collect.", "Deduplicate.", "Report."},
+		DefinitionOfDone: []string{"A reviewable archive exists."},
+	}
+	definition.Schedule = loop.Schedule{Kind: loop.ScheduleDaily, LocalTime: "02:00", Timezone: "Asia/Shanghai"}
+	if response := serveLoopJSON(t, handler, http.MethodPost, "/api/loops", definition); response.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	response := serveLoopJSON(t, handler, http.MethodGet, "/api/loops/knowledge-archive/contract.md", nil)
+	if response.Code != http.StatusOK ||
+		response.Header().Get("Content-Type") != "text/markdown; charset=utf-8" ||
+		!strings.Contains(response.Body.String(), "## Goal") ||
+		strings.Contains(response.Body.String(), "## Logs") {
+		t.Fatalf("contract status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	response = serveLoopJSON(t, handler, http.MethodGet, "/api/loops/knowledge-archive/runtime", nil)
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `"loop_id":"knowledge-archive"`) ||
+		!strings.Contains(response.Body.String(), `"next_run_at"`) {
+		t.Fatalf("runtime status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestLoopAPIRejectsInvalidUnknownOversizedAndCrossOriginBodies(t *testing.T) {
 	server := testServer(t)
 	handler := server.Handler()

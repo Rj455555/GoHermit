@@ -1,19 +1,22 @@
-# AI context: GoHermit 0.7
+# AI context: GoHermit 0.8
 
 Read root `AGENTS.md` first. This file and `employees.md` are the compact
 architecture map; `handoff-v0.7.md` records the verified delivery boundary.
 
 ## Product in one paragraph
 
-GoHermit `0.7.0-dev` is a foreground, local-first, single-owner coding
-workbench. The existing Session/Run kernel still owns execution, Live Plan,
+GoHermit `0.8.0-dev` is a local-first, single-owner Agent workbench. The
+existing Session/Run kernel still owns execution, Live Plan,
 Approval, Verification, Tool lifecycle, Event/SSE, and recovery. v0.7 adds
 owner-scoped Electronic Employees, pinned Skill/Knowledge/Memory/Project
 context, a persistent Task Inbox with explicit Prepare and Start, bounded
 Artifacts and Memory Candidates, Employees/Tasks Web UI, and optional
-Team Role-to-Employee assignments. One service executes only its
-startup-configured Workspace; there is no scheduler, auto-start, multi-user
-control plane, or automatic Git/publish action.
+Team Role-to-Employee assignments. v0.8 adds Employee-owned recurring Loops
+with durable Contract, State, and Invocation logs plus a single-process daily
+scheduler; every execution still uses EmployeeTask, Session, and Run truth.
+One service executes only its startup-configured Workspace; there is no
+multi-instance scheduler, multi-user control plane, or automatic Git/publish
+action.
 
 ## Read by topic
 
@@ -27,7 +30,8 @@ control plane, or automatic Git/publish action.
 | Session/Run/SSE | `docs/ai/harness.md` | `internal/session`, `internal/controlplane`, `internal/web` |
 | Team/Mission/Handoff | `docs/ai/team.md` | ADR 0008, ADR 0013 |
 | Live Plan and Verification | `docs/ai/plan-mode.md` | ADR 0009–0011, `internal/runcontrol` |
-| Loop Workbench | `docs/ai/handoff-v0.6-loop-workbench.md` | `internal/loop`, `internal/loopstore` |
+| Employee recurring Loops | `docs/ai/employee-loops.md` | `internal/loop`, `internal/loopstore`, `internal/controlplane/employee_loops.go` |
+| Legacy Loop Workbench | `docs/ai/handoff-v0.6-loop-workbench.md` | `internal/loop`, `internal/loopstore` |
 | Docker/persistence | `compose.yaml` | `Dockerfile`, `internal/evals/docker_acceptance.sh` |
 | Future work | `docs/ai/next-development-plan.md` | `docs/roadmap.md` |
 
@@ -47,6 +51,12 @@ hidden Worker Session --internal only--> existing Worker/Run/recovery kernel
 Employee is a durable identity, while Role is a temporary Mission
 responsibility. Task is the immutable owner request plus mutable Session/Run
 bindings. Session and Run remain the only execution truth.
+
+```text
+Employee --owns--> Loop contract
+Loop invocation --creates--> EmployeeTask --Prepare/Start--> Session/Run
+Loop state/logs <--project-- Invocation/Session/Run
+```
 
 ## Security invariants
 
@@ -91,7 +101,9 @@ bindings. Session and Run remain the only execution truth.
 - Session root: configured storage directory, normally
   `<workspace>/.gohermit/sessions`; schema v6 migrates v1–v5 one way and fails
   closed on unknown/corrupt data.
-- Loop root: `GOHERMIT_LOOP_STORE`.
+- Loop root: `GOHERMIT_LOOP_STORE`, including generated
+  `contracts/{loop-id}/LOOP.md`, bounded `states/{loop-id}.json`, and existing
+  Invocation logs.
 - Project Memory: `<workspace>/.gohermit/memory`.
 - TeamTemplate root: owner-scoped configuration store; schema v2 strictly
   migrates v1 and rejects a v1 document carrying `employee_id`.

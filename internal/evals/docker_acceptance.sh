@@ -162,7 +162,7 @@ wait_for_workbench() {
     sleep 1
   done
   curl --silent --show-error --fail "${base_url}/api/info" >"${acceptance_root}/info.json"
-  grep -q '"version":"0.7.0-dev"' "${acceptance_root}/info.json"
+  grep -q '"version":"0.8.0-dev"' "${acceptance_root}/info.json"
 }
 
 inspect_runtime_image() {

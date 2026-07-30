@@ -217,6 +217,14 @@ const loopDefinition = {
   ...loops[0],
   schema_version: 1,
   description: 'A bounded daily review.',
+  contract: {
+    goal: 'Review the workspace and report verified findings.',
+    boundaries: ['Do not publish or mutate external systems.'],
+    sop: ['Inspect current changes.', 'Run verification.', 'Write a bounded report.'],
+    definition_of_done: ['The report contains verification evidence.'],
+    stop_conditions: ['Stop when credentials or evidence are unavailable.'],
+  },
+  schedule: { kind: 'manual', local_time: '', timezone: '' },
   workspace_identity: '/test/workspace',
   task_source: { type: 'fixed_prompt', prompt: 'Review' },
   agent_selection: selection,
@@ -863,7 +871,7 @@ async function handleApi(request, response, url) {
     return true
   }
   if (request.method === 'GET' && pathname === '/api/loops') {
-    json(response, 200, { loops })
+    json(response, 200, { loops: [loopDefinition] })
     return true
   }
   if (request.method === 'GET' && pathname === '/api/loops/daily-review') {
@@ -878,6 +886,24 @@ async function handleApi(request, response, url) {
       ...loopDefinition,
       id: `loop-${suffix}`,
       name: suffix === 'alpha' ? 'Alpha Loop' : 'Beta Loop',
+    })
+    return true
+  }
+  const runtimeLoopMatch = pathname.match(
+    /^\/api\/loops\/(daily-review|loop-alpha|loop-beta)\/runtime$/u,
+  )
+  if (request.method === 'GET' && runtimeLoopMatch) {
+    json(response, 200, {
+      schema_version: 1,
+      loop_id: runtimeLoopMatch[1],
+      definition_revision: 1,
+      last_invocation_id: runtimeLoopMatch[1] === 'daily-review' ? 'invocation-1' : undefined,
+      last_status: runtimeLoopMatch[1] === 'daily-review' ? 'completed' : undefined,
+      last_run_at: runtimeLoopMatch[1] === 'daily-review' ? now : undefined,
+      consecutive_failures: 0,
+      total_runs: runtimeLoopMatch[1] === 'daily-review' ? 1 : 0,
+      successful_runs: runtimeLoopMatch[1] === 'daily-review' ? 1 : 0,
+      updated_at: now,
     })
     return true
   }

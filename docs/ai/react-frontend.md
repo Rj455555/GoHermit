@@ -74,6 +74,19 @@ Delayed resource requests carry an AbortSignal and/or owner request epoch.
 Results, navigation, and Toast details are discarded after their owning route
 changes.
 
+## Employee Loop workbench
+
+The primary Loops surface is contract-first: cards summarize When / Does / You
+get, and the short create path asks only for Employee, name, goal, and optional
+daily time. The detail page separates the generated `LOOP.md` contract,
+bounded runtime state, and Invocation logs. Model, Team, policy, budget, and
+verification controls remain under Advanced settings. Employee details expose
+only Loops whose authoritative `employee_id` matches the current Employee.
+
+The browser never schedules or executes work. It reads
+`/api/loops/{id}/runtime` and existing Invocation/Session/SSE projections; the
+Go control plane remains the single owner of dispatch and recovery.
+
 ## Session SSE registry
 
 The EventSource registry key is the Session ID. One Session has at most one

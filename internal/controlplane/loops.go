@@ -233,6 +233,29 @@ func writeScopeText(policy loop.WorkspacePolicy) string {
 // the definition's own selection for every role (legacy behavior). Any other
 // agent is the single definition selection.
 func (s *Service) dryRunRoles(ctx context.Context, definition loop.Definition) ([]loop.RoleAvailability, error) {
+	if definition.EmployeeID != "" {
+		report, err := s.DryRunEmployee(ctx, definition.EmployeeID)
+		if err != nil {
+			return []loop.RoleAvailability{{
+				EmployeeID: definition.EmployeeID,
+				Detail:     "Employee readiness: " + err.Error(),
+			}}, nil
+		}
+		record, err := s.employees.Get(definition.EmployeeID)
+		if err != nil {
+			return nil, err
+		}
+		selection := record.Employee.DefaultSelection
+		detail := "Employee assignment ready"
+		if !report.Ready {
+			detail = "Employee readiness checks failed"
+		}
+		return []loop.RoleAvailability{{
+			Company: selection.Company, Access: selection.Access, Model: selection.Model,
+			CredentialConfigured: report.Ready, Detail: detail,
+			EmployeeID: definition.EmployeeID, EmployeeRevision: record.Employee.Revision,
+		}}, nil
+	}
 	selection := definition.AgentSelection
 	if selection.Agent != "team" {
 		return []loop.RoleAvailability{s.roleAvailability(ctx, "", selection.Company, selection.Access, selection.Model)}, nil

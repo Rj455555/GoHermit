@@ -17,6 +17,7 @@ import {
   getEmployeeMemoryCandidates,
   getEmployeeSkills,
   listEmployeeTasks,
+  listLoops,
   listSkills,
   mutateEmployeeLifecycle,
   refreshEmployeeKnowledge,
@@ -34,6 +35,7 @@ import type {
   Info,
   MemoryCandidate,
   MemoryFact,
+  LoopDefinition,
   SkillBinding,
   SkillCatalogItem,
 } from '../../api/types'
@@ -43,8 +45,8 @@ import { PageHeader } from '../../components/PageHeader'
 import { translatedEnum } from '../../i18n/enumLabel'
 import { useUI } from '../../state/UIContext'
 
-type Tab = 'overview' | 'skills' | 'knowledge' | 'memory' | 'projects' | 'tasks' | 'activity'
-const TABS: Tab[] = ['overview', 'skills', 'knowledge', 'memory', 'projects', 'tasks', 'activity']
+type Tab = 'overview' | 'skills' | 'knowledge' | 'memory' | 'projects' | 'loops' | 'tasks' | 'activity'
+const TABS: Tab[] = ['overview', 'skills', 'knowledge', 'memory', 'projects', 'loops', 'tasks', 'activity']
 
 function errorKey(error: unknown) {
   if (error instanceof ApiError && error.code === 'network_error') return 'mutation.offline'
@@ -71,6 +73,7 @@ export function EmployeeDetailPage() {
   const [skillConfiguration, setSkillConfiguration] = useState<Record<string, string>>({})
   const [knowledge, setKnowledge] = useState<EmployeeKnowledge | null>(null)
   const [memory, setMemory] = useState<{ facts: MemoryFact[]; candidates: MemoryCandidate[] } | null>(null)
+  const [loops, setLoops] = useState<LoopDefinition[] | null>(null)
   const [tasks, setTasks] = useState<EmployeeTask[] | null>(null)
   const [activity, setActivity] = useState<EmployeeActivity | null>(null)
   const [dryRun, setDryRun] = useState<EmployeeDryRun | null>(null)
@@ -108,6 +111,7 @@ export function EmployeeDetailPage() {
     setSkills(null)
     setKnowledge(null)
     setMemory(null)
+    setLoops(null)
     setTasks(null)
     setActivity(null)
     setDryRun(null)
@@ -150,6 +154,10 @@ export function EmployeeDetailPage() {
       ]).then(([facts, candidates]) => apply(setMemory)({
         facts: facts.facts, candidates: candidates.candidates,
       })).catch(() => undefined)
+    } else if (tab === 'loops') {
+      void listLoops({ signal: controller.signal })
+        .then((value) => apply(setLoops)(value.loops.filter((item) => item.employee_id === employeeId)))
+        .catch(() => undefined)
     } else if (tab === 'tasks') {
       void listEmployeeTasks(employeeId, { limit: 100 }, { signal: controller.signal })
         .then((value) => apply(setTasks)(value.tasks)).catch(() => undefined)
@@ -426,6 +434,39 @@ export function EmployeeDetailPage() {
         <section className="projection-card">
           {record.project_bindings.map((binding, index) => <fieldset key={binding.id}><legend>{binding.label}</legend><p>{binding.workspace_fingerprint}</p><label><input type="checkbox" disabled={archived} checked={binding.read_allowed} onChange={(event) => setRecord({ ...record, project_bindings: record.project_bindings.map((item, itemIndex) => itemIndex === index ? { ...item, read_allowed: event.target.checked } : item) })} />{t('employees.readAllowed')}</label><label><input type="checkbox" disabled={archived} checked={binding.mutation_allowed} onChange={(event) => setRecord({ ...record, project_bindings: record.project_bindings.map((item, itemIndex) => itemIndex === index ? { ...item, mutation_allowed: event.target.checked } : item) })} />{t('employees.mutationAllowed')}</label><label><input type="checkbox" disabled={archived} checked={binding.network_allowed} onChange={(event) => setRecord({ ...record, project_bindings: record.project_bindings.map((item, itemIndex) => itemIndex === index ? { ...item, network_allowed: event.target.checked } : item) })} />{t('employees.networkAllowed')}</label><p>{t('employees.capabilities')}: {binding.allowed_tool_capabilities.join(', ')}</p><p>{t('employees.budgetOverride')}: {binding.budget_override ? `${binding.budget_override.max_model_calls}/${binding.budget_override.max_tokens}/${binding.budget_override.timeout_seconds}s` : t('employees.employeeDefault')}</p></fieldset>)}
           {!archived ? <button type="button" disabled={!canMutate} onClick={() => void saveEmployee()}>{t('employees.save')}</button> : null}
+        </section>
+      ) : null}
+
+      {tab === 'loops' ? (
+        <section className="projection-card">
+          <div className="page-header">
+            <div>
+              <span className="loop-kicker">LOOP.md</span>
+              <h2>{t('employees.tabs.loops')}</h2>
+              <p>{t('loops.heroDescription')}</p>
+            </div>
+            {!archived ? <Link className="button button--primary" to="/loops">{t('loops.newLoop')}</Link> : null}
+          </div>
+          {loops === null ? <p role="status">{t('common.loading')}</p> : loops.length ? (
+            <div className="loop-card-grid">
+              {loops.map((item) => (
+                <article className="loop-card" key={item.id}>
+                  <div className="loop-card__topline">
+                    <span className="loop-pill">{item.schedule.kind === 'daily' ? t('loops.daily') : t('loops.manual')}</span>
+                    <span>{item.enabled ? t('loops.enabled') : t('loops.disabled')}</span>
+                  </div>
+                  <h2><Link to={`/loops/${encodeURIComponent(item.id)}`}>{item.name}</Link></h2>
+                  <p>{item.contract.goal}</p>
+                  <dl className="loop-card__facts">
+                    <div><dt>{t('loops.when')}</dt><dd>{item.schedule.kind === 'daily' ? item.schedule.local_time : t('loops.manual')}</dd></div>
+                    <div><dt>{t('loops.does')}</dt><dd>{item.contract.sop[0]}</dd></div>
+                    <div><dt>{t('loops.youGet')}</dt><dd>{item.contract.definition_of_done[0] ?? t('loops.verifiedReport')}</dd></div>
+                  </dl>
+                  <Link className="loop-card__action" to={`/loops/${encodeURIComponent(item.id)}`}>{t('loops.openLoop')} →</Link>
+                </article>
+              ))}
+            </div>
+          ) : <p>{t('loops.noRuns')}</p>}
         </section>
       ) : null}
 

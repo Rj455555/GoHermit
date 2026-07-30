@@ -1,6 +1,6 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,6 +12,7 @@ import { LoopDetailPage, LoopInvocationPage, LoopsPage } from './LoopsPage'
 const api = vi.hoisted(() => ({
   listLoops: vi.fn(),
   getLoop: vi.fn(),
+  getLoopRuntime: vi.fn(),
   createLoop: vi.fn(),
   updateLoop: vi.fn(),
   importLoop: vi.fn(),
@@ -51,6 +52,14 @@ const definition = {
   schema_version: 1,
   name: 'Daily review',
   description: '',
+  contract: {
+    goal: 'Review the repository.',
+    boundaries: ['Do not publish without approval.'],
+    sop: ['Inspect changes.', 'Run verification.', 'Write a report.'],
+    definition_of_done: ['A verified report is available.'],
+    stop_conditions: ['Stop when credentials are unavailable.'],
+  },
+  schedule: { kind: 'manual', local_time: '', timezone: '' },
   workspace_identity: '/workspace/gohermit',
   enabled: true,
   task_source: { type: 'fixed_prompt', prompt: 'Review the repository.' },
@@ -141,6 +150,15 @@ beforeEach(() => {
   void i18n.changeLanguage('en-US')
   api.listLoops.mockResolvedValue({ loops: [definition] })
   api.getLoop.mockResolvedValue(definition)
+  api.getLoopRuntime.mockResolvedValue({
+    schema_version: 1,
+    loop_id: definition.id,
+    definition_revision: definition.revision,
+    consecutive_failures: 0,
+    total_runs: 1,
+    successful_runs: 1,
+    updated_at: now,
+  })
   api.listLoopInvocations.mockResolvedValue({ invocations: [invocation], limit: 50 })
   api.getLoopInvocation.mockResolvedValue(invocation)
   api.getInfo.mockResolvedValue({
@@ -224,15 +242,51 @@ beforeEach(() => {
 })
 
 describe('Loops Phase 4 pages', () => {
+  it('presents Employee loops as contract cards and creates one from the short path', async () => {
+    const user = userEvent.setup()
+    api.createLoop.mockImplementation((next: LoopDefinition) => Promise.resolve({
+      ...next,
+      revision: 1,
+      created_at: now,
+      updated_at: now,
+    }))
+    renderLoops('/loops')
+
+    expect(await screen.findByRole('heading', {
+      name: 'What should your Employees do when they wake up?',
+    })).toBeVisible()
+    expect(screen.getByText('When')).toBeVisible()
+    const quickCreate = screen.getByRole('heading', {
+      name: 'Describe the recurring job for this Employee',
+    }).closest('section')
+    if (!quickCreate) throw new Error('quick create section missing')
+    await user.selectOptions(within(quickCreate).getByLabelText('Employee'), employee.id)
+    await user.type(within(quickCreate).getAllByLabelText('Name')[0]!, 'Knowledge archive')
+    await user.type(within(quickCreate).getByLabelText('Goal'), 'Archive new private knowledge with provenance.')
+    await user.click(within(quickCreate).getByRole('button', { name: 'Create and configure' }))
+
+    await waitFor(() => expect(api.createLoop).toHaveBeenCalledOnce())
+    const [created] = api.createLoop.mock.calls[0] as unknown as [LoopDefinition]
+    expect(created.employee_id).toBe(employee.id)
+    expect(created.name).toBe('Knowledge archive')
+    expect(created.contract.goal).toBe('Archive new private knowledge with provenance.')
+    expect(created.schedule).toEqual({ kind: 'manual', local_time: '', timezone: '' })
+    expect(created.task_source).toEqual({
+      type: 'fixed_prompt',
+      prompt: 'Archive new private knowledge with provenance.',
+    })
+  })
+
   it('restores a Definition from the URL and saves with its expected revision', async () => {
     const user = userEvent.setup()
     api.updateLoop.mockResolvedValue({ ...definition, revision: 3 })
     renderLoops('/loops/daily-review')
 
+    await user.click(await screen.findByText('Advanced settings'))
     const name = await screen.findByDisplayValue('Daily review')
     await user.clear(name)
     await user.type(name, 'Daily review updated')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(screen.getByRole('button', { name: 'Save contract' }))
     await waitFor(() => expect(api.updateLoop).toHaveBeenCalledWith(
       definition.id,
       expect.objectContaining({ revision: 2 }),
@@ -252,6 +306,7 @@ describe('Loops Phase 4 pages', () => {
     api.updateLoop.mockImplementation((_id: string, next: LoopDefinition) => Promise.resolve(next))
     renderLoops('/loops/daily-review')
 
+    await user.click(await screen.findByText('Advanced settings'))
     expect(await screen.findByRole('heading', { name: 'Verification checks' })).toBeVisible()
     expect(screen.getByLabelText('Command argument 4')).toHaveValue('Test Name')
     fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Verified daily review' } })
@@ -269,7 +324,7 @@ describe('Loops Phase 4 pages', () => {
     fireEvent.change(screen.getByLabelText('Maximum tokens'), { target: { value: '180000' } })
     fireEvent.change(screen.getByLabelText('Timeout (seconds)'), { target: { value: '1800' } })
     await user.selectOptions(screen.getByLabelText('Plan mode'), 'auto')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(screen.getByRole('button', { name: 'Save contract' }))
 
     await waitFor(() => expect(api.updateLoop).toHaveBeenCalled())
     const [savedId, savedDefinition] = api.updateLoop.mock.calls[0] as unknown as [
@@ -313,7 +368,8 @@ describe('Loops Phase 4 pages', () => {
     renderLoops('/loops/daily-review')
 
     await screen.findByRole('heading', { name: definition.name })
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(screen.getByText('Advanced settings'))
+    await user.click(screen.getByRole('button', { name: 'Save contract' }))
     await user.click(screen.getByRole('button', { name: 'Go second loop' }))
     expect(await screen.findByRole('heading', { name: 'Second loop' })).toBeVisible()
 
@@ -326,6 +382,7 @@ describe('Loops Phase 4 pages', () => {
     const user = userEvent.setup()
     renderLoops('/loops/daily-review')
 
+    await user.click(await screen.findByText('Advanced settings'))
     expect(await screen.findByRole('heading', { name: 'Team roles' })).toBeVisible()
     expect(screen.queryByRole('textbox', { name: 'Team' })).not.toBeInTheDocument()
     expect(screen.getByTestId('team-role-builder')).toHaveValue(employee.id)
