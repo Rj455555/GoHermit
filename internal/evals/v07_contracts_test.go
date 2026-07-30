@@ -320,15 +320,13 @@ func TestV07RegressionCoverageManifest(t *testing.T) {
 		})
 	}
 	for path, fragments := range map[string][]string{
-		"tests/e2e/tasks.spec.ts": {
-			"tasks require explicit Start",
-			"task Session SSE resumes by sequence",
+		"tests/e2e-react/phase4.spec.ts": {
+			"nine-step Employee wizard persists exact configuration and uses real Dry Run",
+			"queued Task requires explicit Prepare then Start and restores through history",
+			"Loop Definition, Team, Dry Run, and Invocation use structured authoritative projections",
 		},
-		"tests/e2e/loops-workbench.spec.ts": {
-			"maps a Team Role to an exact active Employee",
-		},
-		"tests/e2e/employees.spec.ts": {
-			"employee wizard pins the complete Skill identity",
+		"tests/e2e-react/phase3.spec.ts": {
+			"refresh resumes the Session high-water without creating Run-scoped EventSources",
 		},
 	} {
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
@@ -339,6 +337,111 @@ func TestV07RegressionCoverageManifest(t *testing.T) {
 			if !strings.Contains(string(raw), fragment) {
 				t.Errorf("%s no longer covers %q", path, fragment)
 			}
+		}
+	}
+}
+
+func TestDockerBuildContextUsesExplicitAllowlist(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	dockerfileBytes, err := os.ReadFile(filepath.Join(root, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := string(dockerfileBytes)
+	for lineNumber, line := range strings.Split(dockerfile, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.EqualFold(fields[0], "COPY") && fields[1] == "." {
+			t.Fatalf("Dockerfile line %d broadly copies the repository: %s", lineNumber+1, line)
+		}
+	}
+	for _, required := range []string{
+		"COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./",
+		"COPY web/package.json web/package.json",
+		"COPY web web",
+		"COPY go.mod go.sum ./",
+		"COPY cmd cmd",
+		"COPY internal internal",
+		"COPY protocol protocol",
+	} {
+		if !strings.Contains(dockerfile, required) {
+			t.Errorf("Dockerfile is missing explicit build input %q", required)
+		}
+	}
+
+	ignoreBytes, err := os.ReadFile(filepath.Join(root, ".dockerignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignored := make(map[string]bool)
+	for _, line := range strings.Split(string(ignoreBytes), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			ignored[line] = true
+		}
+	}
+	for _, required := range []string{
+		".claude",
+		".codegraph",
+		".cursor",
+		".gemini",
+		".mcp.json",
+		".gohermit",
+		"sandbox",
+		"node_modules",
+		"**/node_modules",
+		"coverage",
+		"**/coverage",
+		"playwright-report",
+		"test-results",
+		".env",
+		".env.*",
+		"**/.env",
+		"**/.env.*",
+		"*.pem",
+		"**/*.pem",
+		"*.key",
+		"**/*.key",
+		"*.p12",
+		"**/*.p12",
+		"credentials.json",
+		"**/credentials.json",
+	} {
+		if !ignored[required] {
+			t.Errorf(".dockerignore is missing %q", required)
+		}
+	}
+}
+
+func TestDockerAcceptanceUsesScopedCleanup(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	scriptBytes, err := os.ReadFile(filepath.Join(root, "internal", "evals", "docker_acceptance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(scriptBytes)
+	for _, required := range []string{
+		`trap cleanup EXIT`,
+		`trap 'exit 130' INT`,
+		`trap 'exit 143' TERM`,
+		`down --remove-orphans --rmi local`,
+		`docker image rm "${build_audit_image}"`,
+		`GOHERMIT_ACCEPTANCE_INJECT_FAILURE_AFTER_BUILD_AUDIT`,
+		`kill -TERM "$$"`,
+		`gohermit-phase5-acceptance-`,
+		`-name '.env'`,
+		`-name '.env.*'`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("Docker acceptance is missing scoped cleanup contract %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"docker builder prune",
+		"docker system prune",
+		"docker image prune",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("Docker acceptance contains global cleanup %q", forbidden)
 		}
 	}
 }

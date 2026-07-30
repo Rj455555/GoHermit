@@ -3,11 +3,14 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,39 +45,186 @@ func testServer(t *testing.T) *Server {
 	return server
 }
 
-func TestPhase8AssetsAndNavigationAreServed(t *testing.T) {
+func TestReactAssetsAndDeclaredRoutesAreServed(t *testing.T) {
 	handler := testServer(t).Handler()
-	tests := []struct {
-		path     string
-		contains []string
-	}{
-		{path: "/", contains: []string{
-			`data-testid="nav-dashboard"`,
-			`data-testid="nav-employees"`,
-			`data-testid="nav-employee-tasks"`,
-			`data-testid="nav-agent"`,
-			`data-testid="nav-loops"`,
-			`data-testid="nav-settings"`,
-			`<script src="/employees.js" defer></script>`,
-			`<script src="/tasks.js" defer></script>`,
-		}},
-		{path: "/employees.js", contains: []string{"loadEmployees", "employeeCreatePayload", "/api/employees"}},
-		{path: "/tasks.js", contains: []string{"loadEmployeeTaskWorkbench", "openEmployeeTask", "/api/sessions/"}},
+
+	rootRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootResponse := httptest.NewRecorder()
+	handler.ServeHTTP(rootResponse, rootRequest)
+	if rootResponse.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("GET / status = %d, want 307", rootResponse.Code)
 	}
-	for _, test := range tests {
-		t.Run(test.path, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+	if location := rootResponse.Header().Get("Location"); location != "/dashboard" {
+		t.Fatalf("GET / Location = %q, want /dashboard", location)
+	}
+
+	for _, path := range []string{
+		"/dashboard",
+		"/employees",
+		"/employees/employee-ada",
+		"/employees/employee.v2",
+		"/employees/_employee",
+		"/employees/-employee",
+		"/employees/.employee",
+		"/tasks",
+		"/tasks/task-1",
+		"/agent",
+		"/agent/sessions/session-1",
+		"/loops",
+		"/loops/loop-1",
+		"/loops/release.v2",
+		"/loops/loop-1/invocations/invocation-1",
+		"/settings",
+	} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			if response.Code != http.StatusOK {
-				t.Fatalf("GET %s status = %d, body = %s", test.path, response.Code, response.Body.String())
+				t.Fatalf("GET %s status = %d, body = %s", path, response.Code, response.Body.String())
 			}
-			for _, expected := range test.contains {
-				if !strings.Contains(response.Body.String(), expected) {
-					t.Errorf("GET %s response does not contain %q", test.path, expected)
-				}
+			if contentType := response.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+				t.Fatalf("GET %s Content-Type = %q, want text/html", path, contentType)
+			}
+			if !strings.Contains(response.Body.String(), `<div id="root"></div>`) {
+				t.Fatalf("GET %s did not return the embedded React index", path)
 			}
 		})
+	}
+
+	index, err := assets.ReadFile("assets/dist/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := regexp.MustCompile(`src="(/assets/[^"]+\.js)"`).FindSubmatch(index)
+	if len(reference) != 2 {
+		t.Fatalf("React index has no hashed JS reference: %q", index)
+	}
+	request := httptest.NewRequest(http.MethodGet, string(reference[1]), nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d", reference[1], response.Code)
+	}
+	if contentType := response.Header().Get("Content-Type"); !strings.Contains(contentType, "javascript") {
+		t.Fatalf("GET %s Content-Type = %q, want JavaScript", reference[1], contentType)
+	}
+}
+
+func TestSPAFallbackFailsClosed(t *testing.T) {
+	handler := testServer(t).Handler()
+	for _, path := range []string{
+		"/unknown",
+		"/employees/employee-ada/extra",
+		"/tasks/task-1/extra",
+		"/loops/loop-1/invocations/invocation-1/extra",
+		"/assets/missing.js",
+		"/employees.js",
+		"/dist",
+		"/dist/index.html",
+		"/api",
+		"/api/",
+		"/api/unknown",
+		"/../dashboard",
+		"/%2e%2e/dashboard",
+		"/employees%2femployee-ada",
+		"/employees%5cemployee-ada",
+	} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("GET %s status = %d, want 404; body = %s", path, response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), `<div id="root"></div>`) {
+				t.Fatalf("GET %s returned React HTML", path)
+			}
+		})
+	}
+}
+
+func TestReactDistIsEmbeddedWithHashedAssets(t *testing.T) {
+	index, err := assets.ReadFile("assets/dist/index.html")
+	if err != nil {
+		t.Fatalf("read embedded React index: %v", err)
+	}
+
+	references := regexp.MustCompile(`(?:src|href)="(/assets/[^"]+-[A-Za-z0-9_-]{8,}\.(?:js|css))"`).FindAllSubmatch(index, -1)
+	if len(references) < 2 {
+		t.Fatalf("React index must reference content-hashed JS and CSS assets, got %q", index)
+	}
+
+	foundJS, foundCSS := false, false
+	generated := [][]byte{index}
+	for _, match := range references {
+		reference := string(match[1])
+		switch {
+		case strings.HasSuffix(reference, ".js"):
+			foundJS = true
+		case strings.HasSuffix(reference, ".css"):
+			foundCSS = true
+		}
+		content, readErr := assets.ReadFile("assets/dist" + reference)
+		if readErr != nil {
+			t.Fatalf("read embedded React asset %q: %v", reference, readErr)
+		}
+		if len(content) == 0 {
+			t.Fatalf("embedded React asset %q is empty", reference)
+		}
+		generated = append(generated, content)
+	}
+	if !foundJS || !foundCSS {
+		t.Fatalf("React index hashed assets: found JS=%t CSS=%t", foundJS, foundCSS)
+	}
+
+	machinePath := regexp.MustCompile(`(?i)(?:/Users/[^/\s]+/|/home/[^/\s]+/|[a-z]:\\Users\\[^\\\s]+\\)`)
+	for _, content := range generated {
+		if match := machinePath.Find(content); match != nil {
+			t.Fatalf("embedded React output contains a machine path: %q", match)
+		}
+	}
+
+	if _, err = assets.ReadFile("assets/dist/assets/phase1-missing.js"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing embedded React asset error = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestPhase5EmbeddedFSContainsOnlyReactDistribution(t *testing.T) {
+	entries, err := fs.ReadDir(assets, "assets")
+	if err != nil {
+		t.Fatalf("read embedded asset root: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "dist" || !entries[0].IsDir() {
+		t.Fatalf("embedded asset root = %#v, want only dist/", entries)
+	}
+
+	for _, legacyPath := range []string{
+		"assets/index.html",
+		"assets/app.js",
+		"assets/employees.js",
+		"assets/tasks.js",
+		"assets/loops.js",
+		"assets/styles.css",
+	} {
+		if _, readErr := assets.ReadFile(legacyPath); !errors.Is(readErr, fs.ErrNotExist) {
+			t.Fatalf("legacy asset %q remains embedded: %v", legacyPath, readErr)
+		}
+	}
+}
+
+func TestRemovedLegacyAndDistAliasesAreNotHTTPAccessible(t *testing.T) {
+	handler := testServer(t).Handler()
+	for _, path := range []string{
+		"/dist", "/dist/", "/dist/index.html",
+		"/index.html", "/app.js", "/employees.js", "/tasks.js", "/loops.js", "/styles.css",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", path, response.Code)
+		}
 	}
 }
 
@@ -359,7 +509,7 @@ func TestStaticIndexHasSecurityHeaders(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "GoHermit") || !strings.Contains(response.Body.String(), "nav-settings") {
+	if response.Code != http.StatusTemporaryRedirect || response.Header().Get("Location") != "/dashboard" {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("X-Frame-Options") != "DENY" {

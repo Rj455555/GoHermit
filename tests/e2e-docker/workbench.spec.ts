@@ -1,0 +1,55 @@
+import { expect, test } from '@playwright/test'
+
+const declaredRoutes = [
+  '/dashboard',
+  '/employees',
+  '/employees/employee-docker',
+  '/tasks',
+  '/agent',
+  '/loops',
+  '/loops/loop-docker',
+  '/settings',
+]
+
+test('container serves the localized React workbench on every declared route', async ({ page }) => {
+  for (const route of declaredRoutes) {
+    await page.goto(route)
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
+    await expect(page.locator('main')).not.toBeEmpty()
+    await expect(page.getByTestId('placeholder-page')).toHaveCount(0)
+    await page.reload()
+    await expect(page.locator('main')).not.toBeEmpty()
+  }
+
+  await page.getByRole('button', { name: /English/u }).click()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en-US')
+  await page.getByRole('button', { name: /中文/u }).click()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
+})
+
+test('container navigation restores URL state through browser history', async ({ page }) => {
+  await page.goto('/dashboard')
+  await page.locator('a[href="/employees"]').click()
+  await page.locator('a[href="/tasks"]').click()
+  await page.goBack()
+  await expect(page).toHaveURL(/\/employees$/)
+  await page.goForward()
+  await expect(page).toHaveURL(/\/tasks$/)
+})
+
+test('container keeps API and path failures outside the SPA boundary', async ({ request }) => {
+  for (const path of [
+    '/api',
+    '/api/',
+    '/api/unknown',
+    '/unknown',
+    '/employees/employee-docker/extra',
+    '/assets/missing.js',
+    '/dist/index.html',
+  ]) {
+    const response = await request.get(path, { maxRedirects: 0 })
+    expect(response.status(), path).toBe(404)
+    expect(response.headers()['content-type'] ?? '', path).not.toContain('text/html')
+    expect(await response.text(), path).not.toContain('<div id="root"></div>')
+  }
+})
