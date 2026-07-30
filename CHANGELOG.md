@@ -2,6 +2,10 @@
 
 ## 0.7.0-dev
 
+- Fixed successful Employee creation being reported as failed by aligning the
+  React Employee-record decoder with Go's canonical `omitempty` response:
+  absent empty slices now decode as empty collections and `project_count` is
+  derived from the returned ProjectBindings.
 - Added a name-only Employee quick-create path that persists immediately with
   the current ready model, current Workspace, no Skills, Knowledge, or Memory,
   and a conservative read-only/no-network policy. The full nine-step setup

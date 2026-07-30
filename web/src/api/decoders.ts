@@ -819,7 +819,7 @@ function decodeProjectBinding(value: unknown) {
     read_allowed: boolean(source.read_allowed),
     mutation_allowed: boolean(source.mutation_allowed),
     allowed_tool_capabilities: array(
-      source.allowed_tool_capabilities,
+      source.allowed_tool_capabilities === undefined ? [] : source.allowed_tool_capabilities,
       (item) => string(item, 256),
       MAX_SMALL_COLLECTION,
     ),
@@ -834,7 +834,17 @@ function decodeProjectBinding(value: unknown) {
 
 function decodeEmployeeValue(value: unknown): Employee {
   const source = object(value)
-  const summary = decodeEmployeeSummaryValue(source)
+  const summary: EmployeeSummary = {
+    id: id(source.id),
+    revision: integer(source.revision),
+    state: enumeration<EmployeeState>(source.state, EMPLOYEE_STATES),
+    name: string(source.name, 8192),
+    job_title: string(source.job_title, 8192),
+    agent_profile: id(source.agent_profile),
+    project_count: source.project_count === undefined ? 0 : integer(source.project_count),
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
+  }
   const avatar = object(source.avatar)
   const selection = object(source.default_selection)
   const permission = object(source.permission_policy)
@@ -849,9 +859,13 @@ function decodeEmployeeValue(value: unknown): Employee {
       value: string(avatar.value, 64),
     },
     charter: string(source.charter),
-    responsibilities: array(source.responsibilities, (item) => string(item), MAX_SMALL_COLLECTION),
+    responsibilities: array(
+      source.responsibilities === undefined ? [] : source.responsibilities,
+      (item) => string(item),
+      MAX_SMALL_COLLECTION,
+    ),
     behavior_boundaries: array(
-      source.behavior_boundaries,
+      source.behavior_boundaries === undefined ? [] : source.behavior_boundaries,
       (item) => string(item),
       MAX_SMALL_COLLECTION,
     ),
@@ -860,8 +874,16 @@ function decodeEmployeeValue(value: unknown): Employee {
       access: id(selection.access),
       model: id(selection.model),
     },
-    skill_bindings: array(source.skill_bindings, decodeSkillBinding, MAX_SMALL_COLLECTION),
-    project_binding_ids: array(source.project_binding_ids, id, MAX_SMALL_COLLECTION),
+    skill_bindings: array(
+      source.skill_bindings === undefined ? [] : source.skill_bindings,
+      decodeSkillBinding,
+      MAX_SMALL_COLLECTION,
+    ),
+    project_binding_ids: array(
+      source.project_binding_ids === undefined ? [] : source.project_binding_ids,
+      id,
+      MAX_SMALL_COLLECTION,
+    ),
     permission_policy: {
       allowed_capabilities: array(
         permission.allowed_capabilities,
@@ -898,13 +920,15 @@ export function decodeEmployeeList(value: unknown): {
 
 export function decodeEmployeeRecord(value: unknown): EmployeeRecord {
   const source = object(value)
+  const projectBindings = array(
+    source.project_bindings,
+    decodeProjectBinding,
+    MAX_SMALL_COLLECTION,
+  )
+  const employee = decodeEmployeeValue(source.employee)
   return {
-    employee: decodeEmployeeValue(source.employee),
-    project_bindings: array(
-      source.project_bindings,
-      decodeProjectBinding,
-      MAX_SMALL_COLLECTION,
-    ),
+    employee: { ...employee, project_count: projectBindings.length },
+    project_bindings: projectBindings,
   }
 }
 

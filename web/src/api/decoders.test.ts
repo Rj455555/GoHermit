@@ -298,6 +298,64 @@ describe('endpoint decoders', () => {
     }).roles.builder?.employee_id).toBe('employee-builder')
   })
 
+  it('decodes the canonical Go Employee record when empty slices are omitted', () => {
+    const record = decodeEmployeeRecord({
+      employee: {
+        id: 'employee-quick',
+        schema_version: 1,
+        revision: 1,
+        state: 'active',
+        name: '档案管理员',
+        avatar: { kind: 'initials', value: '档' },
+        job_title: '岗位待配置',
+        charter: '角色细节尚未配置。',
+        default_selection: {
+          company: 'openai',
+          access: 'openai-codex',
+          model: 'gpt-5.6-sol',
+        },
+        agent_profile: 'team',
+        project_binding_ids: ['project-employee-quick'],
+        permission_policy: {
+          allowed_capabilities: ['read'],
+          network_allowed: false,
+        },
+        budget_policy: {
+          max_model_calls: 8,
+          max_tokens: 32_000,
+          timeout_seconds: 1_200,
+        },
+        concurrency_policy: { max_running_tasks: 1 },
+        memory_policy: {
+          candidate_generation: false,
+          promotion: 'disabled',
+          max_context_facts: 0,
+          max_context_bytes: 0,
+        },
+        created_at: now,
+        updated_at: now,
+      },
+      project_bindings: [{
+        id: 'project-employee-quick',
+        employee_id: 'employee-quick',
+        label: 'workspace',
+        workspace_real_path: '/workspace',
+        workspace_fingerprint: 'fingerprint',
+        read_allowed: true,
+        mutation_allowed: false,
+        allowed_tool_capabilities: ['read'],
+        network_allowed: false,
+        created_at: now,
+        updated_at: now,
+      }],
+    })
+
+    expect(record.employee.project_count).toBe(1)
+    expect(record.employee.responsibilities).toEqual([])
+    expect(record.employee.behavior_boundaries).toEqual([])
+    expect(record.employee.skill_bindings).toEqual([])
+  })
+
   it('defaults a missing next_event_sequence to zero', () => {
     expect(
       decodeSessionDetail({ session: session(), messages: [] }).session.next_event_sequence,
