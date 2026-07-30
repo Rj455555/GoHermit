@@ -857,9 +857,9 @@ Required SSE connection/sequence tests:
 | Plan Gate | Owner reapproval at `c4074a2963e0b210804d08b2bfcab5b1e010762f` | complete | SSE ownership, SPA fallback, CodeGraph, temporary Embed boundary, and toolchain plan approved |
 | Phase 1 | `APPROVAL: REACT_PHASE_1_APPROVED` at `4f06a1e970923ba9c8b981c5fb151ef324f56e65` | complete; approved | minimal React/TypeScript/Vite workspace, committed deterministic Embed artifact, old UI boundary, and validations below |
 | Phase 2 | `APPROVAL: REACT_PHASE_2_REAPPROVED` at `019c6e70df32b4116f92d5007515def6f53421a8` | complete; approved | BrowserRouter shell, zh-CN/en-US i18n, corrected action-scoped Session sidebar focus, isolated ConfirmDialog, shared feedback primitives, deterministic Embed artifact, and independent React E2E |
-| Phase 3 | `AUTHORIZED_PHASE: PHASE_3_ONLY` at `019c6e70df32b4116f92d5007515def6f53421a8` | `SECOND_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | typed API/DTO boundary, corrected Active Run mutation ownership, visible mutation failures, Session-owned SSE recovery, delta-free bounded Activity projection, consistent fatal recovery state, localized runtime metadata, bounded API/history/streaming data, deterministic Embed artifact, and Phase 3 browser coverage |
+| Phase 3 | `AUTHORIZED_PHASE: PHASE_3_ONLY` at `019c6e70df32b4116f92d5007515def6f53421a8` | complete; approved | typed API/DTO boundary, corrected Active Run mutation ownership, visible mutation failures, Session-owned SSE recovery, delta-free bounded Activity projection, consistent fatal recovery state, localized runtime metadata, bounded API/history/streaming data, deterministic Embed artifact, and Phase 3 browser coverage |
 | Phase 4 | `REACT_PHASE_4_SECOND_GATE_APPROVED` at `6ed91d5e6ab54d15d4be02a59c3eefc8a1da0ec9` | complete; approved | server-validated wizard Skill bindings/readiness, exact Loop argv editing, Store-aligned Employee routes, complete Employee settings and repair actions, confirmed destructive mutations, complete URL-owned Task filters, owner-scoped request isolation, deterministic artifacts, and fail-closed embedded React serving-root cutover |
-| Phase 5 | `REACT_PHASE_4_SECOND_GATE_APPROVED` at `6ed91d5e6ab54d15d4be02a59c3eefc8a1da0ec9`; implementation `d59a52eb784a7280fcb86232f0d0696e95836221`; security revision `c00b0e56bad30cc2bde5bb159cbd74e458460d2d`; Owner risk decision `OWNER_ACCEPTED_RISK: BROAD_GITHUB_CLASSIC_CREDENTIAL` | `FINAL_SECURITY_CLOSEOUT_COMPLETE_WAITING_FOR_OWNER` | legacy removed, one React embed tree, explicit Docker input allowlists, credential-file exclusions, scoped success/failure/signal cleanup, protected-path build-stage assertions, minimal runtime inspection, deterministic artifacts, and isolated Docker persistence acceptance |
+| Phase 5 | `REACT_PHASE_4_SECOND_GATE_APPROVED` at `6ed91d5e6ab54d15d4be02a59c3eefc8a1da0ec9`; implementation `d59a52eb784a7280fcb86232f0d0696e95836221`; security revision `c00b0e56bad30cc2bde5bb159cbd74e458460d2d`; final approval `REACT_PHASE_5_FINAL_SECURITY_APPROVED` at `3635df812cf4cfc4791ae9671eca3acfda511d75`; Owner risk decision `OWNER_ACCEPTED_RISK: BROAD_GITHUB_CLASSIC_CREDENTIAL` | `FINAL_SECURITY_CLOSEOUT_APPROVED` | legacy removed, one React embed tree, explicit Docker input allowlists, credential-file exclusions, scoped success/failure/signal cleanup, protected-path build-stage assertions, minimal runtime inspection, deterministic artifacts, and isolated Docker persistence acceptance |
 
 ### 11.1 Phase 1 execution evidence
 
@@ -1050,3 +1050,21 @@ Required SSE connection/sequence tests:
 `Phase 5: FINAL_SECURITY_CLOSEOUT_COMPLETE_WAITING_FOR_OWNER`
 
 `STATUS: WAITING_FOR_REACT_PHASE_5_FINAL_SECURITY_APPROVAL`
+
+### 11.14 Phase 5 Final Security Closeout Owner approval
+
+- Approval: `REACT_PHASE_5_FINAL_SECURITY_APPROVED`.
+- Approved Head: `3635df812cf4cfc4791ae9671eca3acfda511d75`.
+- Owner risk decision: `OWNER_ACCEPTED_RISK: BROAD_GITHUB_CLASSIC_CREDENTIAL`.
+- Ledger consistency: Phase 3 is complete and approved; its historical implementation evidence and commit references remain unchanged.
+- Accepted local environment residue: the builder cache from older broad-context builds remains present. The following historical acceptance images also remain present:
+  - `gohermit-phase5-acceptance-23839-gohermit-web:latest`
+  - `gohermit-phase5-acceptance-24034-gohermit-web:latest`
+  - `gohermit-phase5-acceptance-24265-gohermit-web:latest`
+  - `gohermit-phase5-acceptance-24681-gohermit-web:latest`
+  - `gohermit-phase5-acceptance-32962-gohermit-web:latest`
+- These historical images are not newly produced leakage from the Final Security Closeout validation path and do not block the code merge.
+- This approval does not authorize deleting those images or running builder prune, image prune, system prune, or any other global cleanup.
+- Authorized next action: create and validate one Ledger-only commit, then mark Draft PR #44 ready and squash merge only after the new Head's Push and PR CI are fully successful. Deployment, service replacement, tags, releases, packages, image publication, remote branch deletion, and next-version work remain unauthorized.
+
+`Phase 5: FINAL_SECURITY_CLOSEOUT_APPROVED`
