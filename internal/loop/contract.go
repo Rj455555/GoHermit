@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	_ "time/tzdata" // Keep IANA schedule validation working in minimal containers.
 )
 
 const (
