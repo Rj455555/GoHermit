@@ -136,6 +136,13 @@ contains Git and CA certificates required by GoHermit, but no Go, Node, npm,
 pnpm, Corepack, cache, `node_modules`, package manifest, lockfile, or frontend
 source.
 
+The Docker build context is deny-by-default. `.dockerignore` re-includes only
+the frontend manifests and `web/` source plus `go.mod`, `go.sum`, `cmd/`,
+`internal/`, and `protocol/`. The Go stage copies those roots explicitly; it
+never uses a repository-wide `COPY`. Private workspace tool state such as
+`.claude/`, `.codegraph/`, `.cursor/`, `.gemini/`, `.mcp.json`, `.gohermit/`,
+and `sandbox/` is excluded before the context is sent to the builder.
+
 ## Testing and debugging
 
 - `pnpm test` and `pnpm test:coverage`: Vitest and Testing Library.

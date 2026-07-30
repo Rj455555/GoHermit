@@ -27,7 +27,9 @@ FROM ${GO_IMAGE} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
+COPY cmd cmd
+COPY internal internal
+COPY protocol protocol
 RUN rm -rf internal/web/assets/dist
 COPY --from=frontend /src/internal/web/assets/dist internal/web/assets/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/hermit ./cmd/hermit && \

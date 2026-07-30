@@ -341,6 +341,65 @@ func TestV07RegressionCoverageManifest(t *testing.T) {
 	}
 }
 
+func TestDockerBuildContextUsesExplicitAllowlist(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	dockerfileBytes, err := os.ReadFile(filepath.Join(root, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := string(dockerfileBytes)
+	for lineNumber, line := range strings.Split(dockerfile, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.EqualFold(fields[0], "COPY") && fields[1] == "." {
+			t.Fatalf("Dockerfile line %d broadly copies the repository: %s", lineNumber+1, line)
+		}
+	}
+	for _, required := range []string{
+		"COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./",
+		"COPY web/package.json web/package.json",
+		"COPY web web",
+		"COPY go.mod go.sum ./",
+		"COPY cmd cmd",
+		"COPY internal internal",
+		"COPY protocol protocol",
+	} {
+		if !strings.Contains(dockerfile, required) {
+			t.Errorf("Dockerfile is missing explicit build input %q", required)
+		}
+	}
+
+	ignoreBytes, err := os.ReadFile(filepath.Join(root, ".dockerignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignored := make(map[string]bool)
+	for _, line := range strings.Split(string(ignoreBytes), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			ignored[line] = true
+		}
+	}
+	for _, required := range []string{
+		".claude",
+		".codegraph",
+		".cursor",
+		".gemini",
+		".mcp.json",
+		".gohermit",
+		"sandbox",
+		"node_modules",
+		"**/node_modules",
+		"coverage",
+		"**/coverage",
+		"playwright-report",
+		"test-results",
+	} {
+		if !ignored[required] {
+			t.Errorf(".dockerignore is missing %q", required)
+		}
+	}
+}
+
 func v07Employee(t *testing.T, employeeID, projectID, workspace string, now time.Time) (employee.Employee, employee.ProjectBinding) {
 	t.Helper()
 	value, err := employee.Create(employee.Employee{

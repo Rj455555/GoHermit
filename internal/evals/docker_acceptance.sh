@@ -16,6 +16,7 @@ base_url="http://127.0.0.1:${acceptance_port}"
 node_image="${GOHERMIT_ACCEPTANCE_NODE_IMAGE:-node:22-bookworm-slim}"
 runtime_image="${GOHERMIT_ACCEPTANCE_RUNTIME_IMAGE:-alpine/git:latest}"
 pnpm_registry="${GOHERMIT_ACCEPTANCE_PNPM_REGISTRY:-https://registry.npmjs.org}"
+build_audit_image="${project_name}-build-audit:local"
 
 cleanup() {
   docker compose --project-name "${project_name}" -f "${repository}/compose.yaml" -f "${override_file}" down --remove-orphans >/dev/null 2>&1 || true
@@ -47,6 +48,38 @@ mkdir -p "${acceptance_root}/codex" "${acceptance_root}/skills"
 compose=(docker compose --project-name "${project_name}" -f "${repository}/compose.yaml" -f "${override_file}")
 "${compose[@]}" config >"${acceptance_root}/compose.rendered.yaml"
 grep -q '127.0.0.1' "${acceptance_root}/compose.rendered.yaml"
+
+inspect_build_stage() {
+  docker build \
+    --target build \
+    --tag "${build_audit_image}" \
+    --build-arg "GO_IMAGE=${GOHERMIT_GO_IMAGE:-golang:1.26-bookworm}" \
+    --build-arg "NODE_IMAGE=${node_image}" \
+    --build-arg "PNPM_REGISTRY=${pnpm_registry}" \
+    --build-arg "RUNTIME_IMAGE=${runtime_image}" \
+    "${repository}"
+  docker run --rm --entrypoint /bin/sh "${build_audit_image}" -eu -c '
+    for required in cmd internal protocol go.mod go.sum; do
+      test -e "/src/${required}"
+    done
+    for protected in \
+      .claude \
+      .codegraph \
+      .cursor \
+      .gemini \
+      .mcp.json \
+      .gohermit \
+      sandbox
+    do
+      if test -e "/src/${protected}"; then
+        echo "protected workspace path reached Go build stage: ${protected}" >&2
+        exit 1
+      fi
+    done
+  '
+}
+
+inspect_build_stage
 "${compose[@]}" build
 "${compose[@]}" up -d
 
@@ -135,6 +168,7 @@ manifest "${acceptance_root}/workspace" >"${acceptance_root}/workspace.before"
 
 "${compose[@]}" down --remove-orphans
 "${compose[@]}" build --no-cache
+inspect_build_stage
 "${compose[@]}" up -d
 wait_for_workbench
 inspect_runtime_image
