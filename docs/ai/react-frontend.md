@@ -5,6 +5,11 @@ and embedded into the Go Web binary. This document is the entry point for Web
 architecture, routing, localization, state ownership, API/SSE boundaries,
 building, testing, and debugging.
 
+The visual source of truth is `web/DESIGN.md`. It defines the Workbench palette,
+layout density, navigation dimensions, form behavior, responsive rules, and banned
+generic dashboard patterns. Read it before changing shared CSS or introducing a new
+resource page.
+
 ## Source and serving layout
 
 ```text
@@ -101,6 +106,13 @@ cancellation, performs fatal UTF-8 decoding, validates DTOs and enums, bounds
 collections, and exposes sanitized error categories rather than raw response
 bodies. Default JSON responses are capped at 1 MiB. Exact Session detail reads
 are capped at 16 MiB, with Session record arrays independently bounded.
+
+Session list decoding intentionally accepts an entirely empty legacy
+`selection` object because older stored Sessions predate fixed provider/model
+selection. Partially populated selections remain corrupt and fail closed.
+Dashboard history and Agent Session history are supporting projections: their
+load failures must not hide authoritative `/api/info` readiness or the current
+Workspace.
 
 Mutations are not automatically retried. Conflict, offline, and generic
 failures use localized sanitized feedback. Credentials and API keys are

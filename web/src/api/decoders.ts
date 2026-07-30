@@ -354,7 +354,28 @@ export function decodeCodexLogin(value: unknown): CodexLoginSession {
 }
 
 function decodeSessionSelection(value: unknown): SessionSelection {
-  return decodeSelection(value)
+  const source = object(value)
+  const values = [
+    optionalID(source.company),
+    optionalID(source.access),
+    optionalID(source.model),
+    optionalID(source.agent),
+  ]
+  const populated = values.filter((entry) => entry !== undefined).length
+  // Sessions created before the runtime-selection contract was introduced
+  // legitimately persist an empty selection object. Keep those sessions
+  // readable without weakening validation for partially populated or malformed
+  // modern selections.
+  if (populated === 0) {
+    return { company: '', access: '', model: '', agent: '' }
+  }
+  if (populated !== values.length) fail()
+  return {
+    company: values[0] ?? '',
+    access: values[1] ?? '',
+    model: values[2] ?? '',
+    agent: values[3] ?? '',
+  }
 }
 
 function decodeSessionSummary(value: unknown): SessionSummary {

@@ -11,7 +11,7 @@ export function ErrorState({
     <section className="state-panel state-panel--error" role="alert">
       <h2>{title}</h2>
       <p>{description}</p>
-      {action}
+      {action ? <div className="state-panel__actions">{action}</div> : null}
     </section>
   )
 }

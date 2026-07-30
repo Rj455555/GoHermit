@@ -96,6 +96,7 @@ export function EmployeeWizard({ onClose, onCreated }: {
   const [postCreate, setPostCreate] = useState({ skills: 0, knowledge: 0 })
   const [skillsPersisted, setSkillsPersisted] = useState(false)
   const [knowledgePersisted, setKnowledgePersisted] = useState(false)
+  const [stepError, setStepError] = useState<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -129,10 +130,53 @@ export function EmployeeWizard({ onClose, onCreated }: {
     return () => controller.abort()
   }, [actions])
 
-  const patch = (value: Partial<Employee>) =>
+  const patch = (value: Partial<Employee>) => {
+    setStepError(null)
     setEmployee((current) => ({ ...current, ...value }))
+  }
   const lines = (value: string) =>
     value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean)
+
+  function validateStep(currentStep: number): boolean {
+    let key: string | null = null
+    if (currentStep === 0 && (
+      employee.id.trim() === ''
+      || employee.name.trim() === ''
+      || employee.job_title.trim() === ''
+    )) key = 'employees.validation.identity'
+    if (currentStep === 1 && (
+      employee.default_selection.company === ''
+      || employee.default_selection.access === ''
+      || employee.default_selection.model === ''
+      || employee.agent_profile === ''
+    )) key = 'employees.validation.runtime'
+    if (currentStep === 2 && employee.charter.trim() === '') {
+      key = 'employees.validation.charter'
+    }
+    if (currentStep === 3) {
+      try {
+        bindings()
+      } catch {
+        key = 'employees.validation.skills'
+      }
+    }
+    if (currentStep === 4 && knowledge.kind && (
+      knowledge.id.trim() === ''
+      || knowledge.title.trim() === ''
+      || knowledge.content.trim() === ''
+    )) key = 'employees.validation.knowledge'
+    if (currentStep === 6 && selectedProject === '') {
+      key = 'employees.validation.project'
+    }
+    if (currentStep === 7 && (
+      employee.permission_policy.allowed_capabilities.length === 0
+      || employee.budget_policy.max_model_calls < 1
+      || employee.budget_policy.max_tokens < 1
+      || employee.budget_policy.timeout_seconds < 1
+    )) key = 'employees.validation.policy'
+    setStepError(key)
+    return key === null
+  }
 
   function bindings(): SkillBinding[] {
     return employee.skill_bindings.map((binding) => {
@@ -241,8 +285,8 @@ export function EmployeeWizard({ onClose, onCreated }: {
     }
   }
 
-  async function prepareReview() {
-    if (busy) return
+  async function prepareReview(): Promise<boolean> {
+    if (busy) return false
     setBusy(true)
     try {
       let record = persisted
@@ -261,17 +305,20 @@ export function EmployeeWizard({ onClose, onCreated }: {
         persisted ? skillsPersisted : false,
         persisted ? knowledgePersisted : false,
       )
+      return true
     } catch (error) {
+      setStepError('employees.validation.server')
       actions.showToast({ messageKey: mutationKey(error), tone: 'error' })
+      return false
     } finally {
       setBusy(false)
     }
   }
 
   async function next() {
+    if (!validateStep(step)) return
     if (step === 7) {
-      await prepareReview()
-      setStep(8)
+      if (await prepareReview()) setStep(8)
     } else {
       setStep((current) => Math.min(8, current + 1))
     }
@@ -281,13 +328,28 @@ export function EmployeeWizard({ onClose, onCreated }: {
   const access = company?.access.find((item) => item.id === employee.default_selection.access)
 
   return (
-    <section className="projection-card" aria-label={t('employees.create')}>
-      <h2>{t('employees.create')}</h2>
+    <section className="projection-card employee-wizard" aria-label={t('employees.create')}>
+      <div className="wizard-heading">
+        <div>
+          <span className="section-kicker">{t('employees.setup')}</span>
+          <h2>{t('employees.create')}</h2>
+        </div>
+        <span>{step + 1}/{STEPS.length}</span>
+      </div>
       <p data-testid="employee-wizard-step">
         {t('employees.step', { current: step + 1, total: STEPS.length })}
         {' · '}
         {t(`employees.steps.${STEPS[step]}`)}
       </p>
+      <ol className="wizard-progress" aria-label={t('employees.progress')}>
+        {STEPS.map((value, index) => (
+          <li key={value} data-state={index < step ? 'complete' : index === step ? 'current' : 'pending'}>
+            <span>{index + 1}</span>
+            <small>{t(`employees.steps.${value}`)}</small>
+          </li>
+        ))}
+      </ol>
+      {stepError ? <p className="form-error" role="alert">{t(stepError)}</p> : null}
 
       {step === 0 ? (
         <div className="form-grid">
@@ -399,9 +461,9 @@ export function EmployeeWizard({ onClose, onCreated }: {
       ) : null}
 
       <div className="button-row">
-        <button type="button" onClick={onClose}>{t('actions.cancel')}</button>
-        {step > 0 && !persisted ? <button type="button" onClick={() => setStep((current) => current - 1)}>{t('employees.previous')}</button> : null}
-        {step < 8 ? <button type="button" disabled={busy || !catalogReady} onClick={() => void next()}>{t('employees.next')}</button> : <button type="button" disabled={busy || !persisted} onClick={() => persisted && onCreated(persisted)}>{readiness?.ready ? t('employees.openEmployee') : t('employees.openRepair')}</button>}
+        <button type="button" className="button button--secondary" onClick={onClose}>{t('actions.cancel')}</button>
+        {step > 0 && !persisted ? <button type="button" className="button button--secondary" onClick={() => { setStepError(null); setStep((current) => current - 1) }}>{t('employees.previous')}</button> : null}
+        {step < 8 ? <button type="button" className="button button--primary" disabled={busy || !catalogReady} onClick={() => void next()}>{t('employees.next')}</button> : <button type="button" className="button button--primary" disabled={busy || !persisted} onClick={() => persisted && onCreated(persisted)}>{readiness?.ready ? t('employees.openEmployee') : t('employees.openRepair')}</button>}
       </div>
     </section>
   )

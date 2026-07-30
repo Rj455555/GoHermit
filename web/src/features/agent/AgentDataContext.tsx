@@ -47,16 +47,21 @@ export function AgentDataProvider({
     const version = requestVersion.current
     setLoading(true)
     try {
-      const [nextInfo, response] = await Promise.all([
+      const [infoResult, sessionsResult] = await Promise.allSettled([
         getInfo({ signal: controller.signal }),
         listSessions({ signal: controller.signal }),
       ])
       if (controller.signal.aborted || requestVersion.current !== version) return
-      setInfo(nextInfo)
-      setSessions([...response.sessions].sort(
-        (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at),
-      ))
-      setError(false)
+      if (infoResult.status === 'fulfilled') setInfo(infoResult.value)
+      if (sessionsResult.status === 'fulfilled') {
+        setSessions([...sessionsResult.value.sessions].sort(
+          (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at),
+        ))
+      }
+      // Session history is supporting data. A corrupt legacy summary must not
+      // hide the authoritative provider/model/agent catalog required to create
+      // a new Session.
+      setError(infoResult.status === 'rejected')
     } catch {
       if (!controller.signal.aborted) setError(true)
     } finally {

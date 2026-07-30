@@ -1,4 +1,5 @@
 import { I18nextProvider } from 'react-i18next'
+import { MemoryRouter } from 'react-router-dom'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,6 +24,16 @@ describe('DashboardPage', () => {
     void i18n.changeLanguage('zh-CN')
   })
 
+  function renderDashboard() {
+    return render(
+      <I18nextProvider i18n={i18n}>
+        <MemoryRouter>
+          <DashboardPage />
+        </MemoryRouter>
+      </I18nextProvider>,
+    )
+  }
+
   it('renders real readiness, bounded invocation summaries, and active Session hints', async () => {
     api.getInfo.mockResolvedValue({
       workspace: '/workspace/gohermit',
@@ -43,16 +54,18 @@ describe('DashboardPage', () => {
       ],
     })
 
-    render(<I18nextProvider i18n={i18n}><DashboardPage /></I18nextProvider>)
+    renderDashboard()
 
     expect(await screen.findByText('/workspace/gohermit')).toBeVisible()
     expect(screen.getByText('Keep this title')).toBeVisible()
-    expect(screen.getByText('Nightly')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Nightly' })).toBeVisible()
     expect(screen.getByTestId('invocation-completed')).toHaveTextContent('1')
     expect(screen.getByTestId('invocation-failed')).toHaveTextContent('1')
-    expect(screen.getByRole('heading', { name: i18n.t('dashboard.recent') }).parentElement).toHaveTextContent('Nightly · 失败')
+    expect(screen.getByRole('heading', { name: 'Nightly' }).closest('section')).toHaveTextContent(/Nightly.*失败/u)
     await act(() => i18n.changeLanguage('en-US'))
-    await waitFor(() => expect(screen.getByRole('heading', { name: i18n.t('dashboard.recent') }).parentElement).toHaveTextContent('Nightly · Failed'))
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Nightly' }).closest('section')).toHaveTextContent(/Nightly.*Failed/u),
+    )
     expect(screen.getByText('Keep this title')).toBeVisible()
     expect(api.listLoopInvocations).toHaveBeenCalledTimes(1)
   })
@@ -71,11 +84,30 @@ describe('DashboardPage', () => {
       invocations: [{ id: 'inv-1', loop_id: 'loop-1', status: 'future_state', created_at: '2026-07-29T08:00:00Z' }],
     })
 
-    render(<I18nextProvider i18n={i18n}><DashboardPage /></I18nextProvider>)
+    renderDashboard()
 
-    await screen.findByRole('heading', { name: i18n.t('dashboard.recent') })
-    expect(screen.getByRole('heading', { name: i18n.t('dashboard.recent') }).parentElement).toHaveTextContent('Literal Loop · 未知状态')
+    await screen.findByRole('heading', { name: 'Literal Loop' })
+    expect(screen.getByRole('heading', { name: 'Literal Loop' }).closest('section')).toHaveTextContent(
+      /Literal Loop.*未知状态/u,
+    )
     expect(screen.queryByText(/invocationStatus|future_state/u)).not.toBeInTheDocument()
+  })
+
+  it('keeps the authoritative workspace visible when supporting history fails', async () => {
+    api.getInfo.mockResolvedValue({
+      workspace: '/workspace/gohermit',
+      available_companies: [],
+      auth_status: {},
+      active: false,
+    })
+    api.listLoops.mockRejectedValue(new Error('legacy loop store'))
+    api.listSessions.mockRejectedValue(new Error('legacy session summary'))
+
+    renderDashboard()
+
+    expect(await screen.findByText('/workspace/gohermit')).toBeVisible()
+    expect(screen.queryByText(i18n.t('dashboard.errorTitle'))).not.toBeInTheDocument()
+    expect(screen.getByText(i18n.t('connectivity.stale'))).toBeVisible()
   })
 
   it('aborts route-owned reads on unmount', async () => {
@@ -87,7 +119,7 @@ describe('DashboardPage', () => {
     api.listLoops.mockReturnValue(new Promise(() => {}))
     api.listSessions.mockReturnValue(new Promise(() => {}))
 
-    const view = render(<I18nextProvider i18n={i18n}><DashboardPage /></I18nextProvider>)
+    const view = renderDashboard()
     view.unmount()
 
     await waitFor(() => expect(capturedSignal?.aborted).toBe(true))

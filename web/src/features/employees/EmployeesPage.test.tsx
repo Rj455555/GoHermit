@@ -212,6 +212,20 @@ beforeEach(() => {
 })
 
 describe('Employees Phase 4 pages', () => {
+  it('validates required identity fields before advancing the creation wizard', async () => {
+    const user = userEvent.setup()
+    renderEmployees()
+
+    await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Enter an Employee ID, name, and job title to continue.',
+    )
+    expect(screen.getByTestId('employee-wizard-step')).toHaveTextContent('Step 1 of 9')
+    expect(api.createEmployee).not.toHaveBeenCalled()
+  })
+
   it('uses URL filters and bounded cursor pagination without hidden selection', async () => {
     const user = userEvent.setup()
     renderEmployees()

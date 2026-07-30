@@ -304,6 +304,33 @@ describe('endpoint decoders', () => {
     ).toBe(0)
   })
 
+  it('keeps legacy Sessions with an empty selection readable', () => {
+    const decoded = decodeSessionList({
+      sessions: [{
+        id: 'legacy-session',
+        title: 'Legacy session',
+        status: 'open',
+        updated_at: now,
+        selection: {},
+      }],
+    })
+    expect(decoded.sessions[0]?.selection).toEqual({
+      company: '',
+      access: '',
+      model: '',
+      agent: '',
+    })
+    expect(() => decodeSessionList({
+      sessions: [{
+        id: 'partial-session',
+        title: 'Partial session',
+        status: 'open',
+        updated_at: now,
+        selection: { company: 'openai' },
+      }],
+    })).toThrow()
+  })
+
   it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
     'rejects unsafe next_event_sequence %s',
     (nextEventSequence) => {

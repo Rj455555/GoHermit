@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Plus, SlidersHorizontal, UsersRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
@@ -27,6 +28,7 @@ import type {
   SkillCatalogItem,
 } from '../../api/types'
 import { useConnectivity } from '../../components/ConnectivityProvider'
+import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
 import { PageHeader } from '../../components/PageHeader'
 import { translatedEnum } from '../../i18n/enumLabel'
@@ -253,17 +255,29 @@ export function EmployeesPage() {
   useEffect(() => { void load() }, [load, connectivity.generation])
 
   if (error && items.length === 0) {
-    return <ErrorState title={t('employees.loadError')} description={t('common.retryDescription')} />
+    return (
+      <ErrorState
+        title={t('employees.loadError')}
+        description={t('common.retryDescription')}
+        action={<button type="button" className="button button--primary" onClick={() => void load()}>{t('actions.retry')}</button>}
+      />
+    )
   }
   return (
-    <article className="feature-page">
+    <article className="feature-page employees-page">
       <PageHeader
         title={t('pages.employees.title')}
         description={t('employees.description')}
-        actions={<button type="button" disabled={!connectivity.canMutate} onClick={() => setWizard(true)}>{t('employees.create')}</button>}
+        actions={(
+          <button type="button" className="button button--primary" disabled={!connectivity.canMutate} onClick={() => setWizard(true)}>
+            <Plus size={16} aria-hidden="true" />
+            {t('employees.create')}
+          </button>
+        )}
       />
       {wizard ? <Phase4EmployeeWizard onClose={() => setWizard(false)} onCreated={(record) => { void navigate(`/employees/${encodeURIComponent(record.employee.id)}`) }} /> : null}
-      <label>{t('employees.state')}
+      <label className="filter-field">
+        <span><SlidersHorizontal size={16} aria-hidden="true" />{t('employees.state')}</span>
         <select
           aria-label={t('employees.state')}
           value={state}
@@ -280,15 +294,26 @@ export function EmployeesPage() {
           <option value="archived">{statusLabel(t, 'archived')}</option>
         </select>
       </label>
-      <ul className="entity-list">
+      {items.length === 0 ? (
+        <EmptyState
+          title={t('employees.emptyTitle')}
+          description={t('employees.emptyDescription')}
+          action={(
+            <button type="button" className="button button--primary" disabled={!connectivity.canMutate} onClick={() => setWizard(true)}>
+              <UsersRound size={17} aria-hidden="true" />
+              {t('employees.createFirst')}
+            </button>
+          )}
+        />
+      ) : <ul className="entity-list employee-grid">
         {items.map((employee) => (
           <li key={employee.id}>
             <Link to={`/employees/${encodeURIComponent(employee.id)}`}>{employee.name}</Link>
             <span>{employee.job_title} · {statusLabel(t, employee.state)}</span>
           </li>
         ))}
-      </ul>
-      {cursor ? <button type="button" onClick={() => void load(cursor)}>{t('employees.loadMore')}</button> : null}
+      </ul>}
+      {cursor ? <button type="button" className="button button--secondary" onClick={() => void load(cursor)}>{t('employees.loadMore')}</button> : null}
     </article>
   )
 }
