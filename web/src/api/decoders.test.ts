@@ -263,6 +263,18 @@ describe('endpoint decoders', () => {
       required: true,
       timeout_seconds: 120,
     })
+    const legacyDefinition = {
+      ...definition,
+      team_template_ref: undefined,
+      verification_recipe: {
+        independent_verifier: true,
+        max_repair_attempts: 0,
+      },
+    }
+    expect(decodeLoopDefinition(legacyDefinition)).toMatchObject({
+      team_template_ref: '',
+      verification_recipe: { checks: [] },
+    })
     expect(decodeLoopDefinitions({ loops: [definition] }).loops).toHaveLength(1)
     expect(decodeLoopRuntimeState({
       schema_version: 1,
