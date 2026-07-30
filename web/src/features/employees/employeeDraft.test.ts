@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { generateEmployeeDraft } from './employeeDraft'
+import { ensureEmployeeId, generateEmployeeDraft, isValidEmployeeId } from './employeeDraft'
 
 describe('guided Employee draft generation', () => {
   it('creates a safe, complete Chinese developer draft from one short brief', () => {
@@ -51,5 +51,27 @@ describe('guided Employee draft generation', () => {
     expect(draft.name).toBe('Operations Assistant')
     expect(draft.job_title).toBe('Operations Engineer')
     expect(draft.charter).toContain('reliable')
+  })
+
+  it('repairs a Chinese display value into a bounded path-safe Employee ID', () => {
+    const id = ensureEmployeeId('档案管理员', '档案管理员', 'a1b2c3')
+
+    expect(id).toBe('employee-a1b2c3')
+    expect(isValidEmployeeId(id)).toBe(true)
+  })
+
+  it('preserves an explicit valid Employee ID and normalizes surrounding whitespace', () => {
+    expect(ensureEmployeeId('  archive.manager_01  ', '档案管理员', 'ignored'))
+      .toBe('archive.manager_01')
+  })
+
+  it('rejects traversal, separators, spaces, Unicode, and oversized IDs', () => {
+    expect(isValidEmployeeId('.')).toBe(false)
+    expect(isValidEmployeeId('..')).toBe(false)
+    expect(isValidEmployeeId('../employee')).toBe(false)
+    expect(isValidEmployeeId('employee/name')).toBe(false)
+    expect(isValidEmployeeId('employee name')).toBe(false)
+    expect(isValidEmployeeId('档案管理员')).toBe(false)
+    expect(isValidEmployeeId('a'.repeat(121))).toBe(false)
   })
 })

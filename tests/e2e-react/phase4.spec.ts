@@ -73,6 +73,8 @@ test('guided Employee setup generates a safe draft and sends only writable DTO f
   await page.getByRole('button', { name: 'Generate recommended draft' }).click()
   await expect(page.getByLabel('Job title')).toHaveValue('Software Engineer')
   await expect(page.getByText('Draft generated. You can edit every field before creating.')).toBeVisible()
+  await page.getByLabel('Employee ID').fill('档案管理员')
+  await expect(page.getByText(/generate a safe system ID/u)).toBeVisible()
   await page.getByRole('button', { name: 'Use recommendation and review' }).click()
 
   const createRequest = page.waitForRequest((request) =>
@@ -83,6 +85,8 @@ test('guided Employee setup generates a safe draft and sends only writable DTO f
   }
   expect(body.employee.project_count).toBeUndefined()
   expect(body.employee.name).toBe('Mina')
+  expect(body.employee.id).toMatch(/^mina-[a-z0-9._-]+$/u)
+  expect(body.employee.id).not.toContain('档案管理员')
   await expect(page.getByTestId('employee-readiness')).toHaveText('Ready')
 })
 

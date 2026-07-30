@@ -23,7 +23,12 @@ import type {
   SkillCatalogItem,
 } from '../../api/types'
 import { useUI } from '../../state/UIContext'
-import { generateEmployeeDraft, type EmployeePreset } from './employeeDraft'
+import {
+  ensureEmployeeId,
+  generateEmployeeDraft,
+  isValidEmployeeId,
+  type EmployeePreset,
+} from './employeeDraft'
 
 const STEPS = [
   'identity', 'modelAgent', 'charter', 'skills', 'knowledge',
@@ -155,6 +160,10 @@ export function EmployeeWizard({ onClose, onCreated }: {
     setGuidedGenerated(true)
   }
 
+  function safeEmployeeId(): string {
+    return ensureEmployeeId(employee.id, employee.name || guided.displayName, draftSuffix)
+  }
+
   function reviewGeneratedDraft() {
     if (!guidedGenerated) return
     if (!catalogReady
@@ -172,10 +181,12 @@ export function EmployeeWizard({ onClose, onCreated }: {
   function validateStep(currentStep: number): boolean {
     let key: string | null = null
     if (currentStep === 0 && (
-      employee.id.trim() === ''
-      || employee.name.trim() === ''
+      employee.name.trim() === ''
       || employee.job_title.trim() === ''
     )) key = 'employees.validation.identity'
+    if (currentStep === 0 && key === null && !isValidEmployeeId(employee.id)) {
+      patch({ id: safeEmployeeId() })
+    }
     if (currentStep === 1 && (
       employee.default_selection.company === ''
       || employee.default_selection.access === ''
@@ -224,10 +235,10 @@ export function EmployeeWizard({ onClose, onCreated }: {
     })
   }
 
-  function projectBinding() {
+  function projectBinding(employeeId = employee.id) {
     const project = projects.find((item) => item.id === selectedProject)
     if (!project) throw new Error('project')
-    const id = `project-${employee.id}`
+    const id = `project-${employeeId}`
     return {
       id,
       label: project.label,
@@ -323,9 +334,11 @@ export function EmployeeWizard({ onClose, onCreated }: {
     try {
       let record = persisted
       if (!record) {
-        const project = projectBinding()
+        const employeeId = safeEmployeeId()
+        const project = projectBinding(employeeId)
         const draft = {
           ...employee,
+          id: employeeId,
           skill_bindings: [],
           project_binding_ids: [project.id],
         }
@@ -454,7 +467,19 @@ export function EmployeeWizard({ onClose, onCreated }: {
               ) : null}
             </div>
           </section>
-          <label>{t('employees.id')}<input value={employee.id} onChange={(event) => patch({ id: event.target.value })} /></label>
+          <label>{t('employees.id')}
+            <input
+              value={employee.id}
+              aria-label={t('employees.id')}
+              aria-describedby="employee-id-help"
+              onChange={(event) => patch({ id: event.target.value })}
+            />
+            <small id="employee-id-help" className={employee.id && !isValidEmployeeId(employee.id) ? 'field-help field-help--notice' : 'field-help'}>
+              {employee.id && !isValidEmployeeId(employee.id)
+                ? t('employees.idWillGenerate', { id: safeEmployeeId() })
+                : t('employees.idHelp')}
+            </small>
+          </label>
           <label>{t('employees.name')}<input value={employee.name} onChange={(event) => patch({ name: event.target.value })} /></label>
           <label>{t('employees.jobTitle')}<input value={employee.job_title} onChange={(event) => patch({ job_title: event.target.value })} /></label>
           <label>{t('employees.avatar')}<select value={employee.avatar.kind} onChange={(event) => patch({ avatar: { kind: event.target.value as 'initials' | 'emoji', value: '' } })}><option value="initials">{t('employees.initials')}</option><option value="emoji">{t('employees.emoji')}</option></select></label>

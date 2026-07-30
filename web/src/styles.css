@@ -1212,6 +1212,17 @@ textarea {
   line-height: 1.35;
 }
 
+.field-help {
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.field-help--notice {
+  color: #8a5a14;
+  font-weight: 650;
+}
+
 .form-error {
   padding: 11px 13px;
   border-left: 3px solid var(--color-danger);

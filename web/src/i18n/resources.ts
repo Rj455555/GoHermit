@@ -199,6 +199,8 @@ export const translationResources = {
         enableDescription: '重新允许该 Employee 接受任务。',
         enableTitle: '确认启用 Employee',
         id: 'Employee ID',
+        idHelp: '系统 ID 仅支持英文字母、数字、点、下划线和短横线；中文名称不受影响。',
+        idWillGenerate: '此值不能用作系统 ID。继续时将自动改为：{{id}}',
         initials: '首字母',
         jobTitle: '职位',
         guided: {
@@ -839,6 +841,8 @@ export const translationResources = {
         enableDescription: 'Allow the Employee to accept Tasks again.',
         enableTitle: 'Confirm Employee enable',
         id: 'Employee ID',
+        idHelp: 'System IDs use letters, numbers, dots, underscores, and hyphens. The display name may use any language.',
+        idWillGenerate: 'This cannot be used as a system ID. Continuing will generate a safe system ID: {{id}}',
         initials: 'Initials',
         jobTitle: 'Job title',
         guided: {
