@@ -1,0 +1,4 @@
+interface:
+  display_name: "人事流程审查"
+  short_description: "Review people processes, evidence, risks, and decisions"
+  default_prompt: "Use $people-operations-review to review authorized HR materials and produce a sourced action list."

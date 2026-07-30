@@ -1,0 +1,4 @@
+interface:
+  display_name: "运营驾驶舱"
+  short_description: "Turn goals, metrics, and blockers into verified actions"
+  default_prompt: "Use $business-operations-control to build a sourced operating dashboard and action plan."

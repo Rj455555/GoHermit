@@ -1,0 +1,4 @@
+interface:
+  display_name: "合同与合规审查"
+  short_description: "Extract contract terms and triage legal risks safely"
+  default_prompt: "Use $legal-risk-review to extract cited terms and prepare a lawyer-review question list."

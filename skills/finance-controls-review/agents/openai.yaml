@@ -1,0 +1,4 @@
+interface:
+  display_name: "财务归集与内控"
+  short_description: "Review finance evidence, variance, and control exceptions"
+  default_prompt: "Use $finance-controls-review to produce a sourced finance close and exception report."
