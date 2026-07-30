@@ -58,3 +58,11 @@ bash internal/evals/docker_acceptance.sh
 ```
 
 Before handoff, review the diff and secrets, update affected documentation, use `docs/ai/handoff-template.md`, and report every skipped check or incomplete feature.
+
+## Local deployment completion
+
+Every accepted product update must finish by rebuilding and replacing the
+Mac mini's local Docker Compose service. Verify the new container identity,
+healthy status, `/api/health`, `/api/info`, and the real Workbench on port
+`8787`. A commit, push, or green CI run alone is not a completed local
+handoff. Preserve mounted data and never use global Docker prune commands.

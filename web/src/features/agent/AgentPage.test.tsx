@@ -122,6 +122,15 @@ beforeEach(() => {
 })
 
 describe('Agent pages', () => {
+  it('keeps Agent configuration usable when legacy Session history fails', async () => {
+    api.listSessions.mockRejectedValue(new ApiError('invalid_response', 200))
+    renderAgent()
+
+    expect(await screen.findByRole('option', { name: 'Codex' })).toBeVisible()
+    expect(screen.queryByText(i18n.t('agent.loadError'))).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: i18n.t('agent.createSession') })).toBeEnabled()
+  })
+
   it('shows only ready Access and prevents duplicate Session creation', async () => {
     let resolveCreation: (value: { id: string }) => void = () => undefined
     api.createSession.mockReturnValue(new Promise((resolve) => {

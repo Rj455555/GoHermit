@@ -9,7 +9,7 @@ test('Dashboard renders authoritative readiness, loops, and active projections',
 
   await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
   await expect(page.getByText('/test/workspace')).toBeVisible()
-  await expect(page.getByText('Daily review', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Daily review' })).toBeVisible()
 })
 
 test('Settings keeps credentials transient and requires confirmation to delete', async ({ page }) => {
