@@ -1334,10 +1334,10 @@ export function decodeLoopDefinition(value: unknown): LoopDefinition {
       prompt: string(task.prompt),
     },
     agent_selection: decodeSelection(source.agent_selection),
-    team_template_ref: string(source.team_template_ref, 256),
+    team_template_ref: optionalString(source.team_template_ref, 256) ?? '',
     plan_mode: enumeration<PlanMode>(source.plan_mode, PLAN_MODES),
     verification_recipe: {
-      checks: array(verification.checks, (item) => {
+      checks: array(verification.checks ?? [], (item) => {
         const check = object(item)
         return {
           id: id(check.id),
