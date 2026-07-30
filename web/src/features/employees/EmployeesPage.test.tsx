@@ -226,6 +226,26 @@ describe('Employees Phase 4 pages', () => {
     expect(api.createEmployee).not.toHaveBeenCalled()
   })
 
+  it('repairs a Chinese Employee ID before leaving identity setup', async () => {
+    const user = userEvent.setup()
+    renderEmployees()
+
+    await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.type(screen.getByLabelText('Employee ID'), '档案管理员')
+    await user.type(screen.getByLabelText('Name'), '档案管理员')
+    await user.type(screen.getByLabelText('Job title'), '档案管理员')
+
+    expect(screen.getByText(/will generate a safe system ID/iu)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(screen.getByTestId('employee-wizard-step')).toHaveTextContent('Step 2 of 9')
+    await user.click(screen.getByRole('button', { name: 'Previous' }))
+    const repaired = screen.getByLabelText<HTMLInputElement>('Employee ID').value
+    expect(repaired).toMatch(/^employee-[a-z0-9._-]+$/u)
+    expect(repaired).not.toContain('档案管理员')
+    expect(api.createEmployee).not.toHaveBeenCalled()
+  })
+
   it('generates a recommended Employee draft and skips optional setup steps', async () => {
     const user = userEvent.setup()
     renderEmployees()

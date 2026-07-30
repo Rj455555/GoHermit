@@ -114,6 +114,34 @@ const englishPresets: typeof chinesePresets = {
   },
 }
 
+// The wizard derives "project-" + Employee ID; both Store IDs are capped at 128 bytes.
+const EMPLOYEE_ID_MAX_BYTES = 120
+const EMPLOYEE_ID_PATTERN = /^[A-Za-z0-9_.-]+$/u
+
+export function isValidEmployeeId(value: string): boolean {
+  const trimmed = value.trim()
+  return trimmed !== ''
+    && trimmed.length <= EMPLOYEE_ID_MAX_BYTES
+    && trimmed !== '.'
+    && trimmed !== '..'
+    && EMPLOYEE_ID_PATTERN.test(trimmed)
+}
+
+export function ensureEmployeeId(value: string, name: string, uniqueSuffix: string): string {
+  const trimmed = value.trim()
+  if (isValidEmployeeId(trimmed)) return trimmed
+
+  const stem = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/gu, '-')
+    .replace(/^[._-]+|[._-]+$/gu, '') || 'employee'
+  const suffix = safeSuffix(uniqueSuffix)
+  const maximumStemLength = Math.max(1, EMPLOYEE_ID_MAX_BYTES - suffix.length - 1)
+  return `${stem.slice(0, maximumStemLength)}-${suffix}`
+}
+
 function safeSuffix(value: string): string {
   const normalized = value.toLowerCase().replace(/[^a-z0-9._-]+/gu, '-').replace(/^-+|-+$/gu, '')
   return normalized || 'draft'

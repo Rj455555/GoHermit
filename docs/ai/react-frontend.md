@@ -128,6 +128,12 @@ The Employee wizard can generate a local, deterministic role draft from a
 short Owner brief and one of the developer, researcher, operations, or writer
 presets. It fills identity, charter, responsibilities, boundaries, and a
 conservative permission ceiling, then lets the Owner jump to the policy review.
+Employee display names and job titles remain Unicode. The separate Store ID is
+bounded ASCII because it participates in fail-closed storage paths; when an
+Owner enters a non-path-safe value, the identity step previews and generates a
+safe ID before any Employee or ProjectBinding mutation. The create boundary
+repeats this normalization defensively so a skipped optional step cannot cause
+a late server rejection.
 This helper does not invoke a model, persist a hidden draft, bind Skills, add
 Knowledge, or create an Employee until the ordinary reviewed mutation runs.
 
