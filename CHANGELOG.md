@@ -2,6 +2,11 @@
 
 ## 0.7.0-dev
 
+- Added a name-only Employee quick-create path that persists immediately with
+  the current ready model, current Workspace, no Skills, Knowledge, or Memory,
+  and a conservative read-only/no-network policy. The full nine-step setup
+  remains available as optional advanced configuration, and every field can
+  be completed later from Employee details.
 - Fixed Employee creation with non-ASCII display names by generating a bounded,
   path-safe system ID before persistence and showing the conversion in the
   identity step instead of failing late during server validation.

@@ -117,6 +117,7 @@ async function advanceWizardToReview(
   { selectSkill = true }: { selectSkill?: boolean } = {},
 ) {
   await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+  await user.click(screen.getByRole('button', { name: 'Advanced setup' }))
   await user.type(screen.getByLabelText('Employee ID'), 'employee.v2')
   await user.type(screen.getByLabelText('Name'), 'Ada')
   await user.type(screen.getByLabelText('Job title'), 'Engineer')
@@ -212,11 +213,80 @@ beforeEach(() => {
 })
 
 describe('Employees Phase 4 pages', () => {
+  it('creates a conservative Employee immediately from only a display name', async () => {
+    const user = userEvent.setup()
+    renderEmployees()
+
+    await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    expect(screen.getByRole('heading', { name: 'Create in seconds' })).toBeVisible()
+    expect(screen.queryByTestId('employee-wizard-step')).not.toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Name'), '档案管理员')
+    await user.click(screen.getByRole('button', { name: 'Create now' }))
+
+    await waitFor(() => expect(api.createEmployee).toHaveBeenCalledOnce())
+    const payload = api.createEmployee.mock.calls[0]?.[0] as unknown as {
+      employee: {
+        id: string
+        name: string
+        job_title: string
+        charter: string
+        responsibilities: string[]
+        behavior_boundaries: string[]
+        skill_bindings: unknown[]
+        permission_policy: { allowed_capabilities: string[]; network_allowed: boolean }
+        memory_policy: {
+          candidate_generation: boolean
+          promotion: string
+          max_context_facts: number
+          max_context_bytes: number
+        }
+        project_binding_ids: string[]
+      }
+      project_bindings: Array<{
+        id: string
+        mutation_allowed: boolean
+        network_allowed: boolean
+        allowed_tool_capabilities: string[]
+      }>
+    }
+    expect(payload.employee.id).toMatch(/^employee-[a-z0-9._-]+$/u)
+    expect(payload.employee.name).toBe('档案管理员')
+    expect(payload.employee.job_title).toBe('Role pending')
+    expect(payload.employee.charter).toBe('Role details are pending. Configure this Employee before assigning work.')
+    expect(payload.employee.responsibilities).toEqual([])
+    expect(payload.employee.behavior_boundaries).toEqual([])
+    expect(payload.employee.skill_bindings).toEqual([])
+    expect(payload.employee.permission_policy).toEqual({
+      allowed_capabilities: ['read'],
+      network_allowed: false,
+    })
+    expect(payload.employee.memory_policy).toEqual({
+      candidate_generation: false,
+      promotion: 'disabled',
+      max_context_facts: 0,
+      max_context_bytes: 0,
+    })
+    expect(payload.employee.project_binding_ids).toHaveLength(1)
+    expect(payload.project_bindings).toEqual([
+      expect.objectContaining({
+        id: payload.employee.project_binding_ids[0],
+        mutation_allowed: false,
+        network_allowed: false,
+        allowed_tool_capabilities: ['read'],
+      }),
+    ])
+    expect(api.updateEmployeeSkills).not.toHaveBeenCalled()
+    expect(api.addEmployeeKnowledge).not.toHaveBeenCalled()
+    expect(api.dryRunEmployee).not.toHaveBeenCalled()
+  })
+
   it('validates required identity fields before advancing the creation wizard', async () => {
     const user = userEvent.setup()
     renderEmployees()
 
     await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.click(screen.getByRole('button', { name: 'Advanced setup' }))
     await user.click(screen.getByRole('button', { name: 'Next' }))
 
     expect(screen.getByRole('alert')).toHaveTextContent(
@@ -231,6 +301,7 @@ describe('Employees Phase 4 pages', () => {
     renderEmployees()
 
     await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.click(screen.getByRole('button', { name: 'Advanced setup' }))
     await user.type(screen.getByLabelText('Employee ID'), '档案管理员')
     await user.type(screen.getByLabelText('Name'), '档案管理员')
     await user.type(screen.getByLabelText('Job title'), '档案管理员')
@@ -251,6 +322,7 @@ describe('Employees Phase 4 pages', () => {
     renderEmployees()
 
     await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.click(screen.getByRole('button', { name: 'Advanced setup' }))
     await user.type(screen.getByLabelText('Employee name'), 'Mina')
     await user.type(
       screen.getByLabelText('What should this Employee take care of?'),
@@ -640,6 +712,7 @@ describe('Employees Phase 4 pages', () => {
     renderEmployees()
 
     await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.click(screen.getByRole('button', { name: 'Advanced setup' }))
     expect(screen.getByTestId('employee-wizard-step')).toHaveTextContent('Identity')
     expect(api.getInfo).toHaveBeenCalledOnce()
     expect(api.listProjects).toHaveBeenCalledOnce()
@@ -686,6 +759,7 @@ describe('Employees Phase 4 pages', () => {
     renderEmployees()
 
     await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.click(screen.getByRole('button', { name: 'Advanced setup' }))
     await user.type(screen.getByLabelText('Employee ID'), 'employee.v2')
     await user.type(screen.getByLabelText('Name'), 'Ada')
     await user.type(screen.getByLabelText('Job title'), 'Engineer')
