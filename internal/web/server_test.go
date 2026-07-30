@@ -45,7 +45,7 @@ func testServer(t *testing.T) *Server {
 	return server
 }
 
-func TestPhase4ReactAssetsAndDeclaredRoutesAreServed(t *testing.T) {
+func TestReactAssetsAndDeclaredRoutesAreServed(t *testing.T) {
 	handler := testServer(t).Handler()
 
 	rootRequest := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -111,7 +111,7 @@ func TestPhase4ReactAssetsAndDeclaredRoutesAreServed(t *testing.T) {
 	}
 }
 
-func TestPhase4SPAFallbackFailsClosed(t *testing.T) {
+func TestSPAFallbackFailsClosed(t *testing.T) {
 	handler := testServer(t).Handler()
 	for _, path := range []string{
 		"/unknown",
@@ -144,7 +144,7 @@ func TestPhase4SPAFallbackFailsClosed(t *testing.T) {
 	}
 }
 
-func TestPhase1ReactDistIsEmbeddedWithHashedAssets(t *testing.T) {
+func TestReactDistIsEmbeddedWithHashedAssets(t *testing.T) {
 	index, err := assets.ReadFile("assets/dist/index.html")
 	if err != nil {
 		t.Fatalf("read embedded React index: %v", err)
@@ -190,7 +190,30 @@ func TestPhase1ReactDistIsEmbeddedWithHashedAssets(t *testing.T) {
 	}
 }
 
-func TestPhase4LegacyAndDistAliasesAreNotHTTPAccessible(t *testing.T) {
+func TestPhase5EmbeddedFSContainsOnlyReactDistribution(t *testing.T) {
+	entries, err := fs.ReadDir(assets, "assets")
+	if err != nil {
+		t.Fatalf("read embedded asset root: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "dist" || !entries[0].IsDir() {
+		t.Fatalf("embedded asset root = %#v, want only dist/", entries)
+	}
+
+	for _, legacyPath := range []string{
+		"assets/index.html",
+		"assets/app.js",
+		"assets/employees.js",
+		"assets/tasks.js",
+		"assets/loops.js",
+		"assets/styles.css",
+	} {
+		if _, readErr := assets.ReadFile(legacyPath); !errors.Is(readErr, fs.ErrNotExist) {
+			t.Fatalf("legacy asset %q remains embedded: %v", legacyPath, readErr)
+		}
+	}
+}
+
+func TestRemovedLegacyAndDistAliasesAreNotHTTPAccessible(t *testing.T) {
 	handler := testServer(t).Handler()
 	for _, path := range []string{
 		"/dist", "/dist/", "/dist/index.html",

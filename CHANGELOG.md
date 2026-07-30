@@ -2,6 +2,15 @@
 
 ## 0.7.0-dev
 
+- Replaced the legacy HTML/JavaScript/CSS console with one embedded React,
+  TypeScript, and Vite Workbench covering Dashboard, Employees, Tasks, Agent,
+  Loops, and Settings with bundled zh-CN/en-US switching and fail-closed routes.
+- Added a typed, size-bounded API trust boundary and one Session-keyed SSE
+  registry with per-subscriber Run filtering, Session high-water recovery, and
+  authoritative projection refresh instead of browser execution state.
+- Finalized deterministic committed React assets, Node-to-Go multi-stage
+  Docker builds, a Go-free/Node-free minimal runtime image, frontend CI gates,
+  React browser coverage, and container rebuild persistence acceptance.
 - Added first-class owner-scoped Electronic Employees with immutable revision
   snapshots, explicit lifecycle, ProjectBindings, policy/budget/concurrency,
   strict fail-closed persistence, and CRUD/Dry Run APIs.

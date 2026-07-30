@@ -34,7 +34,7 @@ jobs:
           GOOS=darwin GOARCH=arm64 go build -o dist/darwin/hermit ./cmd/hermit
           GOOS=darwin GOARCH=arm64 go build -o dist/darwin/hermit-web ./cmd/hermit-web
 
-  web-e2e:
+  frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +47,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm test:coverage
+      - run: pnpm build
+      - name: Verify committed React distribution
+        run: git diff --exit-code -- internal/web/assets/dist
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -56,6 +63,7 @@ jobs:
           retention-days: 14
 
   docker:
+    needs: [go, frontend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,8 +71,23 @@ jobs:
         with:
           go-version: 1.24.8
           cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
       - name: Compose, image, health, and persistent data acceptance
         run: bash internal/evals/docker_acceptance.sh
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: docker-playwright-report
+          path: playwright-report/
+          retention-days: 14
 
   # Live Codex smoke: manual dispatch only, never on push/PR. It makes one paid
   # API call, so the repo owner must first add a GOHERMIT_CODEX_AUTH_JSON secret

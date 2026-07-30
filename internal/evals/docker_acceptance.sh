@@ -4,7 +4,18 @@ set -euo pipefail
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 acceptance_root="$(mktemp -d)"
 override_file="${acceptance_root}/compose.acceptance.yaml"
-project_name="gohermit-v07-acceptance"
+project_name="${GOHERMIT_ACCEPTANCE_PROJECT:-gohermit-phase5-acceptance-$$}"
+acceptance_port="${GOHERMIT_ACCEPTANCE_PORT:-18787}"
+if [[ ! "${acceptance_port}" =~ ^[0-9]+$ ]] || (( acceptance_port < 1024 || acceptance_port > 65535 )); then
+  echo "GOHERMIT_ACCEPTANCE_PORT must be an unprivileged TCP port" >&2
+  exit 1
+fi
+export GOHERMIT_WEB_PORT="${acceptance_port}"
+export GOHERMIT_WEB_BIND="127.0.0.1"
+base_url="http://127.0.0.1:${acceptance_port}"
+node_image="${GOHERMIT_ACCEPTANCE_NODE_IMAGE:-node:22-bookworm-slim}"
+runtime_image="${GOHERMIT_ACCEPTANCE_RUNTIME_IMAGE:-alpine/git:latest}"
+pnpm_registry="${GOHERMIT_ACCEPTANCE_PNPM_REGISTRY:-https://registry.npmjs.org}"
 
 cleanup() {
   docker compose --project-name "${project_name}" -f "${repository}/compose.yaml" -f "${override_file}" down --remove-orphans >/dev/null 2>&1 || true
@@ -18,6 +29,11 @@ GOHERMIT_EVAL_DATA_ROOT="${acceptance_root}" go test ./internal/evals -run '^Tes
 cat >"${override_file}" <<EOF
 services:
   gohermit-web:
+    build:
+      args:
+        NODE_IMAGE: "${node_image}"
+        PNPM_REGISTRY: "${pnpm_registry}"
+        RUNTIME_IMAGE: "${runtime_image}"
     user: "$(id -u):$(id -g)"
     volumes:
       - "${acceptance_root}/workspace:/workspace"
@@ -36,7 +52,7 @@ grep -q '127.0.0.1' "${acceptance_root}/compose.rendered.yaml"
 
 wait_for_workbench() {
   local attempts=0
-  until curl --silent --show-error --fail http://127.0.0.1:8787/api/health >"${acceptance_root}/health.json"; do
+  until curl --silent --show-error --fail "${base_url}/api/health" >"${acceptance_root}/health.json"; do
     attempts=$((attempts + 1))
     if (( attempts >= 60 )); then
       "${compose[@]}" logs
@@ -44,14 +60,68 @@ wait_for_workbench() {
     fi
     sleep 1
   done
-  curl --silent --show-error --fail http://127.0.0.1:8787/api/info >"${acceptance_root}/info.json"
+  curl --silent --show-error --fail "${base_url}/api/info" >"${acceptance_root}/info.json"
   grep -q '"version":"0.7.0-dev"' "${acceptance_root}/info.json"
 }
+
+inspect_runtime_image() {
+  local image_id
+  image_id="$("${compose[@]}" images -q gohermit-web)"
+  test -n "${image_id}"
+  docker image inspect "${image_id}" >"${acceptance_root}/image.inspect.json"
+  docker run --rm --entrypoint /bin/sh "${image_id}" -eu -c '
+    for executable in node npm npx pnpm corepack go; do
+      if command -v "${executable}" >/dev/null 2>&1; then
+        echo "unexpected build executable in runtime image: ${executable}" >&2
+        exit 1
+      fi
+    done
+    test ! -e /src
+    test ! -e /workspace/web
+    if find / -xdev \( -type d \( -name node_modules -o -name .pnpm-store -o -name .npm \) -o -type f \( -name package.json -o -name pnpm-lock.yaml -o -name pnpm-workspace.yaml \) \) -print -quit | grep -q .; then
+      echo "frontend source or package-manager state found in runtime image" >&2
+      exit 1
+    fi
+  '
+}
+
+test_container_browser() {
+  GOHERMIT_DOCKER_BASE_URL="${base_url}" pnpm test:e2e:docker
+}
+
+test_raw_path_security() {
+  local path status
+  for path in \
+    '/%2e%2e/dashboard' \
+    '/employees%2femployee-docker' \
+    '/employees%5cemployee-docker'
+  do
+    status="$(curl --path-as-is --silent --show-error \
+      --output "${acceptance_root}/raw-path.body" \
+      --write-out '%{http_code}' "${base_url}${path}")"
+    if [[ "${status}" != "404" ]]; then
+      echo "raw path ${path} returned ${status}, want 404" >&2
+      return 1
+    fi
+    if grep -q '<div id="root"></div>' "${acceptance_root}/raw-path.body"; then
+      echo "raw path ${path} escaped into the React fallback" >&2
+      return 1
+    fi
+  done
+}
+
 wait_for_workbench
+inspect_runtime_image
+test_container_browser
+test_raw_path_security
 
 manifest() {
   local root="$1"
-  find "${root}" -type f -print0 | sort -z | xargs -0 sha256sum
+  if command -v sha256sum >/dev/null 2>&1; then
+    find "${root}" -type f -print0 | sort -z | xargs -0 sha256sum
+  else
+    find "${root}" -type f -print0 | sort -z | xargs -0 shasum -a 256
+  fi
 }
 
 test -s "${acceptance_root}/data/employees/index.json"
@@ -67,6 +137,9 @@ manifest "${acceptance_root}/workspace" >"${acceptance_root}/workspace.before"
 "${compose[@]}" build --no-cache
 "${compose[@]}" up -d
 wait_for_workbench
+inspect_runtime_image
+test_container_browser
+test_raw_path_security
 manifest "${acceptance_root}/data" >"${acceptance_root}/data.after"
 manifest "${acceptance_root}/workspace" >"${acceptance_root}/workspace.after"
 diff -u "${acceptance_root}/data.before" "${acceptance_root}/data.after"

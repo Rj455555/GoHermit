@@ -320,15 +320,13 @@ func TestV07RegressionCoverageManifest(t *testing.T) {
 		})
 	}
 	for path, fragments := range map[string][]string{
-		"tests/e2e/tasks.spec.ts": {
-			"tasks require explicit Start",
-			"task Session SSE resumes by sequence",
+		"tests/e2e-react/phase4.spec.ts": {
+			"nine-step Employee wizard persists exact configuration and uses real Dry Run",
+			"queued Task requires explicit Prepare then Start and restores through history",
+			"Loop Definition, Team, Dry Run, and Invocation use structured authoritative projections",
 		},
-		"tests/e2e/loops-workbench.spec.ts": {
-			"maps a Team Role to an exact active Employee",
-		},
-		"tests/e2e/employees.spec.ts": {
-			"employee wizard pins the complete Skill identity",
+		"tests/e2e-react/phase3.spec.ts": {
+			"refresh resumes the Session high-water without creating Run-scoped EventSources",
 		},
 	} {
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))

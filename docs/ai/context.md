@@ -23,7 +23,7 @@ control plane, or automatic Git/publish action.
 | Prepare/Start/recovery | `internal/controlplane/employee_tasks.go` | `employee_execution.go`, `internal/session`, `internal/agent` |
 | Skill/Knowledge/Memory context | `docs/ai/employees.md` | `internal/skill`, `internal/knowledge`, `internal/employeememory`, `internal/contextmgr` |
 | Team assignments | `docs/ai/employees.md` | `internal/controlplane/team_employees.go`, `internal/app/team_worker.go`, `internal/teamtemplate` |
-| Employee/Task Web UI | `internal/web/assets/employees.js` | `tasks.js`, Web Go tests, `tests/e2e` |
+| React Workbench, routes, i18n, API/SSE | `docs/ai/react-frontend.md` | `web/src`, `internal/web`, `tests/e2e-react` |
 | Session/Run/SSE | `docs/ai/harness.md` | `internal/session`, `internal/controlplane`, `internal/web` |
 | Team/Mission/Handoff | `docs/ai/team.md` | ADR 0008, ADR 0013 |
 | Live Plan and Verification | `docs/ai/plan-mode.md` | ADR 0009–0011, `internal/runcontrol` |
@@ -107,6 +107,10 @@ file at a time. Cross-file transactions are intentionally not claimed.
 - Phase 10 adds deterministic cross-module evals, actual Docker
   build/health/rebuild persistence acceptance, and documentation/version
   closeout only.
+- The Web surface is one React + TypeScript + Vite application embedded from
+  `internal/web/assets/dist`. Legacy HTML/JavaScript/CSS assets and their
+  standalone test server have been removed. Browser execution state remains a
+  projection of the existing Go API and Session-owned SSE journal.
 - Default tests use deterministic Fake Providers. Paid Codex smoke remains
   workflow-dispatch-only and skips without an explicit secret.
 - `internal/evals` contains the v0.7 cross-package regression manifest and the
@@ -129,12 +133,20 @@ file at a time. Cross-file transactions are intentionally not claimed.
 ## Standard verification
 
 ```bash
-gofmt -l .
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm test:coverage
+pnpm build
+git diff --exit-code -- internal/web/assets/dist
+pnpm test:e2e
+test -z "$(gofmt -l $(git ls-files '*.go'))"
 go test ./... -count=1
 go test -race ./... -count=1
 go vet ./...
 go build ./cmd/hermit
 go build ./cmd/hermit-web
-pnpm test:e2e
 docker compose config
+bash internal/evals/docker_acceptance.sh
 ```

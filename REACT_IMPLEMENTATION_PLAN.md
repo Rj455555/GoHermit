@@ -858,8 +858,8 @@ Required SSE connection/sequence tests:
 | Phase 1 | `APPROVAL: REACT_PHASE_1_APPROVED` at `4f06a1e970923ba9c8b981c5fb151ef324f56e65` | complete; approved | minimal React/TypeScript/Vite workspace, committed deterministic Embed artifact, old UI boundary, and validations below |
 | Phase 2 | `APPROVAL: REACT_PHASE_2_REAPPROVED` at `019c6e70df32b4116f92d5007515def6f53421a8` | complete; approved | BrowserRouter shell, zh-CN/en-US i18n, corrected action-scoped Session sidebar focus, isolated ConfirmDialog, shared feedback primitives, deterministic Embed artifact, and independent React E2E |
 | Phase 3 | `AUTHORIZED_PHASE: PHASE_3_ONLY` at `019c6e70df32b4116f92d5007515def6f53421a8` | `SECOND_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | typed API/DTO boundary, corrected Active Run mutation ownership, visible mutation failures, Session-owned SSE recovery, delta-free bounded Activity projection, consistent fatal recovery state, localized runtime metadata, bounded API/history/streaming data, deterministic Embed artifact, and Phase 3 browser coverage |
-| Phase 4 | `APPROVAL: REACT_PHASE_3_SECOND_REAPPROVED` at `3579e8331c2df91ce668fe6a59d16b467b8a8660` | `SECOND_GATE_REVISION_COMPLETE_WAITING_FOR_OWNER` | server-validated wizard Skill bindings/readiness, exact Loop argv editing, Store-aligned Employee routes, complete Employee settings and repair actions, confirmed destructive mutations, complete URL-owned Task filters, owner-scoped request isolation, deterministic artifacts, and fail-closed embedded React serving-root cutover |
-| Phase 5 | not authorized | `BLOCKED_BY_GATE` | no legacy deletion, Docker/CI migration, final documentation, release, merge, or deployment |
+| Phase 4 | `REACT_PHASE_4_SECOND_GATE_APPROVED` at `6ed91d5e6ab54d15d4be02a59c3eefc8a1da0ec9` | complete; approved | server-validated wizard Skill bindings/readiness, exact Loop argv editing, Store-aligned Employee routes, complete Employee settings and repair actions, confirmed destructive mutations, complete URL-owned Task filters, owner-scoped request isolation, deterministic artifacts, and fail-closed embedded React serving-root cutover |
+| Phase 5 | `REACT_PHASE_4_SECOND_GATE_APPROVED` at `6ed91d5e6ab54d15d4be02a59c3eefc8a1da0ec9` | `IN_PROGRESS` | Owner authorized only the Phase 5 legacy removal, final Docker/CI chain, documentation, and acceptance matrix in lines 706–733 |
 
 ### 11.1 Phase 1 execution evidence
 
@@ -995,3 +995,14 @@ Required SSE connection/sequence tests:
 `Phase 5: BLOCKED_BY_GATE`
 
 `STATUS: WAITING_FOR_REACT_PHASE_4_SECOND_REAPPROVAL`
+
+### 11.10 Phase 4 second Gate Owner approval
+
+- Approval: `REACT_PHASE_4_SECOND_GATE_APPROVED`.
+- Approved branch: `agent/react-workbench-i18n`.
+- Approved baseline: `6ed91d5e6ab54d15d4be02a59c3eefc8a1da0ec9`.
+- Authorized continuation: Phase 5 only, exactly as bounded by lines 706–733. Phase 4 is complete and approved; Phase 5 may remove the verified legacy frontend, finalize the Docker and CI build chain, complete the named documentation, and run final acceptance without merging, tagging, releasing, publishing, deploying, or replacing the current Mac mini service.
+
+`Phase 4: APPROVED`
+
+`Phase 5: IN_PROGRESS`

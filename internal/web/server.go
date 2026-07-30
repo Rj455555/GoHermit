@@ -25,7 +25,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/teamtemplate"
 )
 
-//go:embed assets/*
+//go:embed assets/dist
 var assets embed.FS
 
 // Server is the thin HTTP transport over the control-plane service. It owns

@@ -10,19 +10,34 @@ The current development version is `0.7.0-dev`. Electronic Employees add owner-s
 
 ## Build and install
 
-Go 1.24 or newer is required.
+Go 1.24 or newer and Node 22 with Corepack are required. The repository pins
+`pnpm@11.9.0` and has one workspace lockfile.
 
 ```bash
-go test ./...
-pnpm install
+corepack enable
+corepack prepare pnpm@11.9.0 --activate
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm test:coverage
+pnpm build
+git diff --exit-code -- internal/web/assets/dist
 pnpm exec playwright install chromium
 pnpm test:e2e
+go test ./...
 go build -o hermit ./cmd/hermit
 go build -o hermit-web ./cmd/hermit-web
 install -m 0755 hermit "$HOME/.local/bin/hermit"
 ```
 
-GoHermit has one third-party dependency: `github.com/BurntSushi/toml`, used for strict TOML decoding. The standard library has no TOML parser; replacing it with a private partial parser would be less interoperable and harder to maintain. The library is BSD-licensed, small, mature, and is only on the configuration-loading path.
+The Go runtime has one third-party Go module dependency:
+`github.com/BurntSushi/toml`, used for strict TOML decoding. The standard
+library has no TOML parser; replacing it with a private partial parser would be
+less interoperable and harder to maintain. The library is BSD-licensed, small,
+mature, and is only on the configuration-loading path. Frontend build and test
+dependencies are pinned by the single `pnpm-lock.yaml` and do not ship in the
+runtime image.
 
 ## Quick start
 
@@ -65,6 +80,11 @@ open http://127.0.0.1:8787
 
 The Compose port is published only on loopback. The page selects company, access path, model, and either a single Agent or Personal Agent Team when creating a Session, then supports continued conversation, team activity, event replay, cancellation, and interrupted-run recovery. API keys remain server-side. Codex Plan imports an existing Codex CLI login from the host's `${HOME}/.codex` read-only mount. See [local Web and Docker guide](docs/web-debug.md).
 
+The Web console is a single embedded React application. Go serves only declared
+SPA route shapes and content-hashed assets; unknown API paths, malformed paths,
+traversal attempts, and missing assets fail closed. See the
+[React frontend architecture and debugging guide](docs/ai/react-frontend.md).
+
 Configured plugins are opt-in:
 
 ```toml
@@ -87,6 +107,7 @@ External plugins are separate processes and form an explicit trust boundary. Rea
 
 - [AI documentation and low-token reading index](docs/ai/README.md)
 - [AI context and code map](docs/ai/context.md)
+- [React frontend architecture and debugging](docs/ai/react-frontend.md)
 - [Agent Harness quick reference](docs/ai/harness.md)
 - [Personal Agent Team quick reference](docs/ai/team.md)
 - [Live Plan quick reference](docs/ai/plan-mode.md)
