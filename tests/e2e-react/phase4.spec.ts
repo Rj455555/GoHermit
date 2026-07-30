@@ -37,7 +37,7 @@ test('nine-step Employee wizard persists exact configuration and uses real Dry R
 
   await expect(page.getByTestId('employee-wizard-step')).toContainText('Step 1 of 9')
   await page.getByLabel('Employee ID').fill('employee-gate')
-  await page.getByLabel('Name').fill('Gate Engineer')
+  await page.getByLabel('Name', { exact: true }).fill('Gate Engineer')
   await page.getByLabel('Job title').fill('Verification Engineer')
   await page.getByRole('button', { name: 'Next' }).click()
 
@@ -59,6 +59,31 @@ test('nine-step Employee wizard persists exact configuration and uses real Dry R
   await expect(page.getByTestId('employee-readiness')).toHaveText('Ready')
   await expect(page.getByText('Gate Engineer')).toBeVisible()
   await expect(page.getByText('GoHermit', { exact: true })).toBeVisible()
+})
+
+test('guided Employee setup generates a safe draft and sends only writable DTO fields', async ({ page }) => {
+  await page.goto('/employees')
+  await page.getByRole('button', { name: /English/u }).click()
+  await page.getByRole('button', { name: 'Create Employee' }).click()
+
+  await page.getByLabel('Employee name').fill('Mina')
+  await page.getByLabel('What should this Employee take care of?').fill(
+    'Maintain GoHermit and verify every change',
+  )
+  await page.getByRole('button', { name: 'Generate recommended draft' }).click()
+  await expect(page.getByLabel('Job title')).toHaveValue('Software Engineer')
+  await expect(page.getByText('Draft generated. You can edit every field before creating.')).toBeVisible()
+  await page.getByRole('button', { name: 'Use recommendation and review' }).click()
+
+  const createRequest = page.waitForRequest((request) =>
+    request.url().endsWith('/api/employees') && request.method() === 'POST')
+  await page.getByRole('button', { name: 'Next' }).click()
+  const body = (await createRequest).postDataJSON() as {
+    employee: Record<string, unknown>
+  }
+  expect(body.employee.project_count).toBeUndefined()
+  expect(body.employee.name).toBe('Mina')
+  await expect(page.getByTestId('employee-readiness')).toHaveText('Ready')
 })
 
 test('locale switching translates Phase 4 status metadata but preserves authoritative text', async ({ page }) => {

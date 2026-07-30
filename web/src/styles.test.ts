@@ -15,6 +15,14 @@ describe('responsive shell CSS contract', () => {
     expect(styles).toContain('.dashboard-hero')
     expect(styles).toContain('.wizard-progress')
     expect(styles).toContain('.employee-grid')
+    expect(styles).toContain('.guided-employee-card')
+  })
+
+  it('keeps native choice controls compact and gives selects a deliberate affordance', () => {
+    expect(styles).toMatch(/select\s*\{[^}]*appearance:\s*none/s)
+    expect(styles).toMatch(/input\[type="checkbox"\][^{]*\{[^}]*width:\s*16px/s)
+    expect(styles).toMatch(/input\[type="radio"\][^{]*\{[^}]*width:\s*16px/s)
+    expect(styles).toMatch(/input\[type="checkbox"\]:checked::after/)
   })
 
   it('disables non-essential motion for reduced-motion users', () => {

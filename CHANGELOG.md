@@ -2,6 +2,9 @@
 
 ## 0.7.0-dev
 
+- Fixed React Employee create/update against the strict Go DTO by removing
+  response-only `project_count`, added guided role-draft generation, and
+  tightened select, checkbox, and radio presentation.
 - Replaced the legacy HTML/JavaScript/CSS console with one embedded React,
   TypeScript, and Vite Workbench covering Dashboard, Employees, Tasks, Agent,
   Loops, and Settings with bundled zh-CN/en-US switching and fail-closed routes.

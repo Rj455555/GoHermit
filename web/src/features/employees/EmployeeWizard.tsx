@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ArrowRight, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -22,6 +23,7 @@ import type {
   SkillCatalogItem,
 } from '../../api/types'
 import { useUI } from '../../state/UIContext'
+import { generateEmployeeDraft, type EmployeePreset } from './employeeDraft'
 
 const STEPS = [
   'identity', 'modelAgent', 'charter', 'skills', 'knowledge',
@@ -70,10 +72,17 @@ export function EmployeeWizard({ onClose, onCreated }: {
   onClose: () => void
   onCreated: (record: EmployeeRecord) => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { actions } = useUI()
   const [step, setStep] = useState(0)
   const [employee, setEmployee] = useState(initialEmployee)
+  const [guided, setGuided] = useState<{
+    preset: EmployeePreset
+    displayName: string
+    brief: string
+  }>({ preset: 'developer', displayName: '', brief: '' })
+  const [guidedGenerated, setGuidedGenerated] = useState(false)
+  const [draftSuffix] = useState(() => Date.now().toString(36).slice(-6))
   const [skills, setSkills] = useState<SkillCatalogItem[]>([])
   const [projects, setProjects] = useState<ProjectCatalogItem[]>([])
   const [selectedProject, setSelectedProject] = useState('')
@@ -136,6 +145,29 @@ export function EmployeeWizard({ onClose, onCreated }: {
   }
   const lines = (value: string) =>
     value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean)
+
+  function generateGuidedDraft() {
+    patch(generateEmployeeDraft({
+      ...guided,
+      locale: i18n.language,
+      uniqueSuffix: draftSuffix,
+    }))
+    setGuidedGenerated(true)
+  }
+
+  function reviewGeneratedDraft() {
+    if (!guidedGenerated) return
+    if (!catalogReady
+      || employee.default_selection.company === ''
+      || employee.default_selection.access === ''
+      || employee.default_selection.model === ''
+      || employee.agent_profile === ''
+      || selectedProject === '') {
+      setStepError('employees.validation.runtime')
+      return
+    }
+    setStep(7)
+  }
 
   function validateStep(currentStep: number): boolean {
     let key: string | null = null
@@ -353,6 +385,75 @@ export function EmployeeWizard({ onClose, onCreated }: {
 
       {step === 0 ? (
         <div className="form-grid">
+          <section className="guided-employee-card wide" aria-labelledby="guided-employee-title">
+            <div className="guided-employee-card__heading">
+              <span className="guided-employee-card__icon"><Sparkles size={18} /></span>
+              <div>
+                <h3 id="guided-employee-title">{t('employees.guided.title')}</h3>
+                <p>{t('employees.guided.description')}</p>
+              </div>
+            </div>
+            <div className="form-grid">
+              <label>{t('employees.guided.preset')}
+                <select value={guided.preset} onChange={(event) => {
+                  setGuidedGenerated(false)
+                  setGuided((current) => ({
+                    ...current,
+                    preset: event.target.value as EmployeePreset,
+                  }))
+                }}>
+                  {(['developer', 'researcher', 'operations', 'writer'] as const).map((preset) => (
+                    <option key={preset} value={preset}>
+                      {t(`employees.guided.presets.${preset}`)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>{t('employees.guided.name')}
+                <input value={guided.displayName} onChange={(event) => {
+                  setGuidedGenerated(false)
+                  setGuided((current) => ({
+                    ...current,
+                    displayName: event.target.value,
+                  }))
+                }} />
+              </label>
+              <label className="wide">{t('employees.guided.brief')}
+                <textarea
+                  rows={3}
+                  value={guided.brief}
+                  onChange={(event) => {
+                    setGuidedGenerated(false)
+                    setGuided((current) => ({
+                      ...current,
+                      brief: event.target.value,
+                    }))
+                  }}
+                  placeholder={t('employees.guided.briefPlaceholder')}
+                />
+              </label>
+            </div>
+            <div className="guided-employee-card__actions">
+              <button className="button button--primary" type="button" onClick={generateGuidedDraft}>
+                <Sparkles size={16} />
+                {t('employees.guided.generate')}
+              </button>
+              {guidedGenerated ? (
+                <>
+                  <span className="guided-employee-card__success">{t('employees.guided.generated')}</span>
+                  <button
+                    className="button button--secondary"
+                    type="button"
+                    disabled={!catalogReady}
+                    onClick={reviewGeneratedDraft}
+                  >
+                    {t('employees.guided.review')}
+                    <ArrowRight size={16} />
+                  </button>
+                </>
+              ) : null}
+            </div>
+          </section>
           <label>{t('employees.id')}<input value={employee.id} onChange={(event) => patch({ id: event.target.value })} /></label>
           <label>{t('employees.name')}<input value={employee.name} onChange={(event) => patch({ name: event.target.value })} /></label>
           <label>{t('employees.jobTitle')}<input value={employee.job_title} onChange={(event) => patch({ job_title: event.target.value })} /></label>
@@ -419,7 +520,7 @@ export function EmployeeWizard({ onClose, onCreated }: {
 
       {step === 5 ? (
         <div className="form-grid">
-          <label><input type="checkbox" checked={employee.memory_policy.candidate_generation} onChange={(event) => patch({ memory_policy: { ...employee.memory_policy, candidate_generation: event.target.checked, promotion: event.target.checked ? 'owner_confirmation' : 'disabled' } })} />{t('employees.memoryCandidates')}</label>
+          <label className="choice-field wide"><input type="checkbox" checked={employee.memory_policy.candidate_generation} onChange={(event) => patch({ memory_policy: { ...employee.memory_policy, candidate_generation: event.target.checked, promotion: event.target.checked ? 'owner_confirmation' : 'disabled' } })} />{t('employees.memoryCandidates')}</label>
           <label>{t('employees.maxContextFacts')}<input type="number" min="0" value={employee.memory_policy.max_context_facts} onChange={(event) => patch({ memory_policy: { ...employee.memory_policy, max_context_facts: Number(event.target.value) } })} /></label>
           <label>{t('employees.maxContextBytes')}<input type="number" min="0" value={employee.memory_policy.max_context_bytes} onChange={(event) => patch({ memory_policy: { ...employee.memory_policy, max_context_bytes: Number(event.target.value) } })} /></label>
         </div>
@@ -432,7 +533,7 @@ export function EmployeeWizard({ onClose, onCreated }: {
       {step === 7 ? (
         <div className="form-grid">
           <label>{t('employees.capabilities')}<textarea value={employee.permission_policy.allowed_capabilities.join('\n')} onChange={(event) => patch({ permission_policy: { ...employee.permission_policy, allowed_capabilities: lines(event.target.value) } })} /></label>
-          <label><input type="checkbox" checked={employee.permission_policy.network_allowed} onChange={(event) => patch({ permission_policy: { ...employee.permission_policy, network_allowed: event.target.checked } })} />{t('employees.network')}</label>
+          <label className="choice-field"><input type="checkbox" checked={employee.permission_policy.network_allowed} onChange={(event) => patch({ permission_policy: { ...employee.permission_policy, network_allowed: event.target.checked } })} />{t('employees.network')}</label>
           <label>{t('employees.maxCalls')}<input type="number" min="1" value={employee.budget_policy.max_model_calls} onChange={(event) => patch({ budget_policy: { ...employee.budget_policy, max_model_calls: Number(event.target.value) } })} /></label>
           <label>{t('employees.maxTokens')}<input type="number" min="1" value={employee.budget_policy.max_tokens} onChange={(event) => patch({ budget_policy: { ...employee.budget_policy, max_tokens: Number(event.target.value) } })} /></label>
           <label>{t('employees.timeoutSeconds')}<input type="number" min="1" value={employee.budget_policy.timeout_seconds} onChange={(event) => patch({ budget_policy: { ...employee.budget_policy, timeout_seconds: Number(event.target.value) } })} /></label>
