@@ -185,6 +185,10 @@ and `sandbox/` is excluded before the context is sent to the builder.
 
 ## Testing and debugging
 
+- Employee detail/create responses use the strict Go DTO rather than the list
+  summary projection. The decoder accepts only Go's canonical omission of
+  empty optional slices and derives `project_count` from `project_bindings`;
+  the deterministic browser fixture must preserve that response shape.
 - `pnpm test` and `pnpm test:coverage`: Vitest and Testing Library.
 - `pnpm test:e2e`: the complete deterministic React browser suite.
 - `pnpm test:e2e:docker`: browser acceptance against an already running

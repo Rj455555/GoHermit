@@ -657,7 +657,12 @@ async function handleApi(request, response, url) {
     const record = { employee, project_bindings }
     createdEmployees.set(employee.id, record)
     createdKnowledge.set(employee.id, { employee_id: employee.id, sources: [], indexes: [], results: [] })
-    json(response, 201, record)
+    const responseEmployee = { ...employee }
+    delete responseEmployee.project_count
+    if (responseEmployee.responsibilities?.length === 0) delete responseEmployee.responsibilities
+    if (responseEmployee.behavior_boundaries?.length === 0) delete responseEmployee.behavior_boundaries
+    if (responseEmployee.skill_bindings?.length === 0) delete responseEmployee.skill_bindings
+    json(response, 201, { employee: responseEmployee, project_bindings })
     return true
   }
   if (request.method === 'GET' && pathname === '/api/projects') {
