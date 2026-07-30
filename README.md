@@ -6,7 +6,7 @@ GoHermit is not a hosted service, a general-purpose multi-agent platform, an unb
 
 ## Status
 
-The current development version is `0.7.0-dev`. Electronic Employees add owner-scoped revisioned identities, pinned local Skill/Knowledge/Memory/Project context, a persistent Task Inbox with zero-execution Prepare and explicit Start, Employees/Tasks Web UI, and optional Team Role assignments. Every Task still reuses the existing Session/Run, Live Plan, Approval, Verification, Tool, SSE, and recovery kernel. The service remains single-owner, loopback-only, foreground, one-Workspace, manually started, and free of telemetry or automatic Git/publish actions.
+The current development version is `0.8.0-dev`. Electronic Employees add owner-scoped revisioned identities, pinned local Skill/Knowledge/Memory/Project context, a persistent Task Inbox with zero-execution Prepare and explicit Start, and optional Team Role assignments. Employee-owned Loops add durable Goal/Boundary/SOP contracts, manual or daily scheduling, and projected state/logs while every invocation still reuses the existing EmployeeTask, Session/Run, Live Plan, Approval, Verification, Tool, SSE, and recovery kernel. The service remains single-owner, loopback-only, one-Workspace, and free of telemetry or automatic Git/publish actions.
 
 ## Build and install
 

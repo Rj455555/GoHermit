@@ -24,6 +24,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	server.StartLoopScheduler(ctx)
 	fmt.Printf("GoHermit Web %s listening on http://%s\n", app.Version, *listen)
 	if err := webui.ListenAndServe(ctx, *listen, server); err != nil {
 		log.Fatal(err)

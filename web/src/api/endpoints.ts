@@ -23,7 +23,8 @@ import {
   decodeLoopDefinition,
   decodeLoopInvocation,
   decodeLoopInvocationList,
-  decodeLoops,
+  decodeLoopRuntimeState,
+  decodeLoopDefinitions,
   decodeOwnerProfile,
   decodeProjects,
   decodeSkillCatalog,
@@ -66,7 +67,9 @@ export const getHealth = (options: ReadOptions = {}) =>
 export const getInfo = (options: ReadOptions = {}) =>
   apiRequest('/api/info', decodeInfo, options)
 export const listLoops = (options: ReadOptions = {}) =>
-  apiRequest('/api/loops', decodeLoops, options)
+  apiRequest('/api/loops', decodeLoopDefinitions, options)
+export const getLoopRuntime = (loopId: string, options: ReadOptions = {}) =>
+  apiRequest(`/api/loops/${segment(loopId)}/runtime`, decodeLoopRuntimeState, options)
 export const listLoopInvocations = (loopId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/loops/${segment(loopId)}/invocations?limit=50`, decodeInvocations, options)
 

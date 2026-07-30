@@ -23,6 +23,7 @@ import type {
   InvocationSummary,
   LoopDefinition,
   LoopInvocation,
+  LoopRuntimeState,
   LoopSummary,
   MemoryCandidate,
   MemoryFact,
@@ -732,6 +733,7 @@ export function decodeInvocations(value: unknown): { invocations: InvocationSumm
         definition_revision: integer(invocation.definition_revision),
         trigger: id(invocation.trigger),
         task_snapshot: string(invocation.task_snapshot),
+        employee_task_id: optionalID(invocation.employee_task_id),
         session_id: optionalID(invocation.session_id),
         run_id: optionalID(invocation.run_id),
         status: enumeration<InvocationStatus>(invocation.status, INVOCATION_STATUSES),
@@ -1301,6 +1303,8 @@ function decodeBudget(value: unknown) {
 export function decodeLoopDefinition(value: unknown): LoopDefinition {
   const source = object(value)
   const task = object(source.task_source)
+  const contract = source.contract === undefined ? {} : object(source.contract)
+  const schedule = source.schedule === undefined ? {} : object(source.schedule)
   const verification = object(source.verification_recipe)
   const approval = object(source.approval_policy)
   const workspace = object(source.workspace_policy)
@@ -1310,6 +1314,19 @@ export function decodeLoopDefinition(value: unknown): LoopDefinition {
     schema_version: integer(source.schema_version),
     name: string(source.name, 8192),
     description: string(source.description),
+    employee_id: optionalID(source.employee_id),
+    contract: {
+      goal: source.employee_id === undefined ? '' : string(contract.goal ?? '', 8192),
+      boundaries: array(contract.boundaries ?? [], (item) => string(item, 8192), 32),
+      sop: array(contract.sop ?? [], (item) => string(item, 8192), 32),
+      definition_of_done: array(contract.definition_of_done ?? [], (item) => string(item, 8192), 32),
+      stop_conditions: array(contract.stop_conditions ?? [], (item) => string(item, 8192), 32),
+    },
+    schedule: {
+      kind: enumeration(schedule.kind ?? '', ['', 'manual', 'daily'] as const),
+      local_time: string(schedule.local_time ?? '', 16),
+      timezone: string(schedule.timezone ?? '', 256),
+    },
     workspace_identity: string(source.workspace_identity, 4096),
     enabled: boolean(source.enabled),
     task_source: {
@@ -1362,6 +1379,7 @@ function decodeInvocationValue(value: unknown): LoopInvocation {
     definition_snapshot: decodeLoopDefinition(source.definition_snapshot),
     trigger: id(source.trigger),
     task_snapshot: string(source.task_snapshot),
+    employee_task_id: optionalID(source.employee_task_id),
     session_id: optionalID(source.session_id),
     run_id: optionalID(source.run_id),
     status: enumeration<InvocationStatus>(source.status, INVOCATION_STATUSES),
@@ -1370,6 +1388,25 @@ function decodeInvocationValue(value: unknown): LoopInvocation {
     finished_at: optionalTime(source.finished_at),
     failure_code: optionalString(source.failure_code, 256),
     failure_summary: optionalString(source.failure_summary, 4096),
+  }
+}
+
+export function decodeLoopRuntimeState(value: unknown): LoopRuntimeState {
+  const source = object(value)
+  return {
+    schema_version: integer(source.schema_version),
+    loop_id: id(source.loop_id),
+    definition_revision: integer(source.definition_revision),
+    last_invocation_id: optionalID(source.last_invocation_id),
+    last_status: source.last_status === undefined || source.last_status === ''
+      ? undefined
+      : enumeration<InvocationStatus>(source.last_status, INVOCATION_STATUSES),
+    last_run_at: optionalTime(source.last_run_at),
+    next_run_at: optionalTime(source.next_run_at),
+    consecutive_failures: integer(source.consecutive_failures),
+    total_runs: integer(source.total_runs),
+    successful_runs: integer(source.successful_runs),
+    updated_at: time(source.updated_at),
   }
 }
 

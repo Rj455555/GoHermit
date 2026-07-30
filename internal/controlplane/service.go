@@ -86,6 +86,7 @@ type Service struct {
 	runMu                 sync.Mutex
 	prepareMu             sync.Mutex
 	employeeTaskMu        sync.Mutex
+	loopScheduleMu        sync.Mutex
 	activeSession         string
 	activeRun             string
 	cancelRun             context.CancelFunc

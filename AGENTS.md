@@ -9,10 +9,11 @@ This file stays at the repository root because coding agents discover `AGENTS.md
    `docs/ai/employees.md`.
 3. For the React Workbench, routing, API/SSE state, or Web build, read
    `docs/ai/react-frontend.md`.
-4. Read `docs/ai/handoff-v0.7.md` for the shipped baseline and accepted risks.
-5. Read the target package and its `_test.go` files.
-6. Open only the topic document selected by the map in `docs/ai/context.md`.
-7. For planned work, read `docs/ai/next-development-plan.md`.
+4. For Employee-owned recurring work, read `docs/ai/employee-loops.md`.
+5. Read `docs/ai/handoff-v0.7.md` for the shipped baseline and accepted risks.
+6. Read the target package and its `_test.go` files.
+7. Open only the topic document selected by the map in `docs/ai/context.md`.
+8. For planned work, read `docs/ai/next-development-plan.md`.
 
 Do not load all documentation by default.
 
@@ -29,6 +30,9 @@ Do not load all documentation by default.
 - Do not rewrite unrelated changes or bypass tool policy through shell commands.
 - EmployeeTask execution must reuse Session/Run truth and Session SSE. Prepare
   creates no Run; only explicit Start may execute.
+- Employee Loops may schedule EmployeeTasks, but must not introduce a second
+  execution state machine, Tool lifecycle, Verifier, recovery journal, or SSE
+  stream. Mutable state/logs stay outside generated `LOOP.md`.
 - Hidden Team Worker Sessions are internal recovery evidence. Every public
   Session/Run/Plan/Approval/message/event entrypoint must return not found
   before reading or mutating them.

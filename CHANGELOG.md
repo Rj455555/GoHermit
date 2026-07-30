@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0-dev
+
+- Added Employee-owned recurring Loops with a bounded Goal/Boundaries/SOP
+  contract, Definition of Done, Stop Conditions, manual or daily trigger, and
+  generated `contracts/{loop-id}/LOOP.md`.
+- Added a separate bounded runtime-state projection and an at-most-once
+  single-process scheduler. Every invocation creates an ordinary EmployeeTask
+  and reuses the existing Prepare, Session/Run, Tool, Verification, Approval,
+  recovery, Memory Candidate, Artifact, and SSE paths.
+- Rebuilt the Loops React surface around When / Does / You get cards, a short
+  create flow, and Contract / State / Logs. Detailed model, Team, policy,
+  budget, and verification controls remain in Advanced settings.
+- Added an Employee Loops tab plus Chinese and English UI copy, strict typed
+  runtime decoding, API/contract tests, scheduling/recovery regressions, and
+  deterministic browser coverage.
+
 ## 0.7.0-dev
 
 - Fixed successful Employee creation being reported as failed by aligning the

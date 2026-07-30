@@ -10,6 +10,7 @@ import {
   dryRunLoop,
   getInfo,
   getLoop,
+  getLoopRuntime,
   getLoopInvocation,
   getSession,
   getTeamTemplate,
@@ -31,7 +32,7 @@ import type {
   Info,
   LoopDefinition,
   LoopInvocation,
-  LoopSummary,
+  LoopRuntimeState,
   RuntimeSelection,
   SessionDetailResponse,
   TeamRoleSelection,
@@ -65,6 +66,15 @@ function newDefinition(): LoopDefinition {
     schema_version: 1,
     name: '',
     description: '',
+    employee_id: '',
+    contract: {
+      goal: '',
+      boundaries: ['不保存凭据或未经确认的敏感信息。', '信息不明确时停止并请求 Owner 确认。'],
+      sop: ['检查本次新增材料。', '去重、分类并保留来源。', '验证结果并生成本次报告。'],
+      definition_of_done: ['每条归档信息都有来源。', '本次运行有可审阅的报告。'],
+      stop_conditions: ['来源冲突或分类不明确时停止。'],
+    },
+    schedule: { kind: 'manual', local_time: '', timezone: '' },
     workspace_identity: '',
     enabled: true,
     task_source: { type: 'fixed_prompt', prompt: '' },
@@ -85,6 +95,9 @@ function newDefinition(): LoopDefinition {
 function normalizedDefinition(definition: LoopDefinition): LoopDefinition {
   return {
     ...definition,
+    task_source: definition.employee_id
+      ? { type: 'fixed_prompt', prompt: definition.contract.goal }
+      : definition.task_source,
     verification_recipe: {
       ...definition.verification_recipe,
       checks: definition.verification_recipe.checks.map((check) => ({
@@ -284,7 +297,8 @@ export function LoopsPage() {
   const { actions } = useUI()
   const navigate = useNavigate()
   const connectivity = useConnectivity()
-  const [loops, setLoops] = useState<LoopSummary[]>([])
+  const [loops, setLoops] = useState<LoopDefinition[]>([])
+  const [employees, setEmployees] = useState<EmployeeSummary[]>([])
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState(newDefinition)
   const [info, setInfo] = useState<Info | null>(null)
@@ -295,10 +309,15 @@ export function LoopsPage() {
   useEffect(() => {
     const epoch = ++pageEpoch.current
     const controller = new AbortController()
-    void Promise.all([listLoops({ signal: controller.signal }), getInfo({ signal: controller.signal })])
-      .then(([page, catalog]) => {
+    void Promise.all([
+      listLoops({ signal: controller.signal }),
+      getInfo({ signal: controller.signal }),
+      loadAllActiveEmployees(controller.signal),
+    ])
+      .then(([page, catalog, activeEmployees]) => {
         if (epoch !== pageEpoch.current) return
         setLoops(page.loops)
+        setEmployees(activeEmployees)
         setInfo(catalog)
         setDraft((current) => current.agent_selection.company ? current : {
           ...current,
@@ -351,21 +370,67 @@ export function LoopsPage() {
   }
 
   return (
-    <article className="feature-page">
-      <PageHeader title={t('pages.loops.title')} description={t('loops.description')} />
-      <ul className="entity-list">
-        {loops.map((loop) => <li key={loop.id}><Link to={`/loops/${encodeURIComponent(loop.id)}`}>{loop.name}</Link><span>r{loop.revision}</span></li>)}
-      </ul>
-      <section className="projection-card">
-        <h2>{t('loops.create')}</h2>
-        <DefinitionForm value={draft} onChange={setDraft} info={info} includeId />
-        <button type="button" disabled={creating || !connectivity.canMutate} onClick={() => void saveNew()}>{t('loops.create')}</button>
+    <article className="feature-page loop-workbench">
+      <header className="loop-hero">
+        <span className="loop-kicker">{t('loops.kicker')}</span>
+        <h1>{t('loops.heroTitle')}</h1>
+        <p>{t('loops.heroDescription')}</p>
+      </header>
+      <section className="loop-card-grid" aria-label={t('loops.activeLoops')}>
+        {loops.map((definition) => (
+          <article className="loop-card" key={definition.id}>
+            <div className="loop-card__topline">
+              <span className="loop-pill">{definition.employee_id ? t('loops.employeeOwned') : t('loops.legacy')}</span>
+              <span>{definition.enabled ? t('loops.enabled') : t('loops.disabled')}</span>
+            </div>
+            <h2><Link to={`/loops/${encodeURIComponent(definition.id)}`}>{definition.name}</Link></h2>
+            <p>{definition.contract.goal || definition.description || definition.task_source.prompt}</p>
+            <dl className="loop-card__facts">
+              <div><dt>{t('loops.when')}</dt><dd>{definition.schedule.kind === 'daily' ? `${definition.schedule.local_time} · ${definition.schedule.timezone}` : t('loops.manual')}</dd></div>
+              <div><dt>{t('loops.does')}</dt><dd>{definition.contract.sop[0] ?? definition.task_source.prompt}</dd></div>
+              <div><dt>{t('loops.youGet')}</dt><dd>{definition.contract.definition_of_done[0] ?? t('loops.verifiedReport')}</dd></div>
+            </dl>
+            <Link className="loop-card__action" to={`/loops/${encodeURIComponent(definition.id)}`}>{t('loops.openLoop')} →</Link>
+          </article>
+        ))}
       </section>
-      <section className="projection-card">
-        <h2>{t('loops.import')}</h2>
-        <textarea aria-label={t('loops.import')} value={importText} onChange={(event) => setImportText(event.target.value)} />
-        {strictError ? <p role="alert">{strictError}</p> : null}
-        <button type="button" disabled={!connectivity.canMutate} onClick={() => void importStrict()}>{t('loops.import')}</button>
+      <section className="projection-card loop-quick-create">
+        <div>
+          <span className="loop-kicker">{t('loops.newLoop')}</span>
+          <h2>{t('loops.describeJob')}</h2>
+          <p>{t('loops.quickCreateDescription')}</p>
+        </div>
+        <div className="form-grid">
+          <label>{t('loops.employee')}
+            <select value={draft.employee_id ?? ''} onChange={(event) => setDraft({ ...draft, employee_id: event.target.value })}>
+              <option value="">{t('loops.selectEmployee')}</option>
+              {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.job_title}</option>)}
+            </select>
+          </label>
+          <label>{t('loops.name')}<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value, id: draft.id || `loop-${Date.now().toString(36)}` })} /></label>
+          <label className="wide">{t('loops.goal')}<textarea value={draft.contract.goal} onChange={(event) => setDraft({ ...draft, contract: { ...draft.contract, goal: event.target.value }, task_source: { type: 'fixed_prompt', prompt: event.target.value } })} /></label>
+          <label>{t('loops.scheduleKind')}
+            <select value={draft.schedule.kind || 'manual'} onChange={(event) => {
+              const daily = event.target.value === 'daily'
+              setDraft({ ...draft, schedule: daily ? { kind: 'daily', local_time: draft.schedule.local_time || '02:00', timezone: draft.schedule.timezone || 'Asia/Shanghai' } : { kind: 'manual', local_time: '', timezone: '' } })
+            }}>
+              <option value="manual">{t('loops.manual')}</option>
+              <option value="daily">{t('loops.daily')}</option>
+            </select>
+          </label>
+          {draft.schedule.kind === 'daily' ? <label>{t('loops.runTime')}<input type="time" value={draft.schedule.local_time} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, local_time: event.target.value } })} /></label> : null}
+        </div>
+        <button className="button button--primary" type="button" disabled={creating || !connectivity.canMutate || !draft.employee_id || !draft.name.trim() || !draft.contract.goal.trim()} onClick={() => void saveNew()}>{t('loops.createAndConfigure')}</button>
+        <details className="advanced-panel">
+          <summary>{t('loops.advanced')}</summary>
+          <DefinitionForm value={draft} onChange={setDraft} info={info} includeId />
+          <section>
+            <h3>{t('loops.import')}</h3>
+            <textarea aria-label={t('loops.import')} value={importText} onChange={(event) => setImportText(event.target.value)} />
+            {strictError ? <p role="alert">{strictError}</p> : null}
+            <button type="button" disabled={!connectivity.canMutate} onClick={() => void importStrict()}>{t('loops.import')}</button>
+          </section>
+        </details>
       </section>
     </article>
   )
@@ -472,6 +537,7 @@ export function LoopDetailPage() {
   const { actions } = useUI()
   const connectivity = useConnectivity()
   const [definition, setDefinition] = useState<LoopDefinition | null>(null)
+  const [runtime, setRuntime] = useState<LoopRuntimeState | null>(null)
   const [history, setHistory] = useState<LoopInvocation[]>([])
   const [employees, setEmployees] = useState<EmployeeSummary[]>([])
   const [readiness, setReadiness] = useState<Record<string, EmployeeDryRun>>({})
@@ -490,8 +556,9 @@ export function LoopDetailPage() {
     const controller = new AbortController()
     requestController.current = controller
     try {
-      const [next, invocations, activeEmployees, nextTeam, catalog] = await Promise.all([
+      const [next, runtimeState, invocations, activeEmployees, nextTeam, catalog] = await Promise.all([
         getLoop(loopId, { signal: controller.signal }),
+        getLoopRuntime(loopId, { signal: controller.signal }),
         listLoopInvocations(loopId, { signal: controller.signal }),
         loadAllActiveEmployees(controller.signal),
         getTeamTemplate({ signal: controller.signal }),
@@ -506,6 +573,7 @@ export function LoopDetailPage() {
       }))
       if (epoch !== requestEpoch.current) return
       setDefinition(next)
+      setRuntime(runtimeState)
       setHistory(invocations.invocations as LoopInvocation[])
       setEmployees(activeEmployees)
       setTeam(nextTeam)
@@ -582,24 +650,61 @@ export function LoopDetailPage() {
   }
 
   if (notFound) return <ErrorState title={t('loops.notFound')} description={t('loops.notFoundDescription')} />
-  if (!definition || !team) return <p role="status">{t('common.loading')}</p>
+  if (!definition || !team || !runtime) return <p role="status">{t('common.loading')}</p>
   return (
-    <article className="feature-page">
-      <PageHeader title={definition.name} description={`${definition.id} · r${definition.revision}`} />
-      <section className="projection-card">
-        <DefinitionForm value={definition} onChange={(next) => { setDefinition(next); setReport(null) }} info={info} includeId={false} />
+    <article className="feature-page loop-workbench">
+      <PageHeader title={definition.name} description={`${definition.employee_id ?? t('loops.legacy')} · ${definition.id} · r${definition.revision}`} />
+      <div className="loop-command-bar">
+        <div><span>{t('loops.nextRun')}</span><strong>{runtime.next_run_at ? new Date(runtime.next_run_at).toLocaleString() : t('loops.manual')}</strong></div>
+        <div><span>{t('loops.lastStatus')}</span><strong>{runtime.last_status ? translatedEnum(t, 'invocationStatus', runtime.last_status) : t('loops.neverRun')}</strong></div>
+        <div><span>{t('loops.successRate')}</span><strong>{runtime.total_runs ? `${runtime.successful_runs}/${runtime.total_runs}` : '—'}</strong></div>
         <div className="button-row">
-          <button type="button" disabled={busy || !connectivity.canMutate} onClick={() => void mutate('save')}>{t('loops.save')}</button>
           <button type="button" disabled={busy || !connectivity.canMutate} onClick={() => void mutate('dry-run')}>{t('loops.dryRun')}</button>
-          <button type="button" disabled={busy || !connectivity.canMutate || !report?.ready} onClick={() => void mutate('start')}>{t('loops.start')}</button>
+          <button className="button button--primary" type="button" disabled={busy || !connectivity.canMutate || !report?.ready} onClick={() => void mutate('start')}>{t('loops.runNow')}</button>
         </div>
-        {report ? <DryRunProjection report={report} /> : <p>{t('loops.runDryFirst')}</p>}
-      </section>
-      <TeamEditor team={team} setTeam={setTeam} employees={employees} readiness={readiness} info={info} onSave={() => void saveTeam()} busy={busy || !connectivity.canMutate} />
-      <section className="projection-card">
-        <h2>{t('loops.history')}</h2>
-        <ul>{history.map((invocation) => <li key={invocation.id}><Link to={`/loops/${encodeURIComponent(definition.id)}/invocations/${encodeURIComponent(invocation.id)}`}>{invocation.id}</Link> · {translatedEnum(t, 'invocationStatus', invocation.status)}</li>)}</ul>
-      </section>
+      </div>
+      {report ? <DryRunProjection report={report} /> : <p className="stale-notice">{t('loops.runDryFirst')}</p>}
+      <div className="loop-detail-grid">
+        <section className="projection-card loop-contract-panel">
+          <span className="loop-kicker">LOOP.md</span>
+          <h2>{t('loops.contract')}</h2>
+          <label>{t('loops.goal')}<textarea value={definition.contract.goal} onChange={(event) => setDefinition({ ...definition, contract: { ...definition.contract, goal: event.target.value } })} /></label>
+          <label>{t('loops.boundaries')}<textarea value={definition.contract.boundaries.join('\n')} onChange={(event) => setDefinition({ ...definition, contract: { ...definition.contract, boundaries: event.target.value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean) } })} /></label>
+          <label>{t('loops.sop')}<textarea value={definition.contract.sop.join('\n')} onChange={(event) => setDefinition({ ...definition, contract: { ...definition.contract, sop: event.target.value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean) } })} /></label>
+          <label>{t('loops.definitionOfDone')}<textarea value={definition.contract.definition_of_done.join('\n')} onChange={(event) => setDefinition({ ...definition, contract: { ...definition.contract, definition_of_done: event.target.value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean) } })} /></label>
+          <label>{t('loops.stopConditions')}<textarea value={definition.contract.stop_conditions.join('\n')} onChange={(event) => setDefinition({ ...definition, contract: { ...definition.contract, stop_conditions: event.target.value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean) } })} /></label>
+          <div className="form-grid">
+            <label>{t('loops.scheduleKind')}<select value={definition.schedule.kind || 'manual'} onChange={(event) => setDefinition({ ...definition, schedule: event.target.value === 'daily' ? { kind: 'daily', local_time: definition.schedule.local_time || '02:00', timezone: definition.schedule.timezone || 'Asia/Shanghai' } : { kind: 'manual', local_time: '', timezone: '' } })}><option value="manual">{t('loops.manual')}</option><option value="daily">{t('loops.daily')}</option></select></label>
+            {definition.schedule.kind === 'daily' ? <label>{t('loops.runTime')}<input type="time" value={definition.schedule.local_time} onChange={(event) => setDefinition({ ...definition, schedule: { ...definition.schedule, local_time: event.target.value } })} /></label> : null}
+          </div>
+          <div className="button-row">
+            <button className="button button--primary" type="button" disabled={busy || !connectivity.canMutate} onClick={() => void mutate('save')}>{t('loops.saveContract')}</button>
+            <a className="button button--secondary" href={`/api/loops/${encodeURIComponent(definition.id)}/contract.md`} target="_blank" rel="noreferrer">{t('loops.openMarkdown')}</a>
+          </div>
+        </section>
+        <section className="projection-card loop-state-panel">
+          <span className="loop-kicker">state.json</span>
+          <h2>{t('loops.state')}</h2>
+          <dl>
+            <dt>{t('loops.nextRun')}</dt><dd>{runtime.next_run_at ?? '—'}</dd>
+            <dt>{t('loops.lastRun')}</dt><dd>{runtime.last_run_at ?? '—'}</dd>
+            <dt>{t('loops.lastStatus')}</dt><dd>{runtime.last_status ? translatedEnum(t, 'invocationStatus', runtime.last_status) : '—'}</dd>
+            <dt>{t('loops.failures')}</dt><dd>{runtime.consecutive_failures}</dd>
+            <dt>{t('loops.totalRuns')}</dt><dd>{runtime.total_runs}</dd>
+          </dl>
+          <p>{t('loops.stateExplanation')}</p>
+        </section>
+        <section className="projection-card loop-log-panel">
+          <span className="loop-kicker">runs/</span>
+          <h2>{t('loops.logs')}</h2>
+          {history.length ? <ol className="loop-run-list">{history.map((invocation) => <li key={invocation.id}><Link to={`/loops/${encodeURIComponent(definition.id)}/invocations/${encodeURIComponent(invocation.id)}`}><strong>{translatedEnum(t, 'invocationStatus', invocation.status)}</strong><span>{new Date(invocation.created_at).toLocaleString()}</span><small>{invocation.failure_summary || invocation.id}</small></Link></li>)}</ol> : <p>{t('loops.noRuns')}</p>}
+        </section>
+      </div>
+      <details className="advanced-panel projection-card">
+        <summary>{t('loops.advanced')}</summary>
+        <DefinitionForm value={definition} onChange={(next) => { setDefinition(next); setReport(null) }} info={info} includeId={false} />
+        {!definition.employee_id ? <TeamEditor team={team} setTeam={setTeam} employees={employees} readiness={readiness} info={info} onSave={() => void saveTeam()} busy={busy || !connectivity.canMutate} /> : null}
+      </details>
     </article>
   )
 }

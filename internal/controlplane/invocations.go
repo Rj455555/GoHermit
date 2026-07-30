@@ -45,6 +45,10 @@ const (
 // budget timeout, but no enforcement reaches the run. Verification Recipe
 // execution and acceptance are enforced below through the existing pipeline.
 func (s *Service) StartLoopInvocation(ctx context.Context, loopID string) (loop.Invocation, error) {
+	return s.startLoopInvocation(ctx, loopID, loop.TriggerManual)
+}
+
+func (s *Service) startLoopInvocation(ctx context.Context, loopID, trigger string) (loop.Invocation, error) {
 	if err := s.loopStoreAvailable(); err != nil {
 		return loop.Invocation{}, err
 	}
@@ -53,7 +57,14 @@ func (s *Service) StartLoopInvocation(ctx context.Context, loopID string) (loop.
 		return loop.Invocation{}, classified(KindNotFound, err)
 	}
 	now := time.Now().UTC()
-	invocation, err := loop.NewInvocation(definition, loop.TriggerManual, definition.TaskSource.Prompt, now)
+	taskSnapshot := definition.TaskSource.Prompt
+	if definition.EmployeeID != "" {
+		taskSnapshot, err = loop.EmployeeTaskPrompt(definition)
+		if err != nil {
+			return loop.Invocation{}, classified(KindInternal, err)
+		}
+	}
+	invocation, err := loop.NewInvocation(definition, trigger, taskSnapshot, now)
 	if err != nil {
 		// The store validates on load, so this is defense in depth: an
 		// invalid definition can never be snapshotted or launched.
@@ -70,6 +81,9 @@ func (s *Service) StartLoopInvocation(ctx context.Context, loopID string) (loop.
 	}
 	if err = s.loopStore.SaveInvocation(invocation); err != nil {
 		return loop.Invocation{}, classified(KindInternal, err)
+	}
+	if definition.EmployeeID != "" {
+		return s.startEmployeeLoopInvocation(ctx, invocation)
 	}
 	selection := definition.AgentSelection
 	sess, err := s.CreateSession(ctx, CreateSessionInput{

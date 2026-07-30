@@ -166,15 +166,18 @@ test('queued Task requires explicit Prepare then Start and restores through hist
 
 test('Loop Definition, Team, Dry Run, and Invocation use structured authoritative projections', async ({ page }) => {
   await page.goto('/loops/daily-review')
+  await expect(page.getByRole('heading', { name: 'Daily review' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /循环契约|Loop contract/u })).toBeVisible()
+  await page.getByText(/高级设置|Advanced settings/u).click()
   await expect(page.locator('input[value="Daily review"]')).toBeVisible()
   await expect(page.getByRole('heading', { name: /验证检查|Verification checks/u })).toBeVisible()
   await expect(page.getByTestId('team-role-builder')).toHaveValue('employee-builder')
   await expect(page.getByText(/Builder · r2 · (就绪|Ready)/u)).toBeVisible()
-  await expect(page.getByRole('button', { name: /启动|Start/u })).toBeDisabled()
+  await expect(page.getByRole('button', { name: /立即运行|Run now/u })).toBeDisabled()
 
   await page.getByRole('button', { name: 'Dry Run' }).click()
   await expect(page.getByRole('heading', { name: /Dry Run 结果|Dry Run result/u })).toBeVisible()
-  await expect(page.getByRole('button', { name: /启动|Start/u })).toBeEnabled()
+  await expect(page.getByRole('button', { name: /立即运行|Run now/u })).toBeEnabled()
 
   await page.goto('/loops/daily-review/invocations/invocation-1')
   await expect(page.getByRole('heading', { name: /Definition 快照|Definition snapshot/u })).toBeVisible()

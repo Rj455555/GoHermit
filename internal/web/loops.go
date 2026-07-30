@@ -73,6 +73,32 @@ func (s *Server) getLoop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, definition)
 }
 
+func (s *Server) getLoopRuntime(w http.ResponseWriter, r *http.Request) {
+	state, err := s.svc.LoopRuntimeState(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
+func (s *Server) getLoopContract(w http.ResponseWriter, r *http.Request) {
+	definition, err := s.svc.GetLoop(r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	markdown, err := loop.RenderContractMarkdown(definition)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", `inline; filename="LOOP.md"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(markdown))
+}
+
 func (s *Server) updateLoop(w http.ResponseWriter, r *http.Request) {
 	if !requireSameOrigin(w, r) {
 		return

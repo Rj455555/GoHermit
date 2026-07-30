@@ -33,6 +33,8 @@ const (
 const (
 	definitionsFile = "definitions.json"
 	invocationsDir  = "invocations"
+	contractsDir    = "contracts"
+	statesDir       = "states"
 )
 
 // ErrDefinitionNotFound lets application services distinguish a missing
@@ -85,6 +87,9 @@ func (s *Store) Dir() string {
 func (s *Store) SaveDefinition(d loop.Definition) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := validateLoopPathID(d.ID); err != nil {
+		return err
+	}
 	body, err := s.loadDefinitions()
 	if err != nil {
 		return err
@@ -100,7 +105,10 @@ func (s *Store) SaveDefinition(d loop.Definition) error {
 				return err
 			}
 			body.Definitions[i] = d
-			return s.saveDefinitions(body)
+			if err = s.saveDefinitions(body); err != nil {
+				return err
+			}
+			return s.saveContract(d)
 		}
 	}
 	if len(body.Definitions) >= MaxDefinitions {
@@ -112,7 +120,10 @@ func (s *Store) SaveDefinition(d loop.Definition) error {
 		return err
 	}
 	body.Definitions = append(body.Definitions, d)
-	return s.saveDefinitions(body)
+	if err = s.saveDefinitions(body); err != nil {
+		return err
+	}
+	return s.saveContract(d)
 }
 
 // GetDefinition returns the stored definition for id.
@@ -157,9 +168,46 @@ func (s *Store) DeleteDefinition(id string) error {
 			continue
 		}
 		body.Definitions = append(body.Definitions[:i], body.Definitions[i+1:]...)
-		return s.saveDefinitions(body)
+		if err = s.saveDefinitions(body); err != nil {
+			return err
+		}
+		_ = os.Remove(filepath.Join(s.dir, contractsDir, id, "LOOP.md"))
+		_ = os.Remove(filepath.Join(s.dir, statesDir, id+".json"))
+		return nil
 	}
 	return fmt.Errorf("%w: %q", ErrDefinitionNotFound, id)
+}
+
+func (s *Store) saveContract(definition loop.Definition) error {
+	if err := validateLoopPathID(definition.ID); err != nil {
+		return err
+	}
+	path := filepath.Join(s.dir, contractsDir, definition.ID, "LOOP.md")
+	if definition.EmployeeID == "" {
+		_ = os.Remove(path)
+		return nil
+	}
+	markdown, err := loop.RenderContractMarkdown(definition)
+	if err != nil {
+		return err
+	}
+	if len(markdown) > MaxStoreBytes {
+		return errors.New("loop contract exceeds size limit")
+	}
+	if err = storage.AtomicWrite(path, []byte(markdown), 0600); err != nil {
+		return fmt.Errorf("save loop contract: %w", err)
+	}
+	return nil
+}
+
+func validateLoopPathID(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > loop.MaxIDBytes || filepath.IsAbs(id) ||
+		filepath.Clean(id) != id || filepath.Base(id) != id || id == "." || id == ".." ||
+		strings.Contains(id, "%") || strings.ContainsAny(id, `/\`) {
+		return errors.New("loop id is invalid")
+	}
+	return nil
 }
 
 // loadDefinitions reads definitions.json. A missing file yields an empty

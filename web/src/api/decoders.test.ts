@@ -20,6 +20,7 @@ import {
   decodeLoopDefinitions,
   decodeLoopInvocation,
   decodeLoopInvocationList,
+  decodeLoopRuntimeState,
   decodeLoops,
   decodeOwnerProfile,
   decodeRunReference,
@@ -263,6 +264,24 @@ describe('endpoint decoders', () => {
       timeout_seconds: 120,
     })
     expect(decodeLoopDefinitions({ loops: [definition] }).loops).toHaveLength(1)
+    expect(decodeLoopRuntimeState({
+      schema_version: 1,
+      loop_id: 'loop-1',
+      definition_revision: 3,
+      last_invocation_id: 'invocation-1',
+      last_status: 'completed',
+      last_run_at: now,
+      next_run_at: now,
+      consecutive_failures: 0,
+      total_runs: 4,
+      successful_runs: 3,
+      updated_at: now,
+    })).toMatchObject({
+      loop_id: 'loop-1',
+      last_invocation_id: 'invocation-1',
+      total_runs: 4,
+      successful_runs: 3,
+    })
     expect(decodeLoopInvocation(invocation).id).toBe('invocation-1')
     expect(decodeLoopInvocationList({ invocations: [invocation], limit: 50 }).limit).toBe(50)
     expect(decodeDryRun({

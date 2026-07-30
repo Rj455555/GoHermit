@@ -439,6 +439,7 @@ export interface InvocationSummary {
   definition_revision: number
   trigger: string
   task_snapshot: string
+  employee_task_id?: string | undefined
   session_id?: string | undefined
   run_id?: string | undefined
   status: InvocationStatus
@@ -717,6 +718,19 @@ export interface EmployeeTask {
 export interface LoopDefinition extends LoopSummary {
   schema_version: number
   description: string
+  employee_id?: string | undefined
+  contract: {
+    goal: string
+    boundaries: string[]
+    sop: string[]
+    definition_of_done: string[]
+    stop_conditions: string[]
+  }
+  schedule: {
+    kind: '' | 'manual' | 'daily'
+    local_time: string
+    timezone: string
+  }
   workspace_identity: string
   task_source: { type: 'fixed_prompt'; prompt: string }
   agent_selection: RuntimeSelection
@@ -736,6 +750,20 @@ export interface LoopDefinition extends LoopSummary {
   approval_policy: { require_for_mutation: boolean }
   workspace_policy: { read_only: boolean; require_clean_git: boolean }
   output_policy: { include_diff: boolean; max_report_bytes: number }
+}
+
+export interface LoopRuntimeState {
+  schema_version: number
+  loop_id: string
+  definition_revision: number
+  last_invocation_id?: string | undefined
+  last_status?: InvocationStatus | undefined
+  last_run_at?: string | undefined
+  next_run_at?: string | undefined
+  consecutive_failures: number
+  total_runs: number
+  successful_runs: number
+  updated_at: string
 }
 
 export interface LoopInvocation extends InvocationSummary {
