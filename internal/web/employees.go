@@ -15,6 +15,31 @@ import (
 
 const maxEmployeeRequestBytes = 512 << 10
 
+type employeeRecordResponse struct {
+	Employee        employeeResponse         `json:"employee"`
+	ProjectBindings []projectBindingResponse `json:"project_bindings"`
+}
+
+type employeeResponse struct {
+	employee.Employee
+	ProjectCount       int                      `json:"project_count"`
+	Responsibilities   []string                 `json:"responsibilities"`
+	BehaviorBoundaries []string                 `json:"behavior_boundaries"`
+	SkillBindings      []employee.SkillBinding  `json:"skill_bindings"`
+	ProjectBindingIDs  []string                 `json:"project_binding_ids"`
+	PermissionPolicy   permissionPolicyResponse `json:"permission_policy"`
+}
+
+type permissionPolicyResponse struct {
+	AllowedCapabilities []string `json:"allowed_capabilities"`
+	NetworkAllowed      bool     `json:"network_allowed"`
+}
+
+type projectBindingResponse struct {
+	employee.ProjectBinding
+	AllowedToolCapabilities []string `json:"allowed_tool_capabilities"`
+}
+
 func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
 	if !requireSameOrigin(w, r) {
 		return
@@ -28,7 +53,7 @@ func (s *Server) createEmployee(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, record)
+	writeEmployeeRecord(w, http.StatusCreated, record)
 }
 
 func (s *Server) listEmployees(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +75,7 @@ func (s *Server) getEmployee(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, record)
+	writeEmployeeRecord(w, http.StatusOK, record)
 }
 
 func (s *Server) updateEmployee(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +91,7 @@ func (s *Server) updateEmployee(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, record)
+	writeEmployeeRecord(w, http.StatusOK, record)
 }
 
 func (s *Server) dryRunEmployee(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +135,46 @@ func (s *Server) transitionEmployee(w http.ResponseWriter, r *http.Request, tran
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, record)
+	writeEmployeeRecord(w, http.StatusOK, record)
+}
+
+func writeEmployeeRecord(w http.ResponseWriter, status int, record employeestore.Record) {
+	bindings := make([]projectBindingResponse, len(record.ProjectBindings))
+	for index, binding := range record.ProjectBindings {
+		bindings[index] = projectBindingResponse{
+			ProjectBinding:          binding,
+			AllowedToolCapabilities: nonNilStrings(binding.AllowedToolCapabilities),
+		}
+	}
+	writeJSON(w, status, employeeRecordResponse{
+		Employee: employeeResponse{
+			Employee:           record.Employee,
+			ProjectCount:       len(record.ProjectBindings),
+			Responsibilities:   nonNilStrings(record.Employee.Responsibilities),
+			BehaviorBoundaries: nonNilStrings(record.Employee.BehaviorBoundaries),
+			SkillBindings:      nonNilSkillBindings(record.Employee.SkillBindings),
+			ProjectBindingIDs:  nonNilStrings(record.Employee.ProjectBindingIDs),
+			PermissionPolicy: permissionPolicyResponse{
+				AllowedCapabilities: nonNilStrings(record.Employee.PermissionPolicy.AllowedCapabilities),
+				NetworkAllowed:      record.Employee.PermissionPolicy.NetworkAllowed,
+			},
+		},
+		ProjectBindings: bindings,
+	})
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func nonNilSkillBindings(values []employee.SkillBinding) []employee.SkillBinding {
+	if values == nil {
+		return []employee.SkillBinding{}
+	}
+	return values
 }
 
 func (s *Server) employeeActivity(w http.ResponseWriter, r *http.Request) {

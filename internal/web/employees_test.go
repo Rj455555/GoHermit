@@ -97,6 +97,63 @@ func TestEmployeeAPIAndSingleWorkspaceProjects(t *testing.T) {
 	}
 }
 
+func TestEmployeeRecordResponseKeepsCompatibilityFields(t *testing.T) {
+	server, workspace, _ := newEmployeeTestServer(t)
+	handler := server.Handler()
+	input := controlplane.EmployeeInput{
+		Employee: webEmployeeDraft("employee-wire"),
+		ProjectBindings: []employee.ProjectBinding{{
+			ID: "project-wire", Label: "Current workspace", WorkspaceRealPath: workspace,
+			ReadAllowed: true,
+		}},
+	}
+	created := requestJSON(t, handler, http.MethodPost, "/api/employees", input, "")
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status %d: %s", created.Code, created.Body.String())
+	}
+	assertEmployeeRecordCompatibilityFields(t, created.Body.Bytes())
+
+	loaded := requestJSON(t, handler, http.MethodGet, "/api/employees/employee-wire", nil, "")
+	if loaded.Code != http.StatusOK {
+		t.Fatalf("get status %d: %s", loaded.Code, loaded.Body.String())
+	}
+	assertEmployeeRecordCompatibilityFields(t, loaded.Body.Bytes())
+}
+
+func assertEmployeeRecordCompatibilityFields(t *testing.T, raw []byte) {
+	t.Helper()
+	var record map[string]any
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	rawEmployee, ok := record["employee"].(map[string]any)
+	if !ok {
+		t.Fatalf("employee response missing employee object: %s", raw)
+	}
+	if got := rawEmployee["project_count"]; got != float64(1) {
+		t.Fatalf("project_count = %#v, want 1: %s", got, raw)
+	}
+	for _, field := range []string{"responsibilities", "behavior_boundaries", "skill_bindings", "project_binding_ids"} {
+		if _, exists := rawEmployee[field]; !exists {
+			t.Fatalf("employee response omitted %s: %s", field, raw)
+		}
+		if _, ok := rawEmployee[field].([]any); !ok {
+			t.Fatalf("employee field %s = %#v, want array", field, rawEmployee[field])
+		}
+	}
+	rawBindings, ok := record["project_bindings"].([]any)
+	if !ok || len(rawBindings) != 1 {
+		t.Fatalf("project_bindings = %#v, want one binding", record["project_bindings"])
+	}
+	binding, ok := rawBindings[0].(map[string]any)
+	if !ok {
+		t.Fatalf("project binding = %#v, want object", rawBindings[0])
+	}
+	if capabilities, ok := binding["allowed_tool_capabilities"].([]any); !ok || len(capabilities) != 0 {
+		t.Fatalf("allowed_tool_capabilities = %#v, want empty array", binding["allowed_tool_capabilities"])
+	}
+}
+
 func TestEmployeeAPIStrictJSONAndSameOrigin(t *testing.T) {
 	server, workspace, _ := newEmployeeTestServer(t)
 	handler := server.Handler()
