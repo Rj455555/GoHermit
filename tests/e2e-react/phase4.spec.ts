@@ -30,10 +30,51 @@ test('archived Employee is direct-loadable, structured, non-empty, and fully rea
   await expect(page.getByText(/Employee 已归档|Employee archived/u)).toBeVisible()
 })
 
+test('quick create persists a conservative Employee from only a Chinese name', async ({ page }) => {
+  await page.goto('/employees')
+  await page.getByRole('button', { name: '创建 Employee' }).click()
+
+  await expect(page.getByRole('heading', { name: '几秒钟创建电子员工' })).toBeVisible()
+  await page.getByLabel('名称').fill('档案管理员')
+  const createRequest = page.waitForRequest((request) =>
+    request.url().endsWith('/api/employees') && request.method() === 'POST')
+  await page.getByRole('button', { name: '立即创建' }).click()
+  const body = (await createRequest).postDataJSON() as {
+    employee: Record<string, unknown>
+    project_bindings: Array<Record<string, unknown>>
+  }
+
+  expect(body.employee.id).toMatch(/^employee-[a-z0-9._-]+$/u)
+  expect(body.employee.name).toBe('档案管理员')
+  expect(body.employee.job_title).toBe('岗位待配置')
+  expect(body.employee.charter).toBe('角色细节尚未配置。请在分配工作前完善这位电子员工。')
+  expect(body.employee.skill_bindings).toEqual([])
+  expect(body.employee.permission_policy).toEqual({
+    allowed_capabilities: ['read'],
+    network_allowed: false,
+  })
+  expect(body.employee.memory_policy).toEqual({
+    candidate_generation: false,
+    promotion: 'disabled',
+    max_context_facts: 0,
+    max_context_bytes: 0,
+  })
+  expect(body.project_bindings).toEqual([
+    expect.objectContaining({
+      mutation_allowed: false,
+      network_allowed: false,
+      allowed_tool_capabilities: ['read'],
+    }),
+  ])
+  await expect(page).toHaveURL(/\/employees\/employee-[a-z0-9._-]+$/u)
+  await expect(page.getByRole('heading', { name: '档案管理员' })).toBeVisible()
+})
+
 test('nine-step Employee wizard persists exact configuration and uses real Dry Run', async ({ page }) => {
   await page.goto('/employees')
   await page.getByRole('button', { name: /English/u }).click()
   await page.getByRole('button', { name: 'Create Employee' }).click()
+  await page.getByRole('button', { name: 'Advanced setup' }).click()
 
   await expect(page.getByTestId('employee-wizard-step')).toContainText('Step 1 of 9')
   await page.getByLabel('Employee ID').fill('employee-gate')
@@ -65,6 +106,7 @@ test('guided Employee setup generates a safe draft and sends only writable DTO f
   await page.goto('/employees')
   await page.getByRole('button', { name: /English/u }).click()
   await page.getByRole('button', { name: 'Create Employee' }).click()
+  await page.getByRole('button', { name: 'Advanced setup' }).click()
 
   await page.getByLabel('Employee name').fill('Mina')
   await page.getByLabel('What should this Employee take care of?').fill(

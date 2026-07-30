@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, Sparkles } from 'lucide-react'
+import { ArrowRight, Settings2, Sparkles, UserRoundPlus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -79,6 +79,7 @@ export function EmployeeWizard({ onClose, onCreated }: {
 }) {
   const { t, i18n } = useTranslation()
   const { actions } = useUI()
+  const [advanced, setAdvanced] = useState(false)
   const [step, setStep] = useState(0)
   const [employee, setEmployee] = useState(initialEmployee)
   const [guided, setGuided] = useState<{
@@ -360,6 +361,57 @@ export function EmployeeWizard({ onClose, onCreated }: {
     }
   }
 
+  async function quickCreate() {
+    if (busy) return
+    const name = employee.name.trim()
+    if (name === '') {
+      setStepError('employees.quick.nameRequired')
+      return
+    }
+    if (!catalogReady
+      || employee.default_selection.company === ''
+      || employee.default_selection.access === ''
+      || employee.default_selection.model === ''
+      || employee.agent_profile === ''
+      || selectedProject === '') {
+      setStepError('employees.validation.runtime')
+      return
+    }
+    setBusy(true)
+    setStepError(null)
+    try {
+      const employeeId = ensureEmployeeId(employee.id, name, draftSuffix)
+      const project = projectBinding(employeeId)
+      const record = await createEmployee({
+        employee: {
+          ...employee,
+          id: employeeId,
+          name,
+          job_title: t('employees.quick.pendingJobTitle'),
+          charter: t('employees.quick.pendingCharter'),
+          responsibilities: [],
+          behavior_boundaries: [],
+          skill_bindings: [],
+          project_binding_ids: [project.id],
+          memory_policy: {
+            candidate_generation: false,
+            promotion: 'disabled',
+            max_context_facts: 0,
+            max_context_bytes: 0,
+          },
+        },
+        project_bindings: [project],
+      })
+      actions.showToast({ messageKey: 'employees.created', tone: 'success' })
+      onCreated(record)
+    } catch (error) {
+      setStepError('employees.validation.server')
+      actions.showToast({ messageKey: mutationKey(error), tone: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function next() {
     if (!validateStep(step)) return
     if (step === 7) {
@@ -371,6 +423,59 @@ export function EmployeeWizard({ onClose, onCreated }: {
 
   const company = companies.find((item) => item.id === employee.default_selection.company)
   const access = company?.access.find((item) => item.id === employee.default_selection.access)
+
+  if (!advanced) {
+    return (
+      <section className="projection-card employee-wizard quick-employee" aria-label={t('employees.create')}>
+        <div className="quick-employee__heading">
+          <span className="guided-employee-card__icon"><UserRoundPlus size={19} /></span>
+          <div>
+            <span className="section-kicker">{t('employees.quick.kicker')}</span>
+            <h2>{t('employees.quick.title')}</h2>
+            <p>{t('employees.quick.description')}</p>
+          </div>
+        </div>
+        {stepError ? <p className="form-error" role="alert">{t(stepError)}</p> : null}
+        <div className="quick-employee__form">
+          <label>{t('employees.name')}
+            <input
+              autoFocus
+              value={employee.name}
+              onChange={(event) => patch({ name: event.target.value })}
+              placeholder={t('employees.quick.namePlaceholder')}
+            />
+          </label>
+          <p className="quick-employee__defaults">{t('employees.quick.defaults')}</p>
+        </div>
+        <div className="button-row quick-employee__actions">
+          <button type="button" className="button button--secondary" onClick={onClose}>
+            {t('actions.cancel')}
+          </button>
+          <button
+            type="button"
+            className="button button--secondary"
+            disabled={busy}
+            onClick={() => {
+              setStepError(null)
+              setAdvanced(true)
+            }}
+          >
+            <Settings2 size={16} />
+            {t('employees.quick.advanced')}
+          </button>
+          <button
+            type="button"
+            className="button button--primary"
+            disabled={busy || !catalogReady}
+            onClick={() => void quickCreate()}
+          >
+            <UserRoundPlus size={16} />
+            {busy ? t('employees.quick.creating') : t('employees.quick.createNow')}
+          </button>
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section className="projection-card employee-wizard" aria-label={t('employees.create')}>

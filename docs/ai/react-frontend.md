@@ -124,10 +124,20 @@ Employee mutations have an additional DTO boundary: the UI reads
 remove it before strict Employee requests. Do not send list/detail-only
 projection fields back through mutations.
 
-The Employee wizard can generate a local, deterministic role draft from a
-short Owner brief and one of the developer, researcher, operations, or writer
-presets. It fills identity, charter, responsibilities, boundaries, and a
-conservative permission ceiling, then lets the Owner jump to the policy review.
+Employee creation opens with a name-only quick path. It immediately persists a
+valid Employee using the current ready model/Agent, current Workspace, empty
+Skill/Knowledge selections, disabled Memory, pending role text, and a
+conservative read-only/no-network policy. It does not run Dry Run, create a
+Task, or start execution. The detail page is the progressive configuration
+surface for finishing the role, model, Skills, Knowledge, Memory, project
+policy, and budget. The full nine-step workflow remains available behind an
+explicit advanced-setup action.
+
+The advanced Employee wizard can generate a local, deterministic role draft
+from a short Owner brief and one of the developer, researcher, operations, or
+writer presets. It fills identity, charter, responsibilities, boundaries, and
+a conservative permission ceiling, then lets the Owner jump to the policy
+review.
 Employee display names and job titles remain Unicode. The separate Store ID is
 bounded ASCII because it participates in fail-closed storage paths; when an
 Owner enters a non-path-safe value, the identity step previews and generates a
