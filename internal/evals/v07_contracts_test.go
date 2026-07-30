@@ -393,9 +393,55 @@ func TestDockerBuildContextUsesExplicitAllowlist(t *testing.T) {
 		"**/coverage",
 		"playwright-report",
 		"test-results",
+		".env",
+		".env.*",
+		"**/.env",
+		"**/.env.*",
+		"*.pem",
+		"**/*.pem",
+		"*.key",
+		"**/*.key",
+		"*.p12",
+		"**/*.p12",
+		"credentials.json",
+		"**/credentials.json",
 	} {
 		if !ignored[required] {
 			t.Errorf(".dockerignore is missing %q", required)
+		}
+	}
+}
+
+func TestDockerAcceptanceUsesScopedCleanup(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	scriptBytes, err := os.ReadFile(filepath.Join(root, "internal", "evals", "docker_acceptance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(scriptBytes)
+	for _, required := range []string{
+		`trap cleanup EXIT`,
+		`trap 'exit 130' INT`,
+		`trap 'exit 143' TERM`,
+		`down --remove-orphans --rmi local`,
+		`docker image rm "${build_audit_image}"`,
+		`GOHERMIT_ACCEPTANCE_INJECT_FAILURE_AFTER_BUILD_AUDIT`,
+		`kill -TERM "$$"`,
+		`gohermit-phase5-acceptance-`,
+		`-name '.env'`,
+		`-name '.env.*'`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Errorf("Docker acceptance is missing scoped cleanup contract %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"docker builder prune",
+		"docker system prune",
+		"docker image prune",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("Docker acceptance contains global cleanup %q", forbidden)
 		}
 	}
 }

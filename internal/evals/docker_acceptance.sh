@@ -2,12 +2,18 @@
 set -euo pipefail
 
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-acceptance_root="$(mktemp -d)"
-override_file="${acceptance_root}/compose.acceptance.yaml"
 project_name="${GOHERMIT_ACCEPTANCE_PROJECT:-gohermit-phase5-acceptance-$$}"
 acceptance_port="${GOHERMIT_ACCEPTANCE_PORT:-18787}"
+if [[ ! "${project_name}" =~ ^gohermit-phase5-acceptance-[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+  echo "GOHERMIT_ACCEPTANCE_PROJECT must be a unique gohermit-phase5-acceptance-* name" >&2
+  exit 1
+fi
 if [[ ! "${acceptance_port}" =~ ^[0-9]+$ ]] || (( acceptance_port < 1024 || acceptance_port > 65535 )); then
   echo "GOHERMIT_ACCEPTANCE_PORT must be an unprivileged TCP port" >&2
+  exit 1
+fi
+if (( acceptance_port == 8787 )); then
+  echo "GOHERMIT_ACCEPTANCE_PORT must not target the production port" >&2
   exit 1
 fi
 export GOHERMIT_WEB_PORT="${acceptance_port}"
@@ -17,12 +23,51 @@ node_image="${GOHERMIT_ACCEPTANCE_NODE_IMAGE:-node:22-bookworm-slim}"
 runtime_image="${GOHERMIT_ACCEPTANCE_RUNTIME_IMAGE:-alpine/git:latest}"
 pnpm_registry="${GOHERMIT_ACCEPTANCE_PNPM_REGISTRY:-https://registry.npmjs.org}"
 build_audit_image="${project_name}-build-audit:local"
+case "${GOHERMIT_ACCEPTANCE_INJECT_FAILURE_AFTER_BUILD_AUDIT:-}" in
+  ""|1|TERM) ;;
+  *)
+    echo "GOHERMIT_ACCEPTANCE_INJECT_FAILURE_AFTER_BUILD_AUDIT must be empty, 1, or TERM" >&2
+    exit 1
+    ;;
+esac
+if docker image inspect "${build_audit_image}" >/dev/null 2>&1 ||
+  [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=${project_name}")" ]] ||
+  [[ -n "$(docker network ls -q --filter "label=com.docker.compose.project=${project_name}")" ]] ||
+  docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -Eq "^${project_name}-"; then
+  echo "GOHERMIT_ACCEPTANCE_PROJECT already owns Docker artifacts; choose a unique name" >&2
+  exit 1
+fi
+acceptance_root="$(mktemp -d)"
+override_file="${acceptance_root}/compose.acceptance.yaml"
 
 cleanup() {
-  docker compose --project-name "${project_name}" -f "${repository}/compose.yaml" -f "${override_file}" down --remove-orphans >/dev/null 2>&1 || true
-  rm -rf "${acceptance_root}"
+  local status=$?
+  local cleanup_failed=0
+  trap - EXIT INT TERM
+  set +e
+  docker compose --project-name "${project_name}" -f "${repository}/compose.yaml" -f "${override_file}" down --remove-orphans --rmi local >/dev/null 2>&1 ||
+    cleanup_failed=1
+  if docker image inspect "${build_audit_image}" >/dev/null 2>&1; then
+    docker image rm "${build_audit_image}" >/dev/null 2>&1 || cleanup_failed=1
+  fi
+  if docker image inspect "${build_audit_image}" >/dev/null 2>&1 ||
+    [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=${project_name}")" ]] ||
+    [[ -n "$(docker network ls -q --filter "label=com.docker.compose.project=${project_name}")" ]] ||
+    docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -Eq "^${project_name}-"; then
+    echo "scoped Docker acceptance cleanup left project artifacts" >&2
+    cleanup_failed=1
+  fi
+  if [[ -n "${acceptance_root}" && -d "${acceptance_root}" ]]; then
+    rm -rf -- "${acceptance_root}"
+  fi
+  if (( status == 0 && cleanup_failed != 0 )); then
+    status=1
+  fi
+  exit "${status}"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir -p "${acceptance_root}/data" "${acceptance_root}/workspace"
 GOHERMIT_EVAL_DATA_ROOT="${acceptance_root}" go test ./internal/evals -run '^TestDockerPersistenceFixture$' -count=1
@@ -62,24 +107,47 @@ inspect_build_stage() {
     for required in cmd internal protocol go.mod go.sum; do
       test -e "/src/${required}"
     done
-    for protected in \
-      .claude \
-      .codegraph \
-      .cursor \
-      .gemini \
-      .mcp.json \
-      .gohermit \
-      sandbox
-    do
-      if test -e "/src/${protected}"; then
-        echo "protected workspace path reached Go build stage: ${protected}" >&2
-        exit 1
-      fi
-    done
+    if find /src -mindepth 1 \( \
+      -type d \( \
+        -name .claude -o \
+        -name .codegraph -o \
+        -name .cursor -o \
+        -name .gemini -o \
+        -name .gohermit -o \
+        -name sandbox \
+      \) -o \
+      -type f \( \
+        -name .mcp.json -o \
+        -name '.env' -o \
+        -name '.env.*' -o \
+        -name '*.pem' -o \
+        -name '*.key' -o \
+        -name '*.crt' -o \
+        -name '*.cer' -o \
+        -name '*.p12' -o \
+        -name '*.pfx' -o \
+        -name '*.jks' -o \
+        -name '*.keystore' -o \
+        -name credentials.json -o \
+        -name 'service-account*.json' \
+      \) \
+    \) -print -quit | grep -q .; then
+      echo "protected workspace or credential path reached Go build stage" >&2
+      exit 1
+    fi
   '
 }
 
 inspect_build_stage
+if [[ "${GOHERMIT_ACCEPTANCE_INJECT_FAILURE_AFTER_BUILD_AUDIT:-}" == "1" ]]; then
+  echo "injecting requested failure after build-stage audit" >&2
+  exit 97
+fi
+if [[ "${GOHERMIT_ACCEPTANCE_INJECT_FAILURE_AFTER_BUILD_AUDIT:-}" == "TERM" ]]; then
+  echo "injecting requested TERM after build-stage audit" >&2
+  kill -TERM "$$"
+  exit 143
+fi
 "${compose[@]}" build
 "${compose[@]}" up -d
 

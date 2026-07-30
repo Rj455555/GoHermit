@@ -32,6 +32,42 @@
 sandbox
 **/sandbox
 
+# Environment files, private keys, certificates, and local credentials.
+.env
+.env.*
+**/.env
+**/.env.*
+*.pem
+**/*.pem
+*.key
+**/*.key
+*.crt
+**/*.crt
+*.cer
+**/*.cer
+*.p12
+**/*.p12
+*.pfx
+**/*.pfx
+*.jks
+**/*.jks
+*.keystore
+**/*.keystore
+id_rsa
+**/id_rsa
+id_ed25519
+**/id_ed25519
+credentials.json
+**/credentials.json
+service-account*.json
+**/service-account*.json
+.npmrc
+**/.npmrc
+.pnpmrc
+**/.pnpmrc
+.netrc
+**/.netrc
+
 # Dependency stores, caches, reports, and local build outputs.
 node_modules
 **/node_modules
