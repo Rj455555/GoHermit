@@ -49,5 +49,5 @@ func (s *Server) updateEmployeeSkills(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, record)
+	writeEmployeeRecord(w, http.StatusOK, record)
 }
