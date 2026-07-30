@@ -119,6 +119,18 @@ failures use localized sanitized feedback. Credentials and API keys are
 transient inputs sent to the existing server endpoints; they are never stored
 in browser state or storage.
 
+Employee mutations have an additional DTO boundary: the UI reads
+`project_count` as a server-owned projection but the create/update wrappers
+remove it before strict Employee requests. Do not send list/detail-only
+projection fields back through mutations.
+
+The Employee wizard can generate a local, deterministic role draft from a
+short Owner brief and one of the developer, researcher, operations, or writer
+presets. It fills identity, charter, responsibilities, boundaries, and a
+conservative permission ceiling, then lets the Owner jump to the policy review.
+This helper does not invoke a model, persist a hidden draft, bind Skills, add
+Knowledge, or create an Employee until the ordinary reviewed mutation runs.
+
 ## Build and deterministic artifacts
 
 From the repository root:

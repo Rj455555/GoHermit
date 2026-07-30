@@ -226,6 +226,36 @@ describe('Employees Phase 4 pages', () => {
     expect(api.createEmployee).not.toHaveBeenCalled()
   })
 
+  it('generates a recommended Employee draft and skips optional setup steps', async () => {
+    const user = userEvent.setup()
+    renderEmployees()
+
+    await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.type(screen.getByLabelText('Employee name'), 'Mina')
+    await user.type(
+      screen.getByLabelText('What should this Employee take care of?'),
+      'Maintain GoHermit and verify every change',
+    )
+    await user.click(screen.getByRole('button', { name: 'Generate recommended draft' }))
+
+    expect(screen.getByLabelText<HTMLInputElement>('Employee ID').value).toMatch(/^developer-/u)
+    expect(screen.getByLabelText('Name')).toHaveValue('Mina')
+    expect(screen.getByLabelText('Job title')).toHaveValue('Software Engineer')
+    expect(screen.getByText('Draft generated. You can edit every field before creating.')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Use recommendation and review' }))
+    expect(screen.getByTestId('employee-wizard-step')).toHaveTextContent('Step 8 of 9')
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+
+    await waitFor(() => expect(api.createEmployee).toHaveBeenCalledOnce())
+    const payload = api.createEmployee.mock.calls[0]?.[0] as unknown as {
+      employee: { name: string; job_title: string; charter: string }
+    }
+    expect(payload.employee.name).toBe('Mina')
+    expect(payload.employee.job_title).toBe('Software Engineer')
+    expect(payload.employee.charter).toContain('Maintain GoHermit')
+  })
+
   it('uses URL filters and bounded cursor pagination without hidden selection', async () => {
     const user = userEvent.setup()
     renderEmployees()

@@ -125,6 +125,7 @@ describe('Phase 3 endpoint map', () => {
       id: 'employee-1',
       revision: 1,
       skill_bindings: [],
+      project_count: 3,
     } as unknown as Employee
     const definition = {
       id: 'loop-1',
@@ -194,6 +195,31 @@ describe('Phase 3 endpoint map', () => {
     expect(paths).toContain('/api/loops/loop%20one/dry-run')
     expect(paths).toContain('/api/loop-invocations/invocation%20one/cancel')
     expect(paths).not.toContain('/api/tasks/task%20one/events')
+    const createCall = client.apiRequest.mock.calls.find(([path]) => path === '/api/employees')
+    const createOptions = createCall?.[2] as unknown as {
+      method: string
+      body: { employee: Record<string, unknown>; project_bindings: unknown[] }
+    }
+    expect(createOptions).toMatchObject({
+      method: 'POST',
+      body: {
+        employee: {
+          id: 'employee-1',
+          revision: 1,
+          skill_bindings: [],
+        },
+        project_bindings: [],
+      },
+    })
+    expect(createOptions.body.employee).not.toHaveProperty('project_count')
+    const endpointCalls = client.apiRequest.mock.calls as unknown as Array<[
+      string,
+      unknown,
+      { method?: string; body?: { employee: Record<string, unknown> } },
+    ]>
+    const updateCall = endpointCalls.find(([path, , options]) =>
+      path === '/api/employees/employee%20one' && options.method === 'PUT')
+    expect(updateCall?.[2].body?.employee).not.toHaveProperty('project_count')
     const emptyPaths = client.apiRequestNoContent.mock.calls.map(([path]) => path as string)
     expect(emptyPaths).toContain('/api/employees/employee%20one/knowledge/source%20one')
     expect(emptyPaths).toContain('/api/employees/employee%20one/memory/fact%20one')

@@ -49,9 +49,16 @@ type ProjectBindingDraft = Omit<
   ProjectBinding,
   'employee_id' | 'workspace_fingerprint' | 'created_at' | 'updated_at'
 > & Partial<Pick<ProjectBinding, 'employee_id' | 'workspace_fingerprint' | 'created_at' | 'updated_at'>>
+type WritableEmployee = Omit<Employee, 'project_count'>
 
 function segment(value: string): string {
   return encodeURIComponent(value)
+}
+
+function writableEmployee(value: Employee): WritableEmployee {
+  const employee: WritableEmployee & { project_count?: number } = { ...value }
+  delete employee.project_count
+  return employee
 }
 
 export const getHealth = (options: ReadOptions = {}) =>
@@ -78,11 +85,13 @@ export const getEmployee = (employeeId: string, options: ReadOptions = {}) =>
 export const createEmployee = (
   input: { employee: Employee; project_bindings: ProjectBindingDraft[] },
   options: ReadOptions = {},
-) => apiRequest('/api/employees', decodeEmployeeRecord, {
-  ...options,
-  method: 'POST',
-  body: input,
-})
+) => {
+  return apiRequest('/api/employees', decodeEmployeeRecord, {
+    ...options,
+    method: 'POST',
+    body: { ...input, employee: writableEmployee(input.employee) },
+  })
+}
 export const updateEmployee = (
   employeeId: string,
   input: { expected_revision: number; employee: Employee; project_bindings: ProjectBinding[] },
@@ -90,7 +99,7 @@ export const updateEmployee = (
 ) => apiRequest(`/api/employees/${segment(employeeId)}`, decodeEmployeeRecord, {
   ...options,
   method: 'PUT',
-  body: input,
+  body: { ...input, employee: writableEmployee(input.employee) },
 })
 export const mutateEmployeeLifecycle = (
   employeeId: string,
