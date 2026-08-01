@@ -331,6 +331,20 @@ describe('endpoint decoders', () => {
       ready: true,
       reasons: [],
     }).ready).toBe(true)
+    expect(decodeDryRun({
+      loop_id: 'loop-1',
+      definition_revision: 3,
+      definition_valid: true,
+      workspace_identity: '/literal/path',
+      workspace_matches: true,
+      git_clean: true,
+      task_prompt: 'Literal mission',
+      agent: definition.agent_selection,
+      write_scope: 'read-only',
+      budget: definition.budget,
+      requires_approval: false,
+      ready: true,
+    })).toMatchObject({ roles: [], checks: [], reasons: [] })
     expect(decodeTeamTemplate({
       schema_version: 2,
       name: 'default',

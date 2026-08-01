@@ -1449,12 +1449,16 @@ export function decodeDryRun(value: unknown): DryRunReport {
     git_clean: boolean(source.git_clean),
     task_prompt: string(source.task_prompt),
     agent: decodeSelection(source.agent),
-    roles: array(source.roles, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
+    // Go omits empty slices because the wire contract uses `omitempty`.
+    // Treat an omitted collection exactly like an explicit empty collection;
+    // a successful Dry Run with no verification checks/reasons must still be
+    // renderable by the workbench.
+    roles: optionalArray(source.roles, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
     write_scope: string(source.write_scope, 256),
-    checks: array(source.checks, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
+    checks: optionalArray(source.checks, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
     budget: decodeBudget(source.budget),
     requires_approval: boolean(source.requires_approval),
     ready: boolean(source.ready),
-    reasons: array(source.reasons, (item) => string(item, 4096), MAX_SMALL_COLLECTION),
+    reasons: optionalArray(source.reasons, (item) => string(item, 4096), MAX_SMALL_COLLECTION),
   }
 }
