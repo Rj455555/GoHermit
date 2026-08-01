@@ -10,6 +10,8 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -26,7 +28,9 @@ import (
 	"github.com/Rj455555/GoHermit/internal/employeestore"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/knowledge"
+	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/loopstore"
+	"github.com/Rj455555/GoHermit/internal/notify"
 	"github.com/Rj455555/GoHermit/internal/owner"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/skill"
@@ -114,7 +118,12 @@ type Service struct {
 	// team session fails closed instead of the service failing to start.
 	teamTemplatesErr error
 	// loopStoreErr defers loop store resolution failure the same way.
-	loopStoreErr error
+	loopStoreErr           error
+	notificationConfig     notify.Config
+	notificationMu         sync.Mutex
+	notificationDeliveryMu sync.Mutex
+	notificationLastError  string
+	notificationLastSent   *time.Time
 }
 
 // New builds the service over the workspace, recovering every persisted
@@ -158,6 +167,7 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		}
 	}
 	broker := newApprovalBroker()
+	notificationConfig := notify.ConfigFromEnv()
 	return &Service{
 		Workspace: workspace, ConfigPath: configPath,
 		publish:       publish,
@@ -167,10 +177,11 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		logins:        modelauth.NewLoginManager(credentials),
 		teamTemplates: teamTemplates, teamTemplatesErr: teamTemplatesErr,
 		loopStore: loopStore, loopStoreErr: loopStoreErr,
-		employees: employeeStore,
-		skills:    skillCatalog,
-		knowledge: knowledgeCatalog,
-		approvals: broker,
+		notificationConfig: notificationConfig,
+		employees:          employeeStore,
+		skills:             skillCatalog,
+		knowledge:          knowledgeCatalog,
+		approvals:          broker,
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
 			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: broker}, nil)
 		},
@@ -181,6 +192,118 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 			}, nil)
 		},
 	}, nil
+}
+
+// EmailNotificationStatus is the safe Settings projection for completion
+// notifications. It never contains the SMTP password or provider tokens.
+type EmailNotificationStatus struct {
+	Configured bool       `json:"configured"`
+	Recipient  string     `json:"recipient"`
+	From       string     `json:"from,omitempty"`
+	Host       string     `json:"host,omitempty"`
+	LastError  string     `json:"last_error,omitempty"`
+	LastSentAt *time.Time `json:"last_sent_at,omitempty"`
+}
+
+func (s *Service) EmailNotificationStatus() EmailNotificationStatus {
+	s.notificationMu.Lock()
+	defer s.notificationMu.Unlock()
+	return EmailNotificationStatus{
+		Configured: s.notificationConfig.Configured(),
+		Recipient:  s.notificationConfig.To,
+		From:       s.notificationConfig.From,
+		Host:       s.notificationConfig.Host,
+		LastError:  s.notificationLastError,
+		LastSentAt: cloneTime(s.notificationLastSent),
+	}
+}
+
+func cloneTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+// notifyLoopCompletion delivers one bounded terminal outcome. The marker is
+// persisted only after delivery succeeds, so a restart can retry a failed
+// notification without creating a second execution state machine.
+func (s *Service) notifyLoopCompletion(ctx context.Context, invocation loop.Invocation) {
+	s.notifyTerminalCompletion(ctx, invocation.ID, invocation.ID, invocation.DefinitionSnapshot.Name, invocation.Status, invocation.FinishedAt, invocation.FailureCode, invocation.FailureSummary)
+}
+
+// notifyEmployeeTaskCompletion uses the same bounded delivery path as Loop
+// Invocations. The prefixed key keeps Task markers separate from Invocation
+// markers while preserving one idempotent notification ledger.
+func (s *Service) notifyEmployeeTaskCompletion(ctx context.Context, task employee.EmployeeTask, status employee.TaskState, finishedAt *time.Time, summary string) {
+	sum := sha256.Sum256([]byte("employee-task-notification\x00" + task.ID))
+	key := "task-" + hex.EncodeToString(sum[:16])
+	s.notifyTerminalCompletion(ctx, key, task.ID, task.EmployeeSnapshot.Employee.Name, loop.Status(status), finishedAt, "", summary)
+}
+
+func (s *Service) notifyTerminalCompletion(ctx context.Context, key, displayID, name string, status loop.Status, finishedAt *time.Time, failureCode, summary string) {
+	if !status.Terminal() || !s.notificationConfig.Configured() || s.loopStore == nil {
+		return
+	}
+	if ctx == nil || ctx.Err() != nil {
+		ctx = context.Background()
+	}
+	deliveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	s.notificationDeliveryMu.Lock()
+	defer s.notificationDeliveryMu.Unlock()
+	sent, err := s.loopStore.NotificationSent(key, status)
+	if err != nil {
+		s.notificationMu.Lock()
+		s.notificationLastError = "读取通知状态失败"
+		s.notificationMu.Unlock()
+		return
+	}
+	if sent {
+		return
+	}
+	subject := fmt.Sprintf("GoHermit 任务状态：%s", name)
+	body := fmt.Sprintf("Target: %s\nID: %s\nStatus: %s\nFinished: %s\n",
+		name, displayID, status, formatTime(finishedAt))
+	if failureCode != "" {
+		body += fmt.Sprintf("Failure: %s\n", failureCode)
+	}
+	if summary = clipNotificationText(summary); summary != "" {
+		body += "Summary: " + summary + "\n"
+	}
+	if err = s.notificationConfig.SendTLS(deliveryCtx, subject, body); err != nil {
+		s.notificationMu.Lock()
+		s.notificationLastError = clipNotificationText(err.Error())
+		s.notificationMu.Unlock()
+		return
+	}
+	now := time.Now().UTC()
+	if err = s.loopStore.MarkNotificationSent(key, status, now); err != nil {
+		s.notificationMu.Lock()
+		s.notificationLastError = "保存通知状态失败"
+		s.notificationMu.Unlock()
+		return
+	}
+	s.notificationMu.Lock()
+	s.notificationLastError = ""
+	s.notificationLastSent = &now
+	s.notificationMu.Unlock()
+}
+
+func formatTime(value *time.Time) string {
+	if value == nil {
+		return "未结束"
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func clipNotificationText(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\r", " "), "\n", " "))
+	if len(value) > 512 {
+		return value[:512] + "…"
+	}
+	return value
 }
 
 // Active reports whether a run currently occupies the workspace.

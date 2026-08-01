@@ -6,13 +6,14 @@ import {
   forgetOwnerFact,
   getCodexLogin,
   getInfo,
+  getNotificationStatus,
   getOwner,
   saveOwner,
   saveOwnerFact,
   saveProviderAPIKey,
   startCodexLogin,
 } from '../../api/endpoints'
-import type { CodexLoginSession, Info, OwnerProfile } from '../../api/types'
+import type { CodexLoginSession, Info, NotificationStatus, OwnerProfile } from '../../api/types'
 import { useConnectivity } from '../../components/ConnectivityProvider'
 import { ErrorState } from '../../components/ErrorState'
 import { PageHeader } from '../../components/PageHeader'
@@ -31,6 +32,7 @@ export function SettingsPage() {
   const connectivity = useConnectivity()
   const { actions } = useUI()
   const [info, setInfo] = useState<Info | null>(null)
+  const [notification, setNotification] = useState<NotificationStatus | null>(null)
   const [profile, setProfile] = useState<OwnerProfile>(EMPTY_PROFILE)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
@@ -55,9 +57,17 @@ export function SettingsPage() {
           getInfo({ signal: controller.signal }),
           getOwner({ signal: controller.signal }),
         ])
+        let nextNotification: NotificationStatus | null = null
+        try {
+          nextNotification = await getNotificationStatus({ signal: controller.signal })
+        } catch {
+          // Older or restricted servers may not expose notification status;
+          // Settings remains usable and shows the setup hint.
+        }
         if (controller.signal.aborted) return
         setInfo(nextInfo)
         setProfile(nextProfile)
+        setNotification(nextNotification)
         setLoadError(false)
       } catch {
         if (!controller.signal.aborted) setLoadError(true)
@@ -334,6 +344,24 @@ export function SettingsPage() {
             </article>
           )
         })}
+      </section>
+      <section className="projection-card notification-settings-card" aria-live="polite">
+        <div className="section-heading-row">
+          <div>
+            <span className="loop-kicker">NOTIFY</span>
+            <h2>{t('settings.notifications')}</h2>
+          </div>
+          <span className={`status-badge ${notification?.configured ? 'status-badge--success' : 'status-badge--muted'}`}>
+            {notification?.configured ? t('settings.notificationReady') : t('settings.notificationNotConfigured')}
+          </span>
+        </div>
+        <p>{t('settings.notificationDescription')}</p>
+        <dl className="notification-status-list">
+          <dt>{t('settings.notificationRecipient')}</dt><dd>{notification?.recipient ?? '1143130628@qq.com'}</dd>
+          {notification?.last_sent_at ? <><dt>{t('settings.notificationLastSent')}</dt><dd>{new Date(notification.last_sent_at).toLocaleString()}</dd></> : null}
+          {notification?.last_error ? <><dt>{t('settings.notificationLastError')}</dt><dd className="text-danger">{notification.last_error}</dd></> : null}
+        </dl>
+        {!notification?.configured ? <p className="stale-notice">{t('settings.notificationSetupHint')}</p> : null}
       </section>
       {login ? (
         <section className="projection-card" aria-live="polite">

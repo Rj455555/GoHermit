@@ -25,6 +25,7 @@ import type {
   LoopInvocation,
   LoopRuntimeState,
   LoopSummary,
+  NotificationStatus,
   MemoryCandidate,
   MemoryFact,
   Message,
@@ -1422,6 +1423,18 @@ export function decodeLoopInvocationList(value: unknown): {
   return {
     invocations: array(source.invocations, decodeInvocationValue, MAX_SMALL_COLLECTION),
     limit: integer(source.limit),
+  }
+}
+
+export function decodeNotificationStatus(value: unknown): NotificationStatus {
+  const source = object(value)
+  return {
+    configured: boolean(source.configured),
+    recipient: string(source.recipient, 320),
+    from: optionalString(source.from, 320),
+    host: optionalString(source.host, 256),
+    last_error: optionalString(source.last_error, 512),
+    last_sent_at: optionalTime(source.last_sent_at),
   }
 }
 

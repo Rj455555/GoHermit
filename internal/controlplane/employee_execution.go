@@ -526,6 +526,7 @@ func (s *Service) projectEmployeeTask(ctx context.Context, task employee.Employe
 	}
 	if task.State == employee.TaskCancelled {
 		view.State = EmployeeTaskStateCancelled
+		s.notifyEmployeeTaskCompletion(ctx, task, employee.TaskCancelled, nil, "Employee Task cancelled before execution")
 		return view, nil
 	}
 	if task.SessionID == "" {
@@ -568,10 +569,13 @@ func (s *Service) projectEmployeeTask(ctx context.Context, task employee.Employe
 		if err != nil {
 			return EmployeeTaskView{}, classifyEmployeeStore(err)
 		}
+		s.notifyEmployeeTaskCompletion(ctx, task, employee.TaskState(EmployeeTaskStateCompleted), run.CompletedAt, "")
 	case session.RunFailed:
 		view.State = EmployeeTaskStateFailed
+		s.notifyEmployeeTaskCompletion(ctx, task, employee.TaskState(EmployeeTaskStateFailed), run.CompletedAt, run.Error)
 	case session.RunCancelled:
 		view.State = EmployeeTaskStateCancelled
+		s.notifyEmployeeTaskCompletion(ctx, task, employee.TaskState(EmployeeTaskStateCancelled), run.CompletedAt, "Employee Task run cancelled")
 	default:
 		return EmployeeTaskView{}, classified(KindInternal, fmt.Errorf("unsupported Run status %q", run.Status))
 	}

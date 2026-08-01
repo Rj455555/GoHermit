@@ -25,6 +25,7 @@ import {
   decodeLoopInvocationList,
   decodeLoopRuntimeState,
   decodeLoopDefinitions,
+  decodeNotificationStatus,
   decodeOwnerProfile,
   decodeProjects,
   decodeSkillCatalog,
@@ -70,6 +71,8 @@ export const listLoops = (options: ReadOptions = {}) =>
   apiRequest('/api/loops', decodeLoopDefinitions, options)
 export const getLoopRuntime = (loopId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/loops/${segment(loopId)}/runtime`, decodeLoopRuntimeState, options)
+export const getNotificationStatus = (options: ReadOptions = {}) =>
+  apiRequest('/api/settings/notifications', decodeNotificationStatus, options)
 export const listLoopInvocations = (loopId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/loops/${segment(loopId)}/invocations?limit=50`, decodeInvocations, options)
 

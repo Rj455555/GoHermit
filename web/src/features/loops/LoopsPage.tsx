@@ -531,6 +531,98 @@ function DryRunProjection({ report }: { report: DryRunReport }) {
   )
 }
 
+type FlowStatus = 'idle' | 'active' | 'success' | 'blocked' | 'failed'
+
+function orchestrationStatus(invocation: LoopInvocation | undefined): FlowStatus {
+  if (!invocation) return 'idle'
+  if (invocation.status === 'completed') return 'success'
+  if (invocation.status === 'failed') return 'failed'
+  if (invocation.status === 'blocked' || invocation.status === 'skipped' || invocation.status === 'cancelled') return 'blocked'
+  return 'active'
+}
+
+function stageStatus(stage: 'trigger' | 'orchestrator' | 'executor' | 'verifier' | 'evidence' | 'evolve', flow: FlowStatus): FlowStatus {
+  if (flow === 'idle') return 'idle'
+  if (flow === 'failed') return stage === 'verifier' || stage === 'evidence' ? 'failed' : 'success'
+  if (flow === 'blocked') return stage === 'orchestrator' ? 'blocked' : 'idle'
+  if (flow === 'active') {
+    if (stage === 'trigger') return 'success'
+    if (stage === 'orchestrator') return 'active'
+    return 'idle'
+  }
+  return stage === 'evolve' ? 'active' : 'success'
+}
+
+function FlowNode({ label, detail, status, icon }: { label: string; detail: string; status: FlowStatus; icon: string }) {
+  return (
+    <div className={`loop-flow-node loop-flow-node--${status}`} data-status={status}>
+      <span className="loop-flow-node__icon" aria-hidden="true">{icon}</span>
+      <strong>{label}</strong>
+      <small>{detail}</small>
+    </div>
+  )
+}
+
+function LoopOrchestrationBoard({
+  definition,
+  runtime,
+  history,
+  current,
+  evidence,
+}: {
+  definition: LoopDefinition
+  runtime?: LoopRuntimeState | null
+  history: LoopInvocation[]
+  current?: LoopInvocation | null
+  evidence?: { plan: number; tools: number; checks: number; artifacts: number }
+}) {
+  const { t } = useTranslation()
+  const latest = current ?? history[history.length - 1]
+  const flow = orchestrationStatus(latest)
+  const chips = [
+    { label: t('loops.contractSharpened'), value: definition.contract.goal },
+    { label: t('loops.boundariesRedrawn'), value: definition.contract.boundaries.length ? `${definition.contract.boundaries.length}` : '—' },
+    { label: t('loops.repeatedSteps'), value: definition.contract.sop.length ? `${definition.contract.sop.length}` : '—' },
+    { label: t('loops.triggerRetuned'), value: definition.schedule.kind || t('loops.manual') },
+    { label: t('loops.dashboardUpdated'), value: runtime?.last_status ? translatedEnum(t, 'invocationStatus', runtime.last_status) : t('loops.neverRun') },
+  ]
+  return (
+    <section className="loop-orchestration projection-card" data-testid="loop-orchestration" aria-label={t('loops.orchestrationTitle')}>
+      <div className="loop-orchestration__heading">
+        <div>
+          <span className="loop-kicker">LOOPANY WORKFLOW</span>
+          <h2>{t('loops.orchestrationTitle')}</h2>
+          <p>{t('loops.orchestrationDescription')}</p>
+        </div>
+        <span className={`status-badge status-badge--${flow === 'success' ? 'success' : flow === 'failed' ? 'error' : flow === 'blocked' ? 'warning' : 'muted'}`}>
+          {t(`loops.flowStatus.${flow}`)}
+        </span>
+      </div>
+      <div className="loop-role-grid">
+        <article className="loop-role-card loop-role-card--orchestrator"><span aria-hidden="true">⤴</span><div><strong>{t('loops.orchestrator')}</strong><p>{t('loops.orchestratorDescription')}</p></div></article>
+        <article className="loop-role-card loop-role-card--executor"><span aria-hidden="true">◇</span><div><strong>{t('loops.executor')}</strong><p>{t('loops.executorDescription')}</p></div></article>
+        <article className="loop-role-card loop-role-card--verifier"><span aria-hidden="true">✓</span><div><strong>{t('loops.verifier')}</strong><p>{t('loops.verifierDescription')}</p></div></article>
+      </div>
+      <div className="loop-flow" role="list" aria-label={t('loops.orchestrationStages')}>
+        <FlowNode label={t('loops.triggerNode')} detail={latest?.trigger ?? t('loops.manual')} status={stageStatus('trigger', flow)} icon="⏰" />
+        <span className="loop-flow-connector" aria-hidden="true">→</span>
+        <FlowNode label={t('loops.orchestratorNode')} detail={t('loops.dispatchDetail')} status={stageStatus('orchestrator', flow)} icon="↗" />
+        <span className="loop-flow-connector" aria-hidden="true">→</span>
+        <FlowNode label={t('loops.executorNode')} detail={latest?.session_id ? t('loops.sessionBound') : t('loops.waitingForRun')} status={stageStatus('executor', flow)} icon="□" />
+        <span className="loop-flow-connector" aria-hidden="true">→</span>
+        <FlowNode label={t('loops.verifierNode')} detail={definition.verification_recipe.checks.length ? t('loops.checkCount', { count: definition.verification_recipe.checks.length }) : t('loops.noChecks')} status={stageStatus('verifier', flow)} icon="✓" />
+        <span className="loop-flow-connector" aria-hidden="true">→</span>
+        <FlowNode label={t('loops.evidenceNode')} detail={evidence ? t('loops.evidenceSummary', evidence) : t('loops.evidencePending')} status={stageStatus('evidence', flow)} icon="▣" />
+        <span className="loop-flow-connector" aria-hidden="true">→</span>
+        <FlowNode label={t('loops.evolveNode')} detail={t('loops.evolveDetail')} status={stageStatus('evolve', flow)} icon="↻" />
+      </div>
+      <div className="loop-flow-chips" aria-label={t('loops.evolutionSignals')}>
+        {chips.map((chip) => <span className="loop-flow-chip" key={chip.label}><b>{chip.label}</b><small>{chip.value}</small></span>)}
+      </div>
+    </section>
+  )
+}
+
 export function LoopDetailPage() {
   const { loopId } = useParams()
   const { t } = useTranslation()
@@ -654,6 +746,7 @@ export function LoopDetailPage() {
   return (
     <article className="feature-page loop-workbench">
       <PageHeader title={definition.name} description={`${definition.employee_id ?? t('loops.legacy')} · ${definition.id} · r${definition.revision}`} />
+      <LoopOrchestrationBoard definition={definition} runtime={runtime} history={history} />
       <div className="loop-command-bar">
         <div><span>{t('loops.nextRun')}</span><strong>{runtime.next_run_at ? new Date(runtime.next_run_at).toLocaleString() : t('loops.manual')}</strong></div>
         <div><span>{t('loops.lastStatus')}</span><strong>{runtime.last_status ? translatedEnum(t, 'invocationStatus', runtime.last_status) : t('loops.neverRun')}</strong></div>
@@ -765,6 +858,12 @@ export function LoopInvocationPage() {
   const boundRun = useMemo(() => session?.session.runs.find((run) => run.id === invocation?.run_id), [invocation?.run_id, session])
   const tools = session?.session.tool_calls.filter((tool) => !invocation?.run_id || tool.run_id === invocation.run_id) ?? []
   const verification = session?.session.test_results.filter((test) => !invocation?.run_id || test.run_id === invocation.run_id) ?? []
+  const invocationEvidence = {
+    plan: boundRun?.plan?.steps.length ?? 0,
+    tools: tools.length,
+    checks: verification.length,
+    artifacts: 0,
+  }
 
   function cancel() {
     if (!invocation || !connectivity.canMutate) return
@@ -814,6 +913,7 @@ export function LoopInvocationPage() {
   return (
     <article className="feature-page">
       <PageHeader title={invocation.id} description={`${invocation.loop_id} · ${translatedEnum(t, 'invocationStatus', invocation.status)}`} />
+      <LoopOrchestrationBoard definition={invocation.definition_snapshot} history={[invocation]} current={invocation} evidence={invocationEvidence} />
       <dl>
         <dt>{t('loops.definitionRevision')}</dt><dd>{invocation.definition_revision}</dd>
         <dt>{t('loops.trigger')}</dt><dd>{invocation.trigger}</dd>

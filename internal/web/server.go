@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/settings/providers/{provider}/credentials", s.deleteCredentials)
 	mux.HandleFunc("POST /api/settings/providers/openai-codex/login", s.startCodexLogin)
 	mux.HandleFunc("GET /api/settings/logins/{session}", s.loginStatus)
+	mux.HandleFunc("GET /api/settings/notifications", s.notificationStatus)
 	mux.Handle("GET /", s.static)
 	return securityHeaders(rejectAnomalousPaths(mux))
 }
@@ -311,6 +312,12 @@ func writeServiceError(w http.ResponseWriter, err error) {
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": app.Version, "active": s.svc.Active()})
+}
+
+// notificationStatus exposes only delivery readiness and the configured
+// destination. SMTP credentials never cross the control-plane boundary.
+func (s *Server) notificationStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.svc.EmailNotificationStatus())
 }
 
 func (s *Server) getOwner(w http.ResponseWriter, _ *http.Request) {

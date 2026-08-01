@@ -770,6 +770,15 @@ export interface LoopInvocation extends InvocationSummary {
   definition_snapshot: LoopDefinition
 }
 
+export interface NotificationStatus {
+  configured: boolean
+  recipient: string
+  from?: string | undefined
+  host?: string | undefined
+  last_error?: string | undefined
+  last_sent_at?: string | undefined
+}
+
 export interface DryRunReport {
   loop_id: string
   definition_revision: number

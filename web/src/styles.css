@@ -447,6 +447,11 @@ a:focus-visible {
   color: var(--color-success);
 }
 
+.status-badge--muted {
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+}
+
 .status-badge--warning {
   background: #fff3d7;
   color: #8a5200;
@@ -1319,6 +1324,161 @@ textarea {
   gap: 28px;
 }
 
+.section-heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.notification-settings-card {
+  display: grid;
+  gap: 14px;
+}
+
+.notification-settings-card h2 {
+  margin: 5px 0 0;
+}
+
+.notification-settings-card p {
+  max-width: 760px;
+}
+
+.notification-status-list {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 1fr;
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.notification-status-list dt {
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+
+.notification-status-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.loop-orchestration {
+  display: grid;
+  gap: 22px;
+  padding: clamp(20px, 3vw, 32px);
+  border-color: #cfd8e8;
+  background: linear-gradient(145deg, #fbfdff 0%, #f5f7fb 100%);
+}
+
+.loop-orchestration__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.loop-orchestration__heading h2 {
+  margin: 6px 0;
+}
+
+.loop-orchestration__heading p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.loop-role-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.loop-role-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  min-height: 92px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+
+.loop-role-card > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  border-radius: 9px;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.loop-role-card--orchestrator > span { color: #bd5c2e; background: #fff0e8; }
+.loop-role-card--executor > span { color: #2254b8; background: #edf3ff; }
+.loop-role-card--verifier > span { color: #367d48; background: #eaf7ed; }
+
+.loop-role-card strong { display: block; margin-bottom: 5px; }
+.loop-role-card p { margin: 0; color: var(--color-text-muted); font-size: 0.82rem; line-height: 1.45; }
+
+.loop-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px;
+}
+
+.loop-flow-node {
+  display: grid;
+  min-width: 132px;
+  flex: 1 0 132px;
+  align-content: start;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid #d5dbe6;
+  border-top: 3px solid #c3cbd9;
+  border-radius: 12px;
+  background: var(--color-surface);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.loop-flow-node__icon { color: #7b8492; font-size: 18px; }
+.loop-flow-node small { color: var(--color-text-muted); line-height: 1.35; }
+.loop-flow-node--active { border-color: #7495d9; border-top-color: #2254b8; box-shadow: 0 0 0 3px rgb(34 84 184 / 10%); }
+.loop-flow-node--success { border-top-color: #3c8b52; }
+.loop-flow-node--success .loop-flow-node__icon { color: #3c8b52; }
+.loop-flow-node--blocked { border-top-color: #bd7b25; }
+.loop-flow-node--failed { border-top-color: var(--color-danger); }
+
+.loop-flow-connector {
+  display: grid;
+  flex: 0 0 18px;
+  place-items: center;
+  color: #9aa5b6;
+  font-size: 18px;
+}
+
+.loop-flow-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.loop-flow-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 1px solid #aec2ec;
+  border-radius: 999px;
+  color: #3158a6;
+  background: #f4f7ff;
+  font-size: 0.8rem;
+}
+
+.loop-flow-chip small { color: var(--color-text-muted); }
+
 .loop-hero {
   position: relative;
   overflow: hidden;
@@ -1679,6 +1839,26 @@ textarea {
   .loop-detail-grid,
   .loop-command-bar {
     grid-template-columns: 1fr;
+  }
+
+  .loop-role-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .loop-orchestration__heading {
+    display: block;
+  }
+
+  .loop-orchestration__heading .status-badge {
+    margin-top: 12px;
+  }
+
+  .notification-status-list {
+    grid-template-columns: 1fr;
+  }
+
+  .notification-status-list dd {
+    margin-bottom: 4px;
   }
 
   .loop-quick-create > button,
