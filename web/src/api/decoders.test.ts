@@ -21,6 +21,7 @@ import {
   decodeLoopInvocation,
   decodeLoopInvocationList,
   decodeLoopRuntimeState,
+  decodeNotificationStatus,
   decodeLoops,
   decodeOwnerProfile,
   decodeRunReference,
@@ -67,6 +68,23 @@ describe('endpoint decoders', () => {
       active: false,
     })
     expect(() => decodeHealth({ status: 'maybe', version: '0.3', active: false })).toThrow()
+  })
+
+  it('decodes the bounded notification readiness projection without credentials', () => {
+    expect(decodeNotificationStatus({
+      configured: true,
+      recipient: '1143130628@qq.com',
+      from: 'sender@qq.com',
+      host: 'smtp.qq.com',
+      last_sent_at: now,
+    })).toEqual({
+      configured: true,
+      recipient: '1143130628@qq.com',
+      from: 'sender@qq.com',
+      host: 'smtp.qq.com',
+      last_sent_at: now,
+    })
+    expect(() => decodeNotificationStatus({ configured: false, recipient: 123 })).toThrow()
   })
 
   it('strictly decodes the complete bounded Phase 4 projections', () => {

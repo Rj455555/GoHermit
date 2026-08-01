@@ -412,4 +412,44 @@ describe('Loops Phase 4 pages', () => {
     expect(screen.getByRole('heading', { name: 'Approvals' })).toBeVisible()
     expect(screen.queryByText(/"definition_snapshot"/)).not.toBeInTheDocument()
   })
+
+  it('projects every terminal orchestration outcome and the empty state', async () => {
+    const outcomes = [
+      { status: 'completed', label: 'Completed' },
+      { status: 'failed', label: 'Failed' },
+      { status: 'blocked', label: 'Blocked' },
+    ] as const
+    for (const outcome of outcomes) {
+      api.listLoopInvocations.mockResolvedValue({
+        invocations: [{ ...invocation, status: outcome.status }],
+        limit: 50,
+      })
+      api.getLoopRuntime.mockResolvedValue({
+        schema_version: 1,
+        loop_id: definition.id,
+        definition_revision: definition.revision,
+        last_status: outcome.status,
+        consecutive_failures: outcome.status === 'failed' ? 1 : 0,
+        total_runs: 1,
+        successful_runs: outcome.status === 'completed' ? 1 : 0,
+        updated_at: now,
+      })
+      const view = renderLoops('/loops/daily-review')
+      expect(await screen.findByTestId('loop-orchestration')).toHaveTextContent(outcome.label)
+      view.unmount()
+    }
+
+    api.listLoopInvocations.mockResolvedValue({ invocations: [], limit: 50 })
+    api.getLoopRuntime.mockResolvedValue({
+      schema_version: 1,
+      loop_id: definition.id,
+      definition_revision: definition.revision,
+      consecutive_failures: 0,
+      total_runs: 0,
+      successful_runs: 0,
+      updated_at: now,
+    })
+    renderLoops('/loops/daily-review')
+    expect(await screen.findByTestId('loop-orchestration')).toHaveTextContent('Not run')
+  })
 })
