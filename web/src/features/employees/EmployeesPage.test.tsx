@@ -409,6 +409,17 @@ describe('Employees Phase 4 pages', () => {
     ))
   })
 
+  it('uses the complete Employee card as the detail navigation link', async () => {
+    const user = userEvent.setup()
+    renderEmployees()
+
+    const cardLink = await screen.findByRole('link', { name: /Ada/u })
+    expect(cardLink).toHaveClass('employee-card-link')
+    expect(cardLink).toHaveAttribute('href', '/employees/employee-ada')
+    await user.click(cardLink)
+    expect(await screen.findByLabelText('Name')).toHaveValue('Ada')
+  })
+
   it('renders an archived Employee as fully read-only', async () => {
     api.getEmployee.mockResolvedValue({
       ...employeeRecord,

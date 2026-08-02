@@ -308,8 +308,10 @@ export function EmployeesPage() {
       ) : <ul className="entity-list employee-grid">
         {items.map((employee) => (
           <li key={employee.id}>
-            <Link to={`/employees/${encodeURIComponent(employee.id)}`}>{employee.name}</Link>
-            <span>{employee.job_title} · {statusLabel(t, employee.state)}</span>
+            <Link className="employee-card-link" to={`/employees/${encodeURIComponent(employee.id)}`}>
+              <strong>{employee.name}</strong>
+              <span>{employee.job_title} · {statusLabel(t, employee.state)}</span>
+            </Link>
           </li>
         ))}
       </ul>}
