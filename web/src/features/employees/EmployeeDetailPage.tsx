@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
+import {
+  Bot,
+  CircleCheck,
+  Database,
+  FolderKanban,
+  ShieldCheck,
+  Sparkles,
+  Workflow,
+} from 'lucide-react'
 
 import {
   acceptEmployeeMemoryCandidate,
@@ -203,6 +212,10 @@ export function EmployeeDetailPage() {
   const companies = info?.available_companies ?? []
   const company = companies.find((item) => item.id === employee.default_selection.company)
   const access = company?.access.find((item) => item.id === employee.default_selection.access)
+  const model = access?.models.find((item) => item.id === employee.default_selection.model)
+  const avatarLabel = employee.avatar.value.trim() || employee.name.trim().slice(0, 2).toUpperCase()
+  const statusTone = archived ? 'muted' : active ? 'success' : 'warning'
+  const readinessTone = dryRun ? (dryRun.ready ? 'success' : 'warning') : 'muted'
   const lines = (value: string) =>
     value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean)
   const patchEmployee = (value: Partial<typeof employee>) =>
@@ -287,24 +300,85 @@ export function EmployeeDetailPage() {
   }
 
   return (
-    <article className="feature-page">
-      <PageHeader title={employee.name} description={`${employee.id} · r${employee.revision}`} />
-      <p data-testid="employee-status">{translatedEnum(t, 'employeeStatus', employee.state)}</p>
-      {archived ? <p className="stale-notice">{t('employees.archivedReadOnly')}</p> : null}
-      <nav className="tab-list" aria-label={t('employees.sections')}>
-        {TABS.map((value) => <button key={value} type="button" aria-current={tab === value ? 'page' : undefined} onClick={() => setSearchParams(value === 'overview' ? {} : { tab: value })}>{t(`employees.tabs.${value}`)}</button>)}
+    <article className="feature-page employee-detail-page">
+      <header className="employee-detail-hero">
+        <div className="employee-detail-hero__identity">
+          <div className="employee-avatar" aria-hidden="true">{avatarLabel}</div>
+          <div className="employee-detail-hero__copy">
+            <div className="employee-detail-hero__eyebrow"><Sparkles size={14} aria-hidden="true" />{t('employees.tabs.overview')} <span>·</span> {employee.id}</div>
+            <PageHeader title={employee.name} description={`${employee.id} · r${employee.revision}`} />
+            <div className="employee-detail-hero__statusline">
+              <span className={`status-badge status-badge--${statusTone}`} data-testid="employee-status">
+                <CircleCheck size={14} aria-hidden="true" />
+                {translatedEnum(t, 'employeeStatus', employee.state)}
+              </span>
+              <span className="employee-detail-hero__meta">{employee.job_title}</span>
+              <span className="employee-detail-hero__meta">Revision {employee.revision}</span>
+            </div>
+          </div>
+        </div>
+        <div className="employee-detail-hero__actions">
+          <Link className="button button--secondary" to="/employees">{t('employees.backToList')}</Link>
+          <span className="employee-detail-hero__mode"><ShieldCheck size={15} aria-hidden="true" />{t('employees.state')}</span>
+        </div>
+      </header>
+
+      <section className="employee-insights" aria-label={t('employees.sections')}>
+        <article className="employee-insight-card">
+          <span className={`employee-insight-card__icon employee-insight-card__icon--${readinessTone}`}><ShieldCheck size={18} aria-hidden="true" /></span>
+          <span className="employee-insight-card__label">{t('employees.readiness')}</span>
+          <strong>{dryRun ? (dryRun.ready ? t('employees.ready') : t('employees.blocked')) : t('employees.notRun')}</strong>
+          <small>{dryRun ? t('employees.checksPassed', { passed: dryRun.checks.filter((check) => check.ready).length, total: dryRun.checks.length }) : t('employees.runDryRunHint')}</small>
+        </article>
+        <article className="employee-insight-card">
+          <span className="employee-insight-card__icon"><Bot size={18} aria-hidden="true" /></span>
+          <span className="employee-insight-card__label">{t('employees.defaultModel')}</span>
+          <strong>{model?.label ?? employee.default_selection.model}</strong>
+          <small>{company?.label ?? employee.default_selection.company} · {access?.label ?? employee.default_selection.access}</small>
+        </article>
+        <article className="employee-insight-card">
+          <span className="employee-insight-card__icon"><Database size={18} aria-hidden="true" /></span>
+          <span className="employee-insight-card__label">{t('employees.memory')}</span>
+          <strong>{employee.memory_policy.max_context_facts} facts</strong>
+          <small>{t('employees.contextBudget', { bytes: employee.memory_policy.max_context_bytes.toLocaleString() })}</small>
+        </article>
+        <article className="employee-insight-card">
+          <span className="employee-insight-card__icon"><FolderKanban size={18} aria-hidden="true" /></span>
+          <span className="employee-insight-card__label">{t('employees.tabs.projects')}</span>
+          <strong>{record.project_bindings.length}</strong>
+          <small>{employee.skill_bindings.length} skills · {employee.responsibilities.length} responsibilities</small>
+        </article>
+      </section>
+
+      {archived ? <p className="stale-notice employee-detail-notice">{t('employees.archivedReadOnly')}</p> : null}
+      <nav className="tab-list employee-detail-tabs" aria-label={t('employees.sections')}>
+        <span className="employee-detail-tabs__label"><Workflow size={15} aria-hidden="true" />{t('employees.sections')}</span>
+        <div className="employee-detail-tabs__items">
+          {TABS.map((value) => <button key={value} type="button" aria-current={tab === value ? 'page' : undefined} onClick={() => setSearchParams(value === 'overview' ? {} : { tab: value })}>{t(`employees.tabs.${value}`)}</button>)}
+        </div>
       </nav>
 
       {tab === 'overview' ? (
-        <section className="projection-card">
+        <section className="projection-card employee-overview-card">
+          <div className="employee-card-heading">
+            <div>
+              <span className="section-kicker">EMPLOYEE PROFILE</span>
+              <h2>{t('employees.setup')}</h2>
+              <p>{employee.charter || t('employees.description')}</p>
+            </div>
+            <span className={`status-badge status-badge--${statusTone}`}>{translatedEnum(t, 'employeeStatus', employee.state)}</span>
+          </div>
           <div className="form-grid">
+            <div className="employee-form-divider wide"><span>01</span><div><strong>{t('employees.steps.identity')}</strong><small>{t('employees.name')} · {t('employees.avatar')}</small></div></div>
             <label>{t('employees.name')}<input disabled={archived} value={employee.name} onChange={(event) => setRecord({ ...record, employee: { ...employee, name: event.target.value } })} /></label>
             <label>{t('employees.jobTitle')}<input disabled={archived} value={employee.job_title} onChange={(event) => setRecord({ ...record, employee: { ...employee, job_title: event.target.value } })} /></label>
             <label className="wide">{t('employees.charter')}<textarea disabled={archived} value={employee.charter} onChange={(event) => setRecord({ ...record, employee: { ...employee, charter: event.target.value } })} /></label>
             <label>{t('employees.avatar')}<select disabled={archived} value={employee.avatar.kind} onChange={(event) => patchEmployee({ avatar: { kind: event.target.value as 'initials' | 'emoji', value: '' } })}><option value="initials">{t('employees.initials')}</option><option value="emoji">{t('employees.emoji')}</option></select></label>
             <label>{t('employees.avatarValue')}<input disabled={archived} value={employee.avatar.value} onChange={(event) => patchEmployee({ avatar: { ...employee.avatar, value: event.target.value } })} /></label>
+            <div className="employee-form-divider wide"><span>02</span><div><strong>{t('employees.steps.charter')}</strong><small>{t('employees.responsibilities')} · {t('employees.behaviorBoundaries')}</small></div></div>
             <label>{t('employees.responsibilities')}<textarea disabled={archived} value={employee.responsibilities.join('\n')} onChange={(event) => patchEmployee({ responsibilities: lines(event.target.value) })} /></label>
             <label>{t('employees.behaviorBoundaries')}<textarea disabled={archived} value={employee.behavior_boundaries.join('\n')} onChange={(event) => patchEmployee({ behavior_boundaries: lines(event.target.value) })} /></label>
+            <div className="employee-form-divider wide"><span>03</span><div><strong>{t('employees.steps.modelAgent')}</strong><small>{t('employees.defaultModel')} · {t('employees.agent')}</small></div></div>
             <label>{t('employees.company')}<select disabled={archived} value={employee.default_selection.company} onChange={(event) => {
               const selected = companies.find((item) => item.id === event.target.value)
               const selectedAccess = selected?.access[0]
@@ -316,13 +390,15 @@ export function EmployeeDetailPage() {
             }}>{company?.access.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
             <label>{t('employees.model')}<select disabled={archived} value={employee.default_selection.model} onChange={(event) => patchEmployee({ default_selection: { ...employee.default_selection, model: event.target.value } })}>{access?.models.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
             <label>{t('employees.agent')}<select disabled={archived} value={employee.agent_profile} onChange={(event) => patchEmployee({ agent_profile: event.target.value })}>{info?.agents.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+            <div className="employee-form-divider wide"><span>04</span><div><strong>{t('employees.steps.policy')}</strong><small>{t('employees.capabilities')} · {t('employees.budget')}</small></div></div>
             <label>{t('employees.capabilities')}<textarea disabled={archived} value={employee.permission_policy.allowed_capabilities.join('\n')} onChange={(event) => patchEmployee({ permission_policy: { ...employee.permission_policy, allowed_capabilities: lines(event.target.value) } })} /></label>
-            <label><input type="checkbox" disabled={archived} checked={employee.permission_policy.network_allowed} onChange={(event) => patchEmployee({ permission_policy: { ...employee.permission_policy, network_allowed: event.target.checked } })} />{t('employees.network')}</label>
+            <label className="form-toggle"><input type="checkbox" disabled={archived} checked={employee.permission_policy.network_allowed} onChange={(event) => patchEmployee({ permission_policy: { ...employee.permission_policy, network_allowed: event.target.checked } })} /><span>{t('employees.network')}</span></label>
             <label>{t('employees.maxCalls')}<input type="number" min="1" disabled={archived} value={employee.budget_policy.max_model_calls} onChange={(event) => patchEmployee({ budget_policy: { ...employee.budget_policy, max_model_calls: Number(event.target.value) } })} /></label>
             <label>{t('employees.maxTokens')}<input type="number" min="1" disabled={archived} value={employee.budget_policy.max_tokens} onChange={(event) => patchEmployee({ budget_policy: { ...employee.budget_policy, max_tokens: Number(event.target.value) } })} /></label>
             <label>{t('employees.timeoutSeconds')}<input type="number" min="1" disabled={archived} value={employee.budget_policy.timeout_seconds} onChange={(event) => patchEmployee({ budget_policy: { ...employee.budget_policy, timeout_seconds: Number(event.target.value) } })} /></label>
             <label>{t('employees.maxRunningTasks')}<input type="number" min="1" disabled={archived} value={employee.concurrency_policy.max_running_tasks} onChange={(event) => patchEmployee({ concurrency_policy: { max_running_tasks: Number(event.target.value) } })} /></label>
-            <label><input type="checkbox" disabled={archived} checked={employee.memory_policy.candidate_generation} onChange={(event) => patchEmployee({ memory_policy: { ...employee.memory_policy, candidate_generation: event.target.checked, promotion: event.target.checked ? 'owner_confirmation' : 'disabled' } })} />{t('employees.memoryCandidates')}</label>
+            <div className="employee-form-divider wide"><span>05</span><div><strong>{t('employees.steps.memory')}</strong><small>{t('employees.memoryCandidates')} · {t('employees.maxContextFacts')}</small></div></div>
+            <label className="form-toggle"><input type="checkbox" disabled={archived} checked={employee.memory_policy.candidate_generation} onChange={(event) => patchEmployee({ memory_policy: { ...employee.memory_policy, candidate_generation: event.target.checked, promotion: event.target.checked ? 'owner_confirmation' : 'disabled' } })} /><span>{t('employees.memoryCandidates')}</span></label>
             <label>{t('employees.maxContextFacts')}<input type="number" min="0" disabled={archived} value={employee.memory_policy.max_context_facts} onChange={(event) => patchEmployee({ memory_policy: { ...employee.memory_policy, max_context_facts: Number(event.target.value) } })} /></label>
             <label>{t('employees.maxContextBytes')}<input type="number" min="0" disabled={archived} value={employee.memory_policy.max_context_bytes} onChange={(event) => patchEmployee({ memory_policy: { ...employee.memory_policy, max_context_bytes: Number(event.target.value) } })} /></label>
           </div>
@@ -337,13 +413,13 @@ export function EmployeeDetailPage() {
             <dt>{t('employees.concurrency')}</dt><dd>{employee.concurrency_policy.max_running_tasks}</dd>
             <dt>{t('employees.memory')}</dt><dd>{employee.memory_policy.promotion} · {employee.memory_policy.max_context_facts} facts / {employee.memory_policy.max_context_bytes} bytes</dd>
           </dl>
-          {!archived ? <div className="button-row">
-            <button type="button" disabled={!canMutate} onClick={() => void saveEmployee()}>{t('employees.save')}</button>
+          {!archived ? <div className="button-row employee-action-bar">
+            <button className="button button--primary" type="button" disabled={!canMutate} onClick={() => void saveEmployee()}>{t('employees.save')}</button>
             {active ? <button type="button" disabled={!canMutate} onClick={() => lifecycle('disable')}>{t('employees.disable')}</button> : <button type="button" disabled={!canMutate} onClick={() => lifecycle('enable')}>{t('employees.enable')}</button>}
             <button type="button" disabled={!canMutate} onClick={() => lifecycle('archive')}>{t('employees.archive')}</button>
             <button type="button" disabled={!connectivity.canMutate || busy} onClick={runDry}>{t('employees.dryRun')}</button>
           </div> : null}
-          {dryRun ? <section><h3>{t('employees.readiness')}</h3><p>{dryRun.ready ? t('employees.ready') : t('employees.blocked')}</p><ul>{dryRun.checks.map((check) => <li key={check.name}>{check.name}: {check.detail}</li>)}</ul></section> : null}
+          {dryRun ? <section className="employee-readiness-card" data-testid="employee-detail-readiness"><div className="employee-readiness-card__heading"><div><span className="section-kicker">SERVER CHECK</span><h3>{t('employees.readiness')}</h3></div><span className={`status-badge status-badge--${dryRun.ready ? 'success' : 'warning'}`}>{dryRun.ready ? t('employees.ready') : t('employees.blocked')}</span></div><ul>{dryRun.checks.map((check) => <li className={check.ready ? 'is-ready' : 'is-blocked'} key={check.name}><CircleCheck size={16} aria-hidden="true" /><span><strong>{check.name}: {check.detail}</strong><small>{check.ready ? t('employees.ready') : t('employees.blocked')}</small></span></li>)}</ul></section> : null}
         </section>
       ) : null}
 
