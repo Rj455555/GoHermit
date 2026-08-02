@@ -40,5 +40,6 @@ describe('responsive shell CSS contract', () => {
     expect(styles).toContain('-ms-overflow-style: none')
     expect(styles).toContain('.tab-list::-webkit-scrollbar')
     expect(styles).toContain('.employee-detail-tabs::-webkit-scrollbar')
+    expect(styles).toContain('.loop-flow::-webkit-scrollbar')
   })
 })

@@ -2468,13 +2468,15 @@ textarea {
 
 /* Tab rows stay touch/keyboard scrollable without exposing browser chrome. */
 .tab-list,
-.employee-detail-tabs {
+.employee-detail-tabs,
+.loop-flow {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
 .tab-list::-webkit-scrollbar,
-.employee-detail-tabs::-webkit-scrollbar {
+.employee-detail-tabs::-webkit-scrollbar,
+.loop-flow::-webkit-scrollbar {
   width: 0;
   height: 0;
   display: none;
