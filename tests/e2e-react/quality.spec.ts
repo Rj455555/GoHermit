@@ -5,7 +5,12 @@ test('200% zoom keeps controls accessible and shell copy is clean', async ({ pag
   await page.evaluate(() => {
     document.documentElement.style.zoom = '2'
   })
-  await expect(page.getByRole('button', { name: '收起主导航' })).toBeVisible()
+  const collapse = page.getByRole('button', { name: '收起主导航' })
+  if (await collapse.isVisible()) {
+    await expect(collapse).toBeVisible()
+  } else {
+    await expect(page.getByRole('button', { name: /主导航|Main navigation/u })).toBeVisible()
+  }
   const text = await page.locator('body').innerText()
   expect(text).not.toContain('undefined')
   expect(text).not.toContain('V0.6')

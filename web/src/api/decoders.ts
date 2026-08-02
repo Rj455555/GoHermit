@@ -540,6 +540,36 @@ function decodeRoleUsage(value: unknown) {
   return result
 }
 
+function decodeEmployeeAssignments(value: unknown) {
+  if (value === undefined || value === null) return {}
+  const source = object(value)
+  if (Object.keys(source).length > MAX_SESSION_RECORDS) fail()
+  const result: Mission['employee_assignments'] = {}
+  for (const [workItemID, candidate] of Object.entries(source)) {
+    const assignment = object(candidate)
+    const decoded = {
+      schema_version: integer(assignment.schema_version),
+      work_item_id: id(assignment.work_item_id),
+      role: enumeration(assignment.role, TEAM_ROLES),
+      employee_id: id(assignment.employee_id),
+      employee_revision: integer(assignment.employee_revision),
+      employee_snapshot_digest: string(assignment.employee_snapshot_digest, 256),
+      project_binding_id: id(assignment.project_binding_id),
+      workspace_fingerprint: string(assignment.workspace_fingerprint, 256),
+      company: id(assignment.company),
+      access: id(assignment.access),
+      model: id(assignment.model),
+      agent_profile: id(assignment.agent_profile),
+      effective_policy_digest: string(assignment.effective_policy_digest, 256),
+      context_digest: string(assignment.context_digest, 256),
+      digest: string(assignment.digest, 256),
+    }
+    if (workItemID !== decoded.work_item_id) fail()
+    result[workItemID] = decoded
+  }
+  return result
+}
+
 function decodeHandoff(value: unknown): Handoff {
   const source = object(value)
   return {
@@ -604,6 +634,7 @@ function decodeMission(value: unknown): Mission {
     usage_by_role: decodeRoleUsage(source.usage_by_role),
     work_items: array(source.work_items, decodeWorkItem, MAX_SESSION_RECORDS),
     handoffs: array(source.handoffs, decodeHandoff, MAX_SESSION_RECORDS),
+    employee_assignments: decodeEmployeeAssignments(source.employee_assignments),
     created_at: time(source.created_at),
     updated_at: time(source.updated_at),
     error: optionalString(source.error, 4096),

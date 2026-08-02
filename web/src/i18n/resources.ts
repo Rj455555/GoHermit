@@ -6,11 +6,17 @@ export const translationResources = {
   'zh-CN': {
     translation: {
       actions: {
+        actions: '操作',
         backDashboard: '返回仪表盘',
         cancel: '取消',
         confirm: '确认',
         dismiss: '关闭',
+        edit: '编辑',
+        more: '更多操作',
+        open: '打开',
         retry: '重试',
+        save: '保存',
+        search: '搜索',
       },
       brand: {
         label: 'GOHERMIT · 工作流',
@@ -317,6 +323,7 @@ export const translationResources = {
         readAllowed: '允许读取',
         readiness: '就绪状态',
         ready: '就绪',
+        bindSkill: '绑定 Skill',
         refresh: '刷新',
         removeSkill: '删除 Skill',
         reject: '拒绝',
@@ -365,6 +372,7 @@ export const translationResources = {
           policy: '权限和预算配置无效，请至少保留一项能力并填写正数预算。',
           server: '服务端拒绝了创建请求。请检查当前步骤中的必填项后重试。',
         },
+        tabNavigation: 'Employee 页面分区',
         tabs: {
           activity: 'Activity',
           knowledge: 'Knowledge / Citations',
@@ -425,6 +433,7 @@ export const translationResources = {
         tools: '工具',
       },
       loops: {
+        invocationSection: 'Invocation 页面分区',
         kicker: '工作循环',
         heroTitle: '你的电子员工，醒来会做什么？',
         heroDescription: '为员工定义一份可重复执行的契约。GoHermit 负责调度、状态、日志与验证。',
@@ -543,6 +552,14 @@ export const translationResources = {
         teamName: 'Team 名称',
         teamReference: 'Team template 引用',
         teamRoles: 'Team 角色',
+        role: '角色',
+        workItems: 'WorkItems',
+        handoffs: 'Handoff',
+        assignmentSnapshot: '不可变 Assignment 快照',
+        hiddenWorkerProtected: 'Hidden Worker Session 保持隔离；这里只显示有界的公开 Assignment metadata。',
+        policy: '有效策略 Digest',
+        summary: '摘要',
+        updated: '更新时间',
         timeout: '超时（秒）',
         timeline: 'Session 时间线',
         tools: '工具',
@@ -822,11 +839,17 @@ export const translationResources = {
   'en-US': {
     translation: {
       actions: {
+        actions: 'Actions',
         backDashboard: 'Back to Dashboard',
         cancel: 'Cancel',
         confirm: 'Confirm',
         dismiss: 'Dismiss',
+        edit: 'Edit',
+        more: 'More actions',
+        open: 'Open',
         retry: 'Retry',
+        save: 'Save',
+        search: 'Search',
       },
       brand: {
         label: 'GOHERMIT · LOOP WORKBENCH',
@@ -1133,6 +1156,7 @@ export const translationResources = {
         readAllowed: 'Read allowed',
         readiness: 'Readiness',
         ready: 'Ready',
+        bindSkill: 'Bind Skill',
         refresh: 'Refresh',
         removeSkill: 'Remove Skill',
         reject: 'Reject',
@@ -1181,6 +1205,7 @@ export const translationResources = {
           policy: 'Keep at least one capability and use positive budget values.',
           server: 'The server rejected the creation request. Review the required fields and retry.',
         },
+        tabNavigation: 'Employee page section',
         tabs: {
           activity: 'Activity',
           knowledge: 'Knowledge / Citations',
@@ -1241,6 +1266,7 @@ export const translationResources = {
         tools: 'Tools',
       },
       loops: {
+        invocationSection: 'Invocation page section',
         kicker: 'Work loops',
         heroTitle: 'What should your Employees do when they wake up?',
         heroDescription: 'Give each Employee a repeatable contract. GoHermit handles scheduling, state, logs, and verification.',
@@ -1359,6 +1385,14 @@ export const translationResources = {
         teamName: 'Team name',
         teamReference: 'Team template reference',
         teamRoles: 'Team roles',
+        role: 'Role',
+        workItems: 'WorkItems',
+        handoffs: 'Handoffs',
+        assignmentSnapshot: 'Immutable assignment snapshot',
+        hiddenWorkerProtected: 'The Hidden Worker Session remains isolated; only bounded public assignment metadata is shown here.',
+        policy: 'Effective policy digest',
+        summary: 'Summary',
+        updated: 'Updated',
         timeout: 'Timeout (seconds)',
         timeline: 'Session timeline',
         tools: 'Tools',

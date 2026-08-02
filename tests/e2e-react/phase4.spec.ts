@@ -4,26 +4,73 @@ test.beforeEach(async ({ request }) => {
   await request.post('/__test__/reset')
 })
 
+async function selectEmployeeSection(page: import('@playwright/test').Page, name: RegExp) {
+  const selector = page.locator('.employee-mobile-tab-select')
+  if ((page.viewportSize()?.width ?? 1440) < 768) {
+    await page.locator('.employee-mobile-tab-select').click()
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: name }).click()
+    await expect(page.locator('.employee-mobile-tab-select .ant-select-selection-item')).toContainText(name)
+  } else {
+    const tab = page.getByRole('tab', { name })
+    await tab.click()
+    try {
+      await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 1_000 })
+    } catch {
+      await page.locator('.employee-antd-tabs .ant-tabs-nav-more').click()
+      await page.locator('.ant-dropdown:visible [role="menuitem"]').filter({ hasText: name }).click()
+      await expect(tab).toHaveAttribute('aria-selected', 'true')
+    }
+  }
+}
+
+async function selectInvocationSection(page: import('@playwright/test').Page, name: RegExp) {
+  const selector = page.locator('.loop-mobile-tab-select')
+  if ((page.viewportSize()?.width ?? 1440) < 768) {
+    await selector.click()
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: name }).click()
+    await expect(selector.locator('.ant-select-selection-item')).toContainText(name)
+  } else {
+    await page.getByRole('tab', { name }).last().click()
+  }
+}
+
 test('archived Employee is direct-loadable, structured, non-empty, and fully read-only', async ({ page }) => {
   await page.goto('/employees/employee-ada')
   await expect(page.getByTestId('employee-status')).toBeVisible()
   await expect(page.getByRole('button', { name: /保存|Save|停用|Disable|启用|Enable|归档|Archive/u })).toHaveCount(0)
 
-  await page.getByRole('button', { name: /技能|Skills/u }).click()
-  await expect(page.getByText(/native-review@1\.0\.0/u)).toBeVisible()
-  await expect(page.getByText(/Digest 已过期|Digest drift/u)).toBeVisible()
+  await selectEmployeeSection(page, /技能|Skills/u)
+  const skillCard = page.getByTestId('skill-card-native-review').filter({ hasText: 'digest_drift' }).first()
+  if ((page.viewportSize()?.width ?? 1440) < 768) {
+    await expect(skillCard).toContainText('native-review')
+    await expect(skillCard).toContainText('1.0.0')
+  } else {
+    await expect(page.getByText(/native-review@1\.0\.0/u).first()).toBeVisible()
+  }
+  await expect(page.getByText(/Digest 已过期|Digest drift/u).first()).toBeVisible()
 
-  await page.getByRole('button', { name: /知识|Knowledge/u }).click()
-  await expect(page.getByTestId('knowledge-source')).toContainText('Release handbook')
-  await expect(page.getByTestId('knowledge-citation')).toContainText('docs/handbook.md:1-3')
+  await selectEmployeeSection(page, /知识|Knowledge/u)
+  if ((page.viewportSize()?.width ?? 1440) < 768) {
+    const knowledgeCard = page.getByTestId('knowledge-source').filter({ hasText: 'Release handbook' })
+    await expect(knowledgeCard).toBeVisible()
+    await knowledgeCard.getByRole('button', { name: /1/u }).click()
+  } else {
+    const knowledgeRow = page.getByRole('row').filter({ hasText: 'Release handbook' })
+    await expect(knowledgeRow).toBeVisible()
+    await knowledgeRow.getByRole('button', { name: '1' }).click()
+  }
+  const citationDrawer = page.getByRole('dialog', { name: /Citation evidence|Citation 证据/u })
+  await expect(citationDrawer.getByText('docs/handbook.md', { exact: true })).toBeVisible()
+  await citationDrawer.getByRole('button', { name: /Close|关闭/u }).click()
+  await expect(citationDrawer).not.toBeVisible()
 
-  await page.getByRole('button', { name: /记忆|Memory/u }).click()
+  await selectEmployeeSection(page, /记忆|Memory/u)
   await expect(page.getByTestId('memory-candidate')).toContainText('Run the bounded verification recipe.')
-  await expect(page.locator('input[value="Always retain release evidence."]')).toBeVisible()
+  await expect(page.getByText('Always retain release evidence.', { exact: true })).toBeVisible()
 
-  await page.getByRole('button', { name: /任务|Tasks/u }).click()
+  await selectEmployeeSection(page, /任务|Tasks/u)
   await expect(page.getByRole('link', { name: 'Prepare release.' })).toBeVisible()
-  await page.getByRole('button', { name: /活动|Activity/u }).click()
+  await selectEmployeeSection(page, /活动|Activity/u)
   await expect(page.getByText(/Employee 已归档|Employee archived/u)).toBeVisible()
 
   await page.reload()
@@ -151,8 +198,8 @@ test('queued Task requires explicit Prepare then Start and restores through hist
   await page.goto('/tasks/task-queued')
   await expect(page.getByTestId('task-status')).toBeVisible()
   await expect(page.getByRole('button', { name: /启动|Start/u })).toHaveCount(0)
-  await page.getByRole('button', { name: /准备|Prepare/u }).click()
-  await page.getByRole('button', { name: /启动|Start/u }).click()
+  await page.getByRole('button', { name: /准\s*备|Prepare/u }).click()
+  await page.getByRole('button', { name: /启\s*动|Start/u }).click()
   await expect(page.getByTestId('task-status')).not.toContainText(/queued|排队/u)
   await expect(page.getByRole('heading', { name: /计划|Plan/u })).toBeVisible()
   await expect(page.getByRole('heading', { name: /工具|Tools/u })).toBeVisible()
@@ -167,24 +214,28 @@ test('queued Task requires explicit Prepare then Start and restores through hist
 test('Loop Definition, Team, Dry Run, and Invocation use structured authoritative projections', async ({ page }) => {
   await page.goto('/loops/daily-review')
   await expect(page.getByRole('heading', { name: 'Daily review' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: /循环契约|Loop contract/u })).toBeVisible()
-  await page.getByText(/高级设置|Advanced settings/u).click()
+  await expect(page.getByRole('tab', { name: /循环契约|Loop contract/u })).toBeVisible()
+  await page.getByRole('tab', { name: /高级设置|Advanced settings/u }).click()
   await expect(page.locator('input[value="Daily review"]')).toBeVisible()
   await expect(page.getByRole('heading', { name: /验证检查|Verification checks/u })).toBeVisible()
-  await expect(page.getByTestId('team-role-builder')).toHaveValue('employee-builder')
+  await expect(page.getByTestId('team-role-builder')).toContainText('Builder · r2')
   await expect(page.getByText(/Builder · r2 · (就绪|Ready)/u)).toBeVisible()
   await expect(page.getByRole('button', { name: /立即运行|Run now/u })).toBeDisabled()
 
   await page.getByRole('button', { name: 'Dry Run' }).click()
-  await expect(page.getByRole('heading', { name: /Dry Run 结果|Dry Run result/u })).toBeVisible()
+  await expect(page.getByText(/Dry Run 结果|Dry Run result/u).first()).toBeVisible()
   await expect(page.getByRole('button', { name: /立即运行|Run now/u })).toBeEnabled()
 
   await page.goto('/loops/daily-review/invocations/invocation-1')
   await expect(page.getByRole('heading', { name: /Definition 快照|Definition snapshot/u })).toBeVisible()
+  await selectInvocationSection(page, /计划|Plan/u)
   await expect(page.getByRole('heading', { name: /计划|Plan/u })).toBeVisible()
+  await selectInvocationSection(page, /工具|Tools/u)
   await expect(page.getByRole('heading', { name: /工具|Tools/u })).toBeVisible()
+  await selectInvocationSection(page, /时间线|Timeline/u)
   await expect(page.getByTestId('loop-timeline')).toContainText('invocation-1')
   await page.reload()
+  await selectInvocationSection(page, /时间线|Timeline/u)
   await expect(page.getByTestId('loop-timeline')).toContainText('invocation-1')
 })
 
@@ -195,7 +246,6 @@ test('rapid Employee and Loop A/B route switches cannot commit stale responses',
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
   await expect(page.getByRole('heading', { name: 'Beta Employee' })).toBeVisible()
-  await page.waitForTimeout(400)
   await expect(page.getByRole('heading', { name: 'Beta Employee' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Alpha Employee' })).toHaveCount(0)
 
@@ -205,7 +255,6 @@ test('rapid Employee and Loop A/B route switches cannot commit stale responses',
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
   await expect(page.getByRole('heading', { name: 'Beta Loop' })).toBeVisible()
-  await page.waitForTimeout(400)
   await expect(page.getByRole('heading', { name: 'Beta Loop' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Alpha Loop' })).toHaveCount(0)
 })

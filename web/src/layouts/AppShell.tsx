@@ -6,8 +6,8 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { Layout } from 'antd'
-import { Menu, PanelRightOpen, X } from 'lucide-react'
+import { Button, Drawer, Layout } from 'antd'
+import { Menu, PanelRightOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { NavLink, useLocation } from 'react-router-dom'
 
@@ -83,7 +83,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   }, [agentRoute, mobile, state.sessionSidebarCollapsed])
 
   const drawerOpen = agentRoute && mobile && state.mobileSessionDrawerOpen
-  const shellIsolated = drawerOpen || state.dialog !== null
+  const shellIsolated = drawerOpen || mobileNavigationOpen || state.dialog !== null
 
   const collapseSessionSidebar = useCallback(() => {
     pendingSidebarFocusRef.current = true
@@ -119,37 +119,15 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               <span className="navigation-rail__mark" aria-hidden="true">
                 GH
               </span>
-              <button
-                type="button"
+              <Button
+                type="text"
+                htmlType="button"
                 className="mobile-bar__trigger"
                 aria-label={t('navigation.label')}
                 aria-expanded={mobileNavigationOpen}
+                icon={<Menu size={21} aria-hidden="true" />}
                 onClick={() => setMobileNavigationOpen((open) => !open)}
-              >
-                {mobileNavigationOpen ? (
-                  <X size={21} aria-hidden="true" />
-                ) : (
-                  <Menu size={21} aria-hidden="true" />
-                )}
-              </button>
-              <nav
-                className={`mobile-navigation${mobileNavigationOpen ? ' mobile-navigation--open' : ''}`}
-                aria-label={t('navigation.label')}
-              >
-                {navigationItems.map(({ to, labelKey, icon: Icon }) => (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    end={to === '/dashboard'}
-                    className={({ isActive }) =>
-                      `mobile-navigation__link${isActive ? ' mobile-navigation__link--active' : ''}`
-                    }
-                  >
-                    <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
-                    <span>{t(labelKey)}</span>
-                  </NavLink>
-                ))}
-              </nav>
+              />
             </Layout.Header>
           ) : null}
           {agentRoute && mobile ? (
@@ -207,6 +185,30 @@ function AppShellFrame({ children }: { children: ReactNode }) {
           </Layout>
         </Layout>
       </div>
+      <Drawer
+        title={t('navigation.label')}
+        placement="left"
+        width="min(88vw, 360px)"
+        open={mobile && mobileNavigationOpen}
+        onClose={() => setMobileNavigationOpen(false)}
+        className="mobile-navigation-drawer"
+      >
+        <nav className="mobile-navigation" aria-label={t('navigation.label')}>
+          {navigationItems.map(({ to, labelKey, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/dashboard'}
+              className={({ isActive }) =>
+                `mobile-navigation__link${isActive ? ' mobile-navigation__link--active' : ''}`
+              }
+            >
+              <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
+              <span>{t(labelKey)}</span>
+            </NavLink>
+          ))}
+        </nav>
+      </Drawer>
       <MobileSessionDrawer
         open={drawerOpen}
         onClose={closeDrawer}

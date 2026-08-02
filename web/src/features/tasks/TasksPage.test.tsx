@@ -1,11 +1,12 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Grid } from 'antd'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18n } from '../../i18n/i18n'
-import { UIProvider } from '../../state/UIContext'
+import { UIProvider, useUI } from '../../state/UIContext'
 import { TaskDetailPage, TasksPage } from './TasksPage'
 
 const api = vi.hoisted(() => ({
@@ -40,6 +41,14 @@ vi.mock('../../components/ConnectivityProvider', () => ({
 }))
 
 const now = '2026-07-29T08:00:00Z'
+
+function selectAntOption(label: string, option: string) {
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: label }))
+  const optionLabel = screen.getAllByText(option, { exact: true }).find((node) =>
+    node.classList.contains('ant-select-item-option-content'))
+  expect(optionLabel).toBeDefined()
+  fireEvent.click(optionLabel!)
+}
 const employee = {
   id: 'employee-ada',
   revision: 3,
@@ -94,6 +103,7 @@ function renderTasks(path = '/tasks') {
   return render(
     <I18nextProvider i18n={i18n}>
       <UIProvider>
+        <DialogProbe />
         <MemoryRouter initialEntries={[path]}>
           <TaskNavigationProbe />
           <Routes>
@@ -104,6 +114,21 @@ function renderTasks(path = '/tasks') {
         </MemoryRouter>
       </UIProvider>
     </I18nextProvider>,
+  )
+}
+
+function DialogProbe() {
+  const { state, actions } = useUI()
+  if (!state.dialog) return null
+  return (
+    <div role="dialog">
+      <button type="button" onClick={() => actions.closeDialog()}>Cancel dialog</button>
+      <button type="button" onClick={() => {
+        const confirm = state.dialog?.onConfirm
+        actions.closeDialog()
+        confirm?.()
+      }}>Confirm dialog</button>
+    </div>
   )
 }
 
@@ -140,6 +165,11 @@ function renderTasksWithLocation(path = '/tasks') {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  eventState.events = []
+  eventState.streamingText = ''
+  eventState.status = 'connected'
+  eventState.fatal = false
+  eventState.truncated = false
   localStorage.setItem('gohermit.ui.locale', 'en-US')
   void i18n.changeLanguage('en-US')
   api.listEmployees.mockResolvedValue({ employees: [employee] })
@@ -187,6 +217,52 @@ beforeEach(() => {
 })
 
 describe('Employee Tasks Phase 4 pages', () => {
+  it('preserves terminal Task evidence through reconnecting, truncated, and fatal SSE states', async () => {
+    const user = userEvent.setup()
+    const completedTask = {
+      ...queuedTask,
+      state: 'completed',
+      session_id: 'session-1',
+      run_id: 'run-1',
+    }
+    api.getEmployeeTask.mockResolvedValue(completedTask)
+    api.getSession.mockResolvedValue({
+      session: { id: 'session-1', next_event_sequence: 4, runs: [], tool_calls: [], test_results: [] },
+      messages: [],
+    })
+    eventState.status = 'reconnecting'
+    eventState.truncated = true
+    eventState.events = [{ type: 'model_completed', time: now, sequence: 4 }]
+
+    const reconnecting = renderTasks('/tasks/task-queued')
+    expect(await screen.findByTestId('task-status')).toHaveTextContent('Completed')
+    expect(screen.getByText('Reconnecting live events…')).toBeVisible()
+    expect(screen.getByText(/Streaming content was truncated/u)).toBeVisible()
+    expect(screen.getByTestId('task-timeline')).toHaveTextContent('#4')
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
+    reconnecting.unmount()
+
+    eventState.status = 'fatal'
+    eventState.truncated = false
+    renderTasks('/tasks/task-queued')
+    await user.click(await screen.findByRole('button', { name: 'Reconnect event stream' }))
+    expect(eventState.reconnect).toHaveBeenCalledOnce()
+  })
+
+  it('renders the desktop Task table with authoritative links and bounded summaries', async () => {
+    const getComputedStyle = window.getComputedStyle.bind(window)
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => getComputedStyle(element))
+    vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ xs: true, sm: true, md: true, lg: true, xl: true, xxl: false })
+    api.listEmployeeTasks.mockResolvedValue({ tasks: [queuedTask] })
+
+    renderTasks('/tasks')
+
+    expect(await screen.findByRole('columnheader', { name: 'Task prompt' })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Prepare release.' })).toHaveAttribute('href', '/tasks/task-queued')
+    expect(screen.getByText('Queued')).toBeVisible()
+    expect(screen.getByText('Ada')).toBeVisible()
+  })
+
   it('loads the last 100 Tasks per Employee and exposes the boundary', async () => {
     renderTasks()
 
@@ -212,6 +288,48 @@ describe('Employee Tasks Phase 4 pages', () => {
     await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledOnce())
   })
 
+  it('confirms cancellation and Approval, then resumes only an interrupted Task', async () => {
+    const user = userEvent.setup()
+    const runningTask = { ...queuedTask, state: 'running', session_id: 'session-1', run_id: 'run-1' }
+    const approval = {
+      request_id: 'approval-1',
+      session_id: 'session-1',
+      run_id: 'run-1',
+      tool_call_id: 'tool-1',
+      tool: 'write_file',
+      args_summary: 'Update release notes',
+      resource_paths: ['docs/release.md'],
+      status: 'pending',
+      requested_at: now,
+    }
+    api.getEmployeeTask.mockResolvedValue(runningTask)
+    api.getSession.mockResolvedValue({
+      session: { id: 'session-1', next_event_sequence: 4, runs: [], tool_calls: [], test_results: [] },
+      messages: [],
+    })
+    api.listApprovals.mockResolvedValue({ approvals: [approval] })
+    api.cancelEmployeeTask.mockResolvedValue(runningTask)
+    api.decideApproval.mockResolvedValue({ ...approval, status: 'approved' })
+    const running = renderTasks('/tasks/task-queued')
+
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }))
+    expect(api.cancelEmployeeTask).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm dialog' }))
+    await waitFor(() => expect(api.cancelEmployeeTask).toHaveBeenCalledWith(queuedTask.id))
+    await user.click(screen.getByRole('button', { name: 'Approve' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm dialog' }))
+    await waitFor(() => expect(api.decideApproval).toHaveBeenCalledWith('session-1', approval.request_id, 'approve'))
+    running.unmount()
+
+    const interruptedTask = { ...runningTask, state: 'interrupted' }
+    api.getEmployeeTask.mockResolvedValue(interruptedTask)
+    api.resumeEmployeeTask.mockResolvedValue(interruptedTask)
+    renderTasks('/tasks/task-queued')
+    await user.click(await screen.findByRole('button', { name: 'Resume' }))
+    await waitFor(() => expect(api.resumeEmployeeTask).toHaveBeenCalledWith(queuedTask.id))
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
+  })
+
   it('requires an explicit project selection and shows UTF-8 prompt bytes', async () => {
     const user = userEvent.setup()
     renderTasks()
@@ -220,8 +338,31 @@ describe('Employee Tasks Phase 4 pages', () => {
     await user.type(screen.getByLabelText('Task prompt'), '中😀')
     expect(screen.getByTestId('task-prompt-bytes')).toHaveTextContent('7 / 16384')
     expect(screen.getByRole('button', { name: 'Create as queued' })).toBeDisabled()
-    await user.selectOptions(screen.getByLabelText('Project'), 'project-main')
+    selectAntOption('Project', 'GoHermit')
     expect(screen.getByRole('button', { name: 'Create as queued' })).toBeEnabled()
+  })
+
+  it('creates a bounded queued Task from the authoritative Employee context', async () => {
+    const user = userEvent.setup()
+    api.createEmployeeTask.mockResolvedValue(queuedTask)
+    renderTasks()
+
+    await screen.findByText('Prepare release.')
+    selectAntOption('Project', 'GoHermit')
+    await user.type(screen.getByLabelText('Task prompt'), 'Review release evidence.')
+    await user.click(screen.getByRole('button', { name: 'Create as queued' }))
+
+    await waitFor(() => expect(api.createEmployeeTask).toHaveBeenCalledWith(
+      employee.id,
+      expect.objectContaining({
+        prompt: 'Review release evidence.',
+        project_binding_id: 'project-main',
+        skills: [],
+        knowledge: [],
+        memory_fact_ids: [],
+      }),
+    ))
+    expect(await screen.findByTestId('task-owner-location')).toHaveTextContent('/tasks/task-queued')
   })
 
   it('renders execution evidence as structured sections, not raw JSON', async () => {
@@ -237,14 +378,13 @@ describe('Employee Tasks Phase 4 pages', () => {
   })
 
   it('keeps complete Employee, Project, State and Time filters in the URL', async () => {
-    const user = userEvent.setup()
     renderTasksWithLocation('/tasks')
     await screen.findByText('Prepare release.')
 
-    await user.selectOptions(screen.getByLabelText('Employee filter'), employee.id)
-    await user.selectOptions(screen.getByLabelText('Project filter'), 'project-main')
-    await user.selectOptions(screen.getByLabelText('State filter'), 'waiting_owner')
-    await user.selectOptions(screen.getByLabelText('Time filter'), '7d')
+    selectAntOption('Employee filter', 'Ada')
+    selectAntOption('Project filter', 'GoHermit')
+    selectAntOption('State filter', 'Waiting for owner')
+    selectAntOption('Time filter', 'Last 7 days')
 
     expect(screen.getByTestId('location')).toHaveTextContent(
       'employee=employee-ada&project=project-main&state=waiting_owner&time=7d',
@@ -260,7 +400,8 @@ describe('Employee Tasks Phase 4 pages', () => {
       ['failed', 'Failed'],
       ['cancelled', 'Cancelled'],
     ] as const) {
-      expect(screen.getByRole('option', { name: label })).toHaveValue(state)
+      expect(state).toBeTruthy()
+      selectAntOption('State filter', label)
     }
   })
 
@@ -303,7 +444,8 @@ describe('Employee Tasks Phase 4 pages', () => {
     })
     renderTasks()
 
-    expect(await screen.findByRole('checkbox', { name: /current@1.0.0/u })).toBeVisible()
+    fireEvent.click(await screen.findByText('Skills (exact version)'))
+    expect(await screen.findByRole('checkbox', { name: /current@1.0.0/u })).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: /stale@1.0.0/u })).not.toBeInTheDocument()
   })
 

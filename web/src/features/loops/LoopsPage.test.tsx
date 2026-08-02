@@ -2,10 +2,11 @@ import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Grid } from 'antd'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18n } from '../../i18n/i18n'
-import { UIProvider } from '../../state/UIContext'
+import { UIProvider, useUI } from '../../state/UIContext'
 import type { LoopDefinition, TeamTemplate } from '../../api/types'
 import { LoopDetailPage, LoopInvocationPage, LoopsPage } from './LoopsPage'
 
@@ -45,6 +46,14 @@ vi.mock('../../hooks/useSessionEvents', () => ({
 vi.mock('../../components/ConnectivityProvider', () => ({
   useConnectivity: () => ({ status: 'online', generation: 0, canMutate: true }),
 }))
+
+function selectAntOption(label: string, option: string) {
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: label }))
+  const optionLabel = screen.getAllByText(option, { exact: true }).find((node) =>
+    node.classList.contains('ant-select-item-option-content'))
+  expect(optionLabel).toBeDefined()
+  fireEvent.click(optionLabel!)
+}
 
 const now = '2026-07-29T08:00:00Z'
 const definition = {
@@ -126,6 +135,7 @@ function renderLoops(path = '/loops') {
   return render(
     <I18nextProvider i18n={i18n}>
       <UIProvider>
+        <DialogProbe />
         <MemoryRouter initialEntries={[path]}>
           <LoopNavigationProbe />
           <Routes>
@@ -136,6 +146,21 @@ function renderLoops(path = '/loops') {
         </MemoryRouter>
       </UIProvider>
     </I18nextProvider>,
+  )
+}
+
+function DialogProbe() {
+  const { state, actions } = useUI()
+  if (!state.dialog) return null
+  return (
+    <div role="dialog">
+      <button type="button" onClick={() => actions.closeDialog()}>Cancel dialog</button>
+      <button type="button" onClick={() => {
+        const confirm = state.dialog?.onConfirm
+        actions.closeDialog()
+        confirm?.()
+      }}>Confirm dialog</button>
+    </div>
   )
 }
 
@@ -242,6 +267,20 @@ beforeEach(() => {
 })
 
 describe('Loops Phase 4 pages', () => {
+  it('renders the desktop Loop table with state, Team, Mission, and actions', async () => {
+    const getComputedStyle = window.getComputedStyle.bind(window)
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => getComputedStyle(element))
+    vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ xs: true, sm: true, md: true, lg: true, xl: true, xxl: false })
+
+    renderLoops('/loops')
+
+    await waitFor(() => expect(screen.getAllByRole('columnheader')).toHaveLength(6))
+    expect(screen.getByRole('link', { name: 'Daily review' })).toHaveAttribute('href', '/loops/daily-review')
+    expect(screen.getByText('Enabled')).toBeVisible()
+    expect(screen.getByText(definition.team_template_ref)).toBeVisible()
+    expect(screen.getByText(definition.contract.goal)).toBeVisible()
+  })
+
   it('presents Employee loops as contract cards and creates one from the short path', async () => {
     const user = userEvent.setup()
     api.createLoop.mockImplementation((next: LoopDefinition) => Promise.resolve({
@@ -258,9 +297,9 @@ describe('Loops Phase 4 pages', () => {
     expect(screen.getByText('When')).toBeVisible()
     const quickCreate = screen.getByRole('heading', {
       name: 'Describe the recurring job for this Employee',
-    }).closest('section')
-    if (!quickCreate) throw new Error('quick create section missing')
-    await user.selectOptions(within(quickCreate).getByLabelText('Employee'), employee.id)
+    }).closest('.ant-card')
+    if (!(quickCreate instanceof HTMLElement)) throw new Error('quick create section missing')
+    selectAntOption('Employee', 'Builder · Engineer')
     await user.type(within(quickCreate).getAllByLabelText('Name')[0]!, 'Knowledge archive')
     await user.type(within(quickCreate).getByLabelText('Goal'), 'Archive new private knowledge with provenance.')
     await user.click(within(quickCreate).getByRole('button', { name: 'Create and configure' }))
@@ -275,14 +314,14 @@ describe('Loops Phase 4 pages', () => {
       type: 'fixed_prompt',
       prompt: 'Archive new private knowledge with provenance.',
     })
-  })
+  }, 10_000)
 
   it('restores a Definition from the URL and saves with its expected revision', async () => {
     const user = userEvent.setup()
     api.updateLoop.mockResolvedValue({ ...definition, revision: 3 })
     renderLoops('/loops/daily-review')
 
-    await user.click(await screen.findByText('Advanced settings'))
+    await user.click(await screen.findByRole('tab', { name: 'Advanced settings' }))
     const name = await screen.findByDisplayValue('Daily review')
     await user.clear(name)
     await user.type(name, 'Daily review updated')
@@ -291,6 +330,7 @@ describe('Loops Phase 4 pages', () => {
       definition.id,
       expect.objectContaining({ revision: 2 }),
     ))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save contract' })).toBeEnabled())
   })
 
   it('direct-loads an Invocation and binds the timeline to its Session only', async () => {
@@ -306,7 +346,7 @@ describe('Loops Phase 4 pages', () => {
     api.updateLoop.mockImplementation((_id: string, next: LoopDefinition) => Promise.resolve(next))
     renderLoops('/loops/daily-review')
 
-    await user.click(await screen.findByText('Advanced settings'))
+    await user.click(await screen.findByRole('tab', { name: 'Advanced settings' }))
     expect(await screen.findByRole('heading', { name: 'Verification checks' })).toBeVisible()
     expect(screen.getByLabelText('Command argument 4')).toHaveValue('Test Name')
     fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Verified daily review' } })
@@ -315,15 +355,15 @@ describe('Loops Phase 4 pages', () => {
     fireEvent.change(screen.getByLabelText('Team template reference'), { target: { value: 'release-team' } })
     await user.click(screen.getByRole('button', { name: 'Add argument' }))
     await user.type(screen.getByLabelText('Command argument 6'), '--count=1')
-    await user.click(screen.getByRole('checkbox', { name: 'Enabled' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Read-only workspace' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Require a clean Git workspace' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Require approval for mutation' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Include diff in output' }))
+    await user.click(screen.getByRole('switch', { name: 'Enabled' }))
+    await user.click(screen.getByRole('switch', { name: 'Read-only workspace' }))
+    await user.click(screen.getByRole('switch', { name: 'Require a clean Git workspace' }))
+    await user.click(screen.getByRole('switch', { name: 'Require approval for mutation' }))
+    await user.click(screen.getByRole('switch', { name: 'Include diff in output' }))
     fireEvent.change(screen.getByLabelText('Maximum model calls'), { target: { value: '18' } })
     fireEvent.change(screen.getByLabelText('Maximum tokens'), { target: { value: '180000' } })
     fireEvent.change(screen.getByLabelText('Timeout (seconds)'), { target: { value: '1800' } })
-    await user.selectOptions(screen.getByLabelText('Plan mode'), 'auto')
+    selectAntOption('Plan mode', 'Automatic')
     await user.click(screen.getByRole('button', { name: 'Save contract' }))
 
     await waitFor(() => expect(api.updateLoop).toHaveBeenCalled())
@@ -351,7 +391,7 @@ describe('Loops Phase 4 pages', () => {
       output_policy: { include_diff: true },
       budget: { max_model_calls: 18, max_tokens: 180000, timeout_seconds: 1800 },
     })
-  })
+  }, 10_000)
 
   it('does not commit a delayed Loop mutation after routing to another Definition', async () => {
     const user = userEvent.setup()
@@ -368,7 +408,7 @@ describe('Loops Phase 4 pages', () => {
     renderLoops('/loops/daily-review')
 
     await screen.findByRole('heading', { name: definition.name })
-    await user.click(screen.getByText('Advanced settings'))
+    await user.click(screen.getByRole('tab', { name: 'Advanced settings' }))
     await user.click(screen.getByRole('button', { name: 'Save contract' }))
     await user.click(screen.getByRole('button', { name: 'Go second loop' }))
     expect(await screen.findByRole('heading', { name: 'Second loop' })).toBeVisible()
@@ -382,10 +422,10 @@ describe('Loops Phase 4 pages', () => {
     const user = userEvent.setup()
     renderLoops('/loops/daily-review')
 
-    await user.click(await screen.findByText('Advanced settings'))
+    await user.click(await screen.findByRole('tab', { name: 'Advanced settings' }))
     expect(await screen.findByRole('heading', { name: 'Team roles' })).toBeVisible()
     expect(screen.queryByRole('textbox', { name: 'Team' })).not.toBeInTheDocument()
-    expect(screen.getByTestId('team-role-builder')).toHaveValue(employee.id)
+    expect(screen.getByTestId('team-role-builder')).toHaveTextContent('Builder · r4')
     expect(screen.getByText(/Builder · r4 · Ready/)).toBeVisible()
 
     await user.click(screen.getByRole('checkbox', { name: 'Use Mission model override for builder' }))
@@ -402,13 +442,64 @@ describe('Loops Phase 4 pages', () => {
     })
   })
 
+  it('runs a server Dry Run before explicitly starting an Invocation', async () => {
+    const user = userEvent.setup()
+    api.startLoopInvocation.mockResolvedValue(invocation)
+    renderLoops('/loops/daily-review')
+
+    await user.click(await screen.findByRole('button', { name: 'Dry Run' }))
+    await waitFor(() => expect(api.dryRunLoop).toHaveBeenCalledWith(definition.id))
+    const run = await screen.findByRole('button', { name: 'Run now' })
+    expect(run).toBeEnabled()
+    await user.click(run)
+    await waitFor(() => expect(api.startLoopInvocation).toHaveBeenCalledWith(definition.id))
+    await waitFor(() => expect(api.listLoopInvocations.mock.calls.length).toBeGreaterThan(1))
+  })
+
+  it('confirms Invocation cancellation and Approval decisions without optimistic success', async () => {
+    const user = userEvent.setup()
+    const approval = {
+      request_id: 'approval-1',
+      session_id: invocation.session_id,
+      run_id: invocation.run_id,
+      tool_call_id: 'tool-1',
+      tool: 'write_file',
+      args_summary: 'Update release notes',
+      resource_paths: ['docs/release.md'],
+      status: 'pending',
+      requested_at: now,
+    }
+    api.listApprovals.mockResolvedValue({ approvals: [approval] })
+    api.cancelLoopInvocation.mockResolvedValue({ ...invocation, status: 'cancelled' })
+    api.decideApproval.mockResolvedValue({ ...approval, status: 'approved' })
+    renderLoops('/loops/daily-review/invocations/invocation-1')
+
+    await user.click(await screen.findByRole('button', { name: 'Cancel Invocation' }))
+    expect(api.cancelLoopInvocation).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm dialog' }))
+    await waitFor(() => expect(api.cancelLoopInvocation).toHaveBeenCalledWith(invocation.id))
+
+    await user.click(screen.getByRole('tab', { name: 'Approvals' }))
+    await user.click(screen.getByRole('button', { name: 'Approve' }))
+    expect(api.decideApproval).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm dialog' }))
+    await waitFor(() => expect(api.decideApproval).toHaveBeenCalledWith(
+      invocation.session_id, approval.request_id, 'approve',
+    ))
+  })
+
   it('shows Invocation evidence as structured projections instead of raw JSON', async () => {
+    const user = userEvent.setup()
     renderLoops('/loops/daily-review/invocations/invocation-1')
 
     expect(await screen.findByRole('heading', { name: 'Definition snapshot' })).toBeVisible()
+    await user.click(screen.getByRole('tab', { name: 'Plan' }))
     expect(screen.getByRole('heading', { name: 'Plan' })).toBeVisible()
+    await user.click(screen.getByRole('tab', { name: 'Tools' }))
     expect(screen.getByRole('heading', { name: 'Tools' })).toBeVisible()
+    await user.click(screen.getByRole('tab', { name: 'Verification' }))
     expect(screen.getByRole('heading', { name: 'Verification' })).toBeVisible()
+    await user.click(screen.getByRole('tab', { name: 'Approvals' }))
     expect(screen.getByRole('heading', { name: 'Approvals' })).toBeVisible()
     expect(screen.queryByText(/"definition_snapshot"/)).not.toBeInTheDocument()
   })

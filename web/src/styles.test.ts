@@ -35,18 +35,18 @@ describe('responsive shell CSS contract', () => {
     expect(styles).toMatch(/overflow-x:\s*hidden/)
   })
 
-  it('keeps horizontally scrollable tabs free of native scrollbar chrome', () => {
-    expect(styles).toContain('scrollbar-width: none')
-    expect(styles).toContain('-ms-overflow-style: none')
-    expect(styles).toContain('.tab-list::-webkit-scrollbar')
-    expect(styles).toContain('.employee-detail-tabs::-webkit-scrollbar')
-    expect(styles).toContain('.loop-flow::-webkit-scrollbar')
+  it('uses explicit mobile section controls and safe-area surfaces', () => {
+    expect(styles).toContain('.employee-mobile-tab-select')
+    expect(styles).toContain('.loop-mobile-tab-select')
+    expect(styles).toContain('.mobile-navigation-drawer')
+    expect(styles).toContain('env(safe-area-inset-bottom)')
   })
 
-  it('keeps Employee workspace modules in a single vertical reading column', () => {
-    expect(styles).toContain('.employee-memory-workspace')
-    expect(styles).toContain('.employee-knowledge-workspace')
-    expect(styles).toContain('.employee-loop-workspace')
-    expect(styles).toMatch(/\.employee-memory-workspace,[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/)
+  it('keeps deep Employee, Task, and Loop pages in bounded responsive surfaces', () => {
+    expect(styles).toContain('.employee-settings-page')
+    expect(styles).toContain('.employee-knowledge-page')
+    expect(styles).toContain('.task-sticky-action-bar')
+    expect(styles).toContain('.team-role-card')
+    expect(styles).toContain('overflow-wrap: anywhere')
   })
 })

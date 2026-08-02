@@ -10,12 +10,28 @@ export function ConfirmDialog() {
   const { state, actions } = useUI()
   const cancelRef = useRef<HTMLButtonElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  const lastTriggerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const rememberTrigger = (event: PointerEvent) => {
+      if (!(event.target instanceof HTMLElement) || event.target.closest('.modal-layer')) return
+      lastTriggerRef.current = event.target.closest<HTMLElement>(
+        'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      )
+    }
+    document.addEventListener('pointerdown', rememberTrigger, true)
+    return () => document.removeEventListener('pointerdown', rememberTrigger, true)
+  }, [])
 
   useEffect(() => {
     if (state.dialog === null) return
     const previousOverflow = document.body.style.overflow
-    returnFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const activeElement = document.activeElement instanceof HTMLElement
+      && document.activeElement !== document.body
+      && document.activeElement !== document.documentElement
+      ? document.activeElement
+      : null
+    returnFocusRef.current = lastTriggerRef.current ?? activeElement
     document.body.style.overflow = 'hidden'
     cancelRef.current?.focus()
     return () => {

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
-test('locale and desktop rail preferences switch immediately and survive refresh', async ({ page }) => {
+test('locale and desktop rail preferences switch immediately and survive refresh', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chrome', 'desktop navigation rail contract')
   await page.goto('/dashboard')
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
   await expect(page.getByText('GOHERMIT · 工作流')).toBeVisible()
@@ -20,7 +21,8 @@ test('locale and desktop rail preferences switch immediately and survive refresh
   )
 })
 
-test('Agent Session sidebar has an independent persisted desktop preference', async ({ page }) => {
+test('Agent Session sidebar has an independent persisted desktop preference', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chrome', 'desktop Session sidebar contract')
   await page.goto('/agent')
   await expect(page.getByRole('complementary', { name: '会话' })).toBeVisible()
   await page.getByRole('button', { name: '收起会话栏' }).click()
@@ -32,7 +34,8 @@ test('Agent Session sidebar has an independent persisted desktop preference', as
   await expect(page.getByRole('complementary', { name: '会话' })).toHaveCount(0)
 })
 
-test('stored collapsed state never steals focus on entry or refresh', async ({ page }) => {
+test('stored collapsed state never steals focus on entry or refresh', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chrome', 'desktop Session sidebar contract')
   await page.addInitScript(() => {
     localStorage.setItem('gohermit.ui.sessionSidebarCollapsed', 'true')
   })

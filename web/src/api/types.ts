@@ -308,6 +308,24 @@ export interface Handoff {
   created_at: string
 }
 
+export interface TeamEmployeeAssignment {
+  schema_version: number
+  work_item_id: string
+  role: string
+  employee_id: string
+  employee_revision: number
+  employee_snapshot_digest: string
+  project_binding_id: string
+  workspace_fingerprint: string
+  company: string
+  access: string
+  model: string
+  agent_profile: string
+  effective_policy_digest: string
+  context_digest: string
+  digest: string
+}
+
 export interface Mission {
   id: string
   run_id: string
@@ -319,6 +337,7 @@ export interface Mission {
   usage_by_role: Record<string, MissionUsage>
   work_items: WorkItem[]
   handoffs: Handoff[]
+  employee_assignments: Record<string, TeamEmployeeAssignment>
   created_at: string
   updated_at: string
   error?: string | undefined
