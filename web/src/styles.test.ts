@@ -42,4 +42,11 @@ describe('responsive shell CSS contract', () => {
     expect(styles).toContain('.employee-detail-tabs::-webkit-scrollbar')
     expect(styles).toContain('.loop-flow::-webkit-scrollbar')
   })
+
+  it('keeps Employee workspace modules in a single vertical reading column', () => {
+    expect(styles).toContain('.employee-memory-workspace')
+    expect(styles).toContain('.employee-knowledge-workspace')
+    expect(styles).toContain('.employee-loop-workspace')
+    expect(styles).toMatch(/\.employee-memory-workspace,[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/)
+  })
 })

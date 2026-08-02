@@ -5613,6 +5613,21 @@ button {
   max-width: 72ch;
 }
 
+/* Employee workspaces use one primary module per row for a calmer reading order. */
+.employee-prototype-overview,
+.employee-knowledge-workspace,
+.employee-memory-workspace,
+.employee-loop-workspace,
+.skill-workbench {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.employee-citation-inspector,
+.employee-memory-boundary,
+.skill-config-panel {
+  position: static;
+}
+
 .split-7-5 {
   display: grid;
   min-width: 0;
