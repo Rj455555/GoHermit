@@ -6117,3 +6117,232 @@ button {
 .employee-projects-tab .project-binding-card {
   padding: 0;
 }
+
+/* Skills: direct Catalog selection and aligned search/filter/workbench columns. */
+.employee-skills-tab .skill-catalog-toolbar,
+.employee-skills-tab .skill-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(340px, 0.72fr);
+  gap: 20px;
+}
+
+.employee-skills-tab .skill-catalog-toolbar {
+  align-items: end;
+  margin: 20px 0;
+}
+
+.employee-skills-tab .skill-catalog-toolbar .skill-search {
+  width: 100%;
+}
+
+.employee-skills-tab .skill-catalog-toolbar .skill-search input {
+  width: 100%;
+  min-height: 46px;
+}
+
+.employee-skills-tab .skill-kind-filter {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.employee-skills-tab .skill-kind-filter legend {
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 760;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.skill-kind-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  min-height: 46px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface-subtle);
+}
+
+.skill-kind-options button {
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 9px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-kind-options button:hover {
+  background: rgb(255 255 255 / 70%);
+  color: var(--color-text);
+}
+
+.skill-kind-options button[aria-pressed="true"] {
+  background: var(--color-surface);
+  color: var(--color-accent);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 10%);
+}
+
+.employee-skills-tab .skill-directory-panel,
+.employee-skills-tab .skill-config-panel {
+  padding: 22px;
+}
+
+.employee-skills-tab .skill-directory-grid {
+  gap: 14px;
+}
+
+.employee-skills-tab .skill-directory-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 12px;
+  min-height: 184px;
+  padding: 16px;
+  overflow: visible;
+  cursor: pointer;
+}
+
+.employee-skills-tab .skill-directory-card:hover {
+  border-color: #7d9df1;
+  background: #fbfdff;
+  box-shadow: 0 0 0 2px rgb(29 78 216 / 8%), var(--shadow-panel);
+}
+
+.employee-skills-tab .skill-directory-card:focus-within {
+  outline: 3px solid rgb(37 99 235 / 20%);
+  outline-offset: 2px;
+}
+
+.employee-skills-tab .skill-directory-card.is-selected,
+.employee-skills-tab .skill-directory-card.is-bound {
+  border-color: var(--color-accent);
+  background: #f7faff;
+  box-shadow: inset 3px 0 0 var(--color-accent), 0 0 0 1px rgb(29 78 216 / 8%);
+}
+
+.employee-skills-tab .skill-directory-card.is-disabled {
+  cursor: default;
+}
+
+.employee-skills-tab .skill-directory-card.is-disabled:hover {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.skill-directory-card__topline {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.skill-directory-card__kind {
+  overflow: hidden;
+  color: var(--color-accent);
+  font-size: 0.68rem;
+  font-weight: 780;
+  letter-spacing: 0.045em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.skill-directory-card__selection {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.69rem;
+}
+
+.skill-directory-card__selection strong {
+  font-weight: 720;
+}
+
+.employee-skills-tab .skill-directory-card__check {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  margin: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: transparent;
+}
+
+.employee-skills-tab .skill-directory-card.is-bound .skill-directory-card__check {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.employee-skills-tab .skill-directory-card__main {
+  gap: 7px;
+}
+
+.employee-skills-tab .skill-directory-card__title {
+  font-size: 1rem;
+}
+
+.employee-skills-tab .skill-directory-card__description {
+  min-height: 42px;
+  line-height: 1.5;
+}
+
+.employee-skills-tab .skill-directory-card__footer {
+  margin-top: 3px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.employee-skills-tab .employee-sticky-actions {
+  margin-top: 20px;
+}
+
+@media (max-width: 1100px) {
+  .employee-skills-tab .skill-catalog-toolbar,
+  .employee-skills-tab .skill-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .employee-skills-tab .skill-config-panel {
+    position: static;
+  }
+}
+
+@media (max-width: 720px) {
+  .employee-skills-tab .skill-catalog-status,
+  .employee-skills-tab .skill-directory-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .employee-skills-tab .skill-catalog-status > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .employee-skills-tab .skill-catalog-status > div:last-child {
+    border-bottom: 0;
+  }
+
+  .skill-kind-options {
+    grid-template-columns: 1fr;
+  }
+}

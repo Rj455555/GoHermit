@@ -622,6 +622,59 @@ describe('Employees Phase 4 pages', () => {
     expect(api.updateEmployeeSkills).toHaveBeenCalledOnce()
   })
 
+  it('binds a Skill by clicking the catalog card without a separate checkbox target', async () => {
+    const user = userEvent.setup()
+    const binding = {
+      skill_id: 'adapter',
+      version: '2.0.0',
+      digest: 'a'.repeat(64),
+      configuration: {},
+      enabled: true,
+    }
+    const activeRecord = {
+      ...employeeRecord,
+      employee: { ...employeeRecord.employee, skill_bindings: [] },
+    }
+    api.getEmployee.mockResolvedValue(activeRecord)
+    api.getEmployeeSkills.mockResolvedValue({
+      employee_id: summary.id,
+      revision: summary.revision,
+      bindings: [],
+    })
+    api.listSkills.mockResolvedValue({
+      skills: [{
+        skill_id: 'adapter',
+        version: '2.0.0',
+        digest: binding.digest,
+        title: 'Adapter',
+        description: 'Metadata only',
+        kind: 'skill_md_adapter',
+        requested_capabilities: [],
+        configuration_schema: {},
+      }],
+    })
+    api.updateEmployeeSkills.mockResolvedValue({
+      ...activeRecord,
+      employee: { ...activeRecord.employee, skill_bindings: [binding] },
+    })
+    renderEmployees('/employees/employee-ada')
+
+    await screen.findByLabelText('Name')
+    await user.click(screen.getByRole('button', { name: 'Skills' }))
+    const card = await screen.findByTestId('skill-card-adapter')
+    await user.click(card)
+
+    expect(screen.getByRole('checkbox', { name: 'Adapter' })).toBeChecked()
+    expect(screen.queryByLabelText('Configuration JSON Adapter')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save Skills' }))
+    await waitFor(() => expect(api.updateEmployeeSkills).toHaveBeenCalledWith(
+      summary.id,
+      summary.revision,
+      [binding],
+      expect.anything(),
+    ))
+  })
+
   it('unions Catalog and persisted bindings so missing Skills can be removed and drift upgraded', async () => {
     const user = userEvent.setup()
     const missing = {

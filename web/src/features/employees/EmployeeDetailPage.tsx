@@ -632,7 +632,11 @@ export function EmployeeDetailPage() {
           })}</div> : null}
           <div className="skill-catalog-toolbar">
             <label className="skill-search"><Search size={16} aria-hidden="true" /><span className="sr-only">{t('employees.searchSkills')}</span><input aria-label={t('employees.searchSkills')} placeholder={t('employees.searchSkills')} value={skillQuery} onChange={(event) => setSkillQuery(event.target.value)} /></label>
-            <label className="skill-kind-filter"><span>{tabCopy.skills.filter}</span><select value={skillKindFilter} onChange={(event) => setSkillKindFilter(event.target.value as typeof skillKindFilter)}><option value="all">{tabCopy.skills.all}</option><option value="native">{tabCopy.skills.native}</option><option value="skill_md_adapter">{tabCopy.skills.adapter}</option></select></label>
+            <fieldset className="skill-kind-filter"><legend>{tabCopy.skills.filter}</legend><div className="skill-kind-options">{([
+              ['all', tabCopy.skills.all],
+              ['native', tabCopy.skills.native],
+              ['skill_md_adapter', tabCopy.skills.adapter],
+            ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={skillKindFilter === value} onClick={() => setSkillKindFilter(value)}>{label}</button>)}</div></fieldset>
           </div>
           <div className="skill-workbench" aria-busy={!skills}>
             <section className="skill-directory-panel">
@@ -642,16 +646,17 @@ export function EmployeeDetailPage() {
                   const key = skillKey(item)
                   const binding = skillDraft.find((candidate) => skillKey(candidate) === key)
                   const selected = activeSkillKey === key
-                  return <article className={`skill-directory-card${selected ? ' is-selected' : ''}${binding ? ' is-bound' : ''}`} key={key}>
-                    <button className="skill-directory-card__select" type="button" aria-pressed={selected} onClick={() => setSelectedSkillKey(key)}><span className="skill-directory-card__main"><span className="skill-directory-card__title">{item.title}</span><span className="skill-directory-card__id">{item.skill_id} · v{item.version}</span><span className="skill-directory-card__description">{item.description}</span><span className="skill-directory-card__footer"><span>{item.kind === 'native' ? t('employees.nativeSkill') : t('employees.adapterSkill')}</span><code>{item.digest.slice(0, 10)}…</code></span></span></button>
-                    <label className="skill-directory-card__binding"><input type="checkbox" disabled={!active} checked={Boolean(binding)} aria-label={item.title} onChange={(event) => {
+                  return <label className={`skill-directory-card${selected ? ' is-selected' : ''}${binding ? ' is-bound' : ''}${!active ? ' is-disabled' : ''}`} key={key} data-testid={`skill-card-${item.skill_id}`}>
+                    <input type="checkbox" disabled={!active} checked={Boolean(binding)} aria-label={item.title} onChange={(event) => {
                       setSelectedSkillKey(key)
                       setSkillDraft((current) => event.target.checked
                         ? current.some((candidate) => skillKey(candidate) === key) ? current : [...current, { skill_id: item.skill_id, version: item.version, digest: item.digest, configuration: {}, enabled: true }]
                         : current.filter((candidate) => skillKey(candidate) !== key))
                       if (event.target.checked) setSkillConfiguration((current) => ({ ...current, [key]: current[key] ?? '{}' }))
-                    }} /><span className="skill-directory-card__check" aria-hidden="true"><Check size={14} /></span><span>{binding ? t('employees.boundSkills') : t('employees.notBound')}</span></label>
-                  </article>
+                    }} />
+                    <span className="skill-directory-card__topline"><span className="skill-directory-card__kind">{item.kind === 'native' ? t('employees.nativeSkill') : t('employees.adapterSkill')}</span><span className="skill-directory-card__selection"><span className="skill-directory-card__check" aria-hidden="true"><Check size={14} /></span><strong>{binding ? t('employees.boundSkills') : t('employees.notBound')}</strong></span></span>
+                    <span className="skill-directory-card__main"><span className="skill-directory-card__title">{item.title}</span><span className="skill-directory-card__id">{item.skill_id} · v{item.version}</span><span className="skill-directory-card__description">{item.description}</span><span className="skill-directory-card__footer"><span>{item.kind === 'native' ? tabCopy.skills.native : tabCopy.skills.adapter}</span><code>{item.digest.slice(0, 10)}…</code></span></span>
+                  </label>
                 })}
                 {!skills ? <div className="employee-empty-panel skill-catalog-loading" role="status"><Search size={22} aria-hidden="true" /><p>{t('common.loading')}</p></div> : !filteredCatalog.length ? <div className="employee-empty-panel"><Search size={22} aria-hidden="true" /><p>{t('employees.noSkillsFound')}</p></div> : null}
               </div></fieldset>
@@ -662,7 +667,7 @@ export function EmployeeDetailPage() {
                 <div className="skill-config-panel__meta"><span className={`status-badge status-badge--${selectedSkillStatus?.status === 'current' ? 'success' : 'warning'}`}>{selectedSkillStatus ? translatedEnum(t, 'skillStatus', selectedSkillStatus.status) : t('employees.notBound')}</span><code>{selectedSkill.digest}</code></div>
                 <dl className="skill-config-panel__facts"><dt>{tabCopy.skills.contract}</dt><dd>{selectedSkill.skill_id} · {selectedSkill.version}</dd><dt>Capabilities</dt><dd>{selectedSkill.requested_capabilities?.join(', ') || t('common.none')}</dd><dt>Type</dt><dd>{selectedSkill.kind === 'native' ? tabCopy.skills.native : tabCopy.skills.adapter}</dd></dl>
                 {selectedBinding ? <label className="skill-enabled-toggle"><input type="checkbox" disabled={!active} checked={selectedBinding.enabled} aria-label={`${t('bindingStatus.enabled')} ${selectedSkill.title}`} onChange={(event) => setSkillDraft((current) => current.map((candidate) => skillKey(candidate) === activeSkillKey ? { ...candidate, enabled: event.target.checked } : candidate))} /><span><strong>{t('bindingStatus.enabled')}</strong><small>{t('employees.enabledSkillHint')}</small></span></label> : <div className="skill-config-panel__empty"><FolderOpen size={18} aria-hidden="true" /><p>{t('employees.selectSkillToBind')}</p></div>}
-                {selectedBinding && selectedSkill.kind === 'native' ? <label className="skill-config-field">{t('employees.configurationJSON')} {selectedSkill.title}<textarea disabled={!active} aria-label={`${t('employees.configurationJSON')} ${selectedSkill.title}`} value={skillConfiguration[activeSkillKey ?? ''] ?? '{}'} onChange={(event) => setSkillConfiguration((current) => ({ ...current, [activeSkillKey ?? '']: event.target.value }))} /><small>{t('employees.configurationHint')}</small></label> : null}
+                {selectedBinding && selectedSkill.kind === 'native' && (Object.keys(selectedSkill.configuration_schema).length > 0 || Object.keys(selectedBinding.configuration).length > 0) ? <label className="skill-config-field">{t('employees.configurationJSON')} {selectedSkill.title}<textarea disabled={!active} aria-label={`${t('employees.configurationJSON')} ${selectedSkill.title}`} value={skillConfiguration[activeSkillKey ?? ''] ?? '{}'} onChange={(event) => setSkillConfiguration((current) => ({ ...current, [activeSkillKey ?? '']: event.target.value }))} /><small>{t('employees.configurationHint')}</small></label> : null}
                 {selectedBinding && selectedSkill.kind === 'skill_md_adapter' ? <p className="skill-adapter-note"><FileText size={16} aria-hidden="true" />{t('employees.adapterZeroCapability')}</p> : null}
               </> : <div className="skill-config-panel__empty"><FolderOpen size={24} aria-hidden="true" /><h3>{t('employees.selectSkill')}</h3><p>{t('employees.selectSkillHint')}</p></div>}
             </aside>
