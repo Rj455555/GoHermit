@@ -588,7 +588,7 @@ describe('Employees Phase 4 pages', () => {
         network_allowed: true,
       })],
     }), expect.anything()))
-  }, 15_000)
+  }, 30_000)
 
   it('edits every backend-supported Employee setting with the model catalog', async () => {
     const user = userEvent.setup()
@@ -640,7 +640,7 @@ describe('Employees Phase 4 pages', () => {
       },
       concurrency_policy: { max_running_tasks: 2 },
     })
-  }, 15_000)
+  }, 30_000)
 
   it('edits Native Skill configuration and enabled state without accepting invalid JSON', async () => {
     const user = userEvent.setup()
@@ -971,7 +971,7 @@ describe('Employees Phase 4 pages', () => {
       expect.objectContaining({ id: 'manual-release', manual_text: 'Ship only after verification.' }),
       expect.anything(),
     ))
-  }, 15_000)
+  }, 30_000)
 
   it('accepts and edits Memory and saves workspace-only Project policy', async () => {
     const user = userEvent.setup()
@@ -1039,7 +1039,7 @@ describe('Employees Phase 4 pages', () => {
       }),
       expect.anything(),
     ))
-  }, 15_000)
+  }, 30_000)
 
   it('drops a delayed Employee A Activity page after routing to Employee B', async () => {
     const user = userEvent.setup()

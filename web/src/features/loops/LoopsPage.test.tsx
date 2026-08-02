@@ -314,7 +314,7 @@ describe('Loops Phase 4 pages', () => {
       type: 'fixed_prompt',
       prompt: 'Archive new private knowledge with provenance.',
     })
-  }, 10_000)
+  }, 30_000)
 
   it('restores a Definition from the URL and saves with its expected revision', async () => {
     const user = userEvent.setup()
@@ -391,7 +391,7 @@ describe('Loops Phase 4 pages', () => {
       output_policy: { include_diff: true },
       budget: { max_model_calls: 18, max_tokens: 180000, timeout_seconds: 1800 },
     })
-  }, 20_000)
+  }, 30_000)
 
   it('does not commit a delayed Loop mutation after routing to another Definition', async () => {
     const user = userEvent.setup()

@@ -36,7 +36,7 @@ export default defineConfig({
     // their timeout despite passing assertions. Keep local feedback parallel,
     // but make CI scheduling deterministic without weakening test semantics.
     fileParallelism: !process.env.CI,
-    testTimeout: process.env.CI ? 15_000 : 5_000,
+    testTimeout: process.env.CI ? 30_000 : 5_000,
     coverage: {
       provider: 'v8',
       reporter: ['text'],
