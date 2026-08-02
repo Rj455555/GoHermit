@@ -148,7 +148,7 @@ export function DashboardPage() {
         <section className="panel">
           <div className="panel-head"><div><h2>{t('dashboard.recent')}</h2><p>{t('dashboard.description')}</p></div></div>
           <div className="table-wrap"><table><thead><tr><th>{t('dashboard.loopDefinitions')}</th><th>{t('dashboard.active')}</th><th>{t('dashboard.completed')}</th><th>{t('employees.openEmployee')}</th></tr></thead><tbody>
-            {projection.loops.slice(0, 4).map((loop) => {
+            {projection.loops.slice(0, 2).map((loop) => {
               const invocation = projection.invocations.find((item) => item.loop_id === loop.id)
               return <tr key={loop.id}><td><Link className="row-title" to={`/loops/${encodeURIComponent(loop.id)}`}>{loop.name}</Link><span className="row-sub">{loop.id}</span></td><td>{invocation ? translatedEnum(t, 'invocationStatus', invocation.status) : t('common.empty')}</td><td>{invocation?.created_at ?? '—'}</td><td><Link className="button button--secondary" to={`/loops/${encodeURIComponent(loop.id)}`}>{t('employees.openEmployee')}</Link></td></tr>
             })}

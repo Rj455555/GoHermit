@@ -3,11 +3,12 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type ReactNode,
 } from 'react'
-import { PanelRightOpen } from 'lucide-react'
+import { Menu, PanelRightOpen, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useLocation } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
@@ -19,7 +20,11 @@ import { MobileSessionDrawer } from '../components/MobileSessionDrawer'
 import { ToastRegion } from '../components/ToastRegion'
 import { AgentDataProvider } from '../features/agent/AgentDataContext'
 import { useMediaQuery } from '../hooks/useMediaQuery'
-import { getRouteTitleKey, isAgentRoute } from '../routes/routeMeta'
+import {
+  getRouteTitleKey,
+  isAgentRoute,
+  navigationItems,
+} from '../routes/routeMeta'
 import { useUI } from '../state/UIContext'
 import { NavigationRail } from './NavigationRail'
 import { SessionSidebar } from './SessionSidebar'
@@ -48,6 +53,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   const restoreSidebarRef = useRef<HTMLButtonElement>(null)
   const drawerTriggerRef = useRef<HTMLButtonElement>(null)
   const pendingSidebarFocusRef = useRef(false)
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
 
   const closeDrawer = useCallback(
     () => actions.setMobileSessionDrawerOpen(false),
@@ -60,6 +66,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     closeDrawer()
+    setMobileNavigationOpen(false)
   }, [closeDrawer, location.pathname, mobile])
 
   useLayoutEffect(() => {
@@ -95,6 +102,44 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         <NavigationRail />
         <ConnectivityBanner />
         <div className="app-shell__workspace">
+          {mobile ? (
+            <header className="mobile-bar">
+              <span className="navigation-rail__mark" aria-hidden="true">
+                GH
+              </span>
+              <button
+                type="button"
+                className="mobile-bar__trigger"
+                aria-label={t('navigation.label')}
+                aria-expanded={mobileNavigationOpen}
+                onClick={() => setMobileNavigationOpen((open) => !open)}
+              >
+                {mobileNavigationOpen ? (
+                  <X size={21} aria-hidden="true" />
+                ) : (
+                  <Menu size={21} aria-hidden="true" />
+                )}
+              </button>
+              <nav
+                className={`mobile-navigation${mobileNavigationOpen ? ' mobile-navigation--open' : ''}`}
+                aria-label={t('navigation.label')}
+              >
+                {navigationItems.map(({ to, labelKey, icon: Icon }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === '/dashboard'}
+                    className={({ isActive }) =>
+                      `mobile-navigation__link${isActive ? ' mobile-navigation__link--active' : ''}`
+                    }
+                  >
+                    <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
+                    <span>{t(labelKey)}</span>
+                  </NavLink>
+                ))}
+              </nav>
+            </header>
+          ) : null}
           {agentRoute && mobile ? (
             <div className="mobile-session-toolbar">
               <button
@@ -117,10 +162,17 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               <span className="review-note__detail">· {connectivity.status === 'offline' ? t('connectivity.offline') : 'API-aware · live projection'}</span>
             </div>
             <div className="review-controls">
-              <span className="review-controls__label">{t('employees.state')}</span>
-              <span className={`review-state review-state--${connectivity.status === 'offline' ? 'offline' : 'ready'}`}>
-                {connectivity.status === 'offline' ? t('connectivity.reconnect') : t('dashboard.idle')}
-              </span>
+              <label>
+                <span>{t('employees.state')}</span>
+                <select
+                  aria-label={t('brand.subtitle')}
+                  value={connectivity.status === 'offline' ? 'offline' : 'default'}
+                  onChange={() => undefined}
+                >
+                  <option value="default">{state.locale === 'zh-CN' ? '默认' : 'Default'}</option>
+                  <option value="offline">{t('connectivity.offline')}</option>
+                </select>
+              </label>
               <LanguageSwitcher />
             </div>
           </div>

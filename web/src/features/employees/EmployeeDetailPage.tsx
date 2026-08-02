@@ -13,7 +13,6 @@ import {
   ListChecks,
   Search,
   ShieldCheck,
-  Sparkles,
   Settings2,
   Workflow,
 } from 'lucide-react'
@@ -57,7 +56,6 @@ import type {
 } from '../../api/types'
 import { useConnectivity } from '../../components/ConnectivityProvider'
 import { ErrorState } from '../../components/ErrorState'
-import { PageHeader } from '../../components/PageHeader'
 import { translatedEnum } from '../../i18n/enumLabel'
 import { useUI } from '../../state/UIContext'
 
@@ -72,13 +70,14 @@ function errorKey(error: unknown) {
 
 export function EmployeeDetailPage() {
   const { employeeId } = useParams()
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { actions } = useUI()
   const connectivity = useConnectivity()
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedTab = searchParams.get('tab')
   const tab: Tab = TABS.includes(requestedTab as Tab) ? requestedTab as Tab : 'overview'
   const requestEpoch = useRef(0)
+  const definitionRef = useRef<HTMLDetailsElement>(null)
   const [record, setRecord] = useState<EmployeeRecord | null>(null)
   const [info, setInfo] = useState<Info | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -234,6 +233,42 @@ export function EmployeeDetailPage() {
   const avatarLabel = employee.avatar.value.trim() || employee.name.trim().slice(0, 2).toUpperCase()
   const statusTone = archived ? 'muted' : active ? 'success' : 'warning'
   const readinessTone = dryRun ? (dryRun.ready ? 'success' : 'warning') : 'muted'
+  const zh = i18n.resolvedLanguage?.startsWith('zh') ?? true
+  const overviewCopy = zh ? {
+    title: '员工工作台',
+    description: '先回答“这个员工能否安全开始下一项工作”，再呈现完整定义。',
+    edit: '编辑定义',
+    createTask: '创建任务',
+    revision: '定义版本',
+    concurrency: '并发上限',
+    projects: '项目绑定',
+    charterHint: '不可被单次 Prompt 覆盖的长期行为边界',
+    recent: '最近工作',
+    recentHint: 'Task 仍是执行真相入口',
+    beforeWork: '开始工作前',
+    beforeWorkHint: '基于当前 DTO 可确认的就绪检查',
+    projectBoundary: '项目边界',
+    skillBinding: 'Skill 绑定',
+    modelAuth: '模型认证',
+    noRecent: '暂无最近任务。',
+  } : {
+    title: 'Employee workspace',
+    description: 'First confirm this Employee can safely start the next task, then inspect the complete definition.',
+    edit: 'Edit definition',
+    createTask: 'Create task',
+    revision: 'Definition revision',
+    concurrency: 'Concurrency',
+    projects: 'Project bindings',
+    charterHint: 'Long-lived behavior boundaries that a single Prompt cannot override',
+    recent: 'Recent work',
+    recentHint: 'Task remains the execution source of truth',
+    beforeWork: 'Before starting work',
+    beforeWorkHint: 'Readiness checks supported by the current DTOs',
+    projectBoundary: 'Project boundary',
+    skillBinding: 'Skill bindings',
+    modelAuth: 'Model authentication',
+    noRecent: 'No recent task.',
+  }
   const lines = (value: string) =>
     value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean)
   const patchEmployee = (value: Partial<typeof employee>) =>
@@ -342,21 +377,19 @@ export function EmployeeDetailPage() {
         <div className="employee-detail-hero__identity">
           <div className="employee-avatar" aria-hidden="true">{avatarLabel}</div>
           <div className="employee-detail-hero__copy">
-            <div className="employee-detail-hero__eyebrow"><Sparkles size={14} aria-hidden="true" />{t('employees.tabs.overview')} <span>·</span> {employee.id}</div>
-            <PageHeader title={employee.name} description={`${employee.id} · rev ${employee.revision}`} />
-            <div className="employee-detail-hero__statusline">
-              <span className={`status-badge status-badge--${statusTone}`} data-testid="employee-status">
-                <CircleCheck size={14} aria-hidden="true" />
-                {translatedEnum(t, 'employeeStatus', employee.state)}
-              </span>
-              <span className="employee-detail-hero__meta">{employee.job_title}</span>
-              <span className="employee-detail-hero__meta">Revision {employee.revision}</span>
-            </div>
+            <h1 aria-label={employee.name}>{employee.name} · {employee.job_title}</h1>
+            <p className="mono">{employee.id} · rev {employee.revision}</p>
           </div>
         </div>
         <div className="employee-detail-hero__actions">
-          <Link className="button button--secondary" to="/employees">{t('employees.backToList')}</Link>
-          <span className="employee-detail-hero__mode"><ShieldCheck size={15} aria-hidden="true" />{t('employees.state')}</span>
+          <span className={`status-badge status-badge--${statusTone}`} data-testid="employee-status">
+            <CircleCheck size={14} aria-hidden="true" />
+            {translatedEnum(t, 'employeeStatus', employee.state)}
+          </span>
+          {!archived ? <button type="button" className="button button--secondary" onClick={() => {
+            if (definitionRef.current) definitionRef.current.open = true
+            definitionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }}>{overviewCopy.edit}</button> : null}
         </div>
       </header>
 
@@ -400,40 +433,40 @@ export function EmployeeDetailPage() {
         <header className="page-header employee-prototype-page-head">
           <div>
             <span className="section-kicker">EMPLOYEE / OVERVIEW</span>
-            <h1>{t('employees.tabs.overview')}</h1>
-            <p>{t('employees.description')}</p>
+            <h1>{overviewCopy.title}</h1>
+            <p>{overviewCopy.description}</p>
           </div>
-          {!archived ? <Link className="button button--primary" to="/tasks"><ListChecks size={16} aria-hidden="true" />{t('tasks.create')}</Link> : null}
+          {!archived ? <Link className="button button--primary" to="/tasks"><ListChecks size={16} aria-hidden="true" />{overviewCopy.createTask}</Link> : null}
         </header>
         <div className="status-strip employee-prototype-status">
-          <div className="status-item"><span>Revision</span><strong>rev {employee.revision}</strong></div>
+          <div className="status-item"><span>{overviewCopy.revision}</span><strong>rev {employee.revision}</strong></div>
           <div className="status-item"><span>{t('employees.defaultModel')}</span><strong>{model?.label ?? employee.default_selection.model}</strong></div>
-          <div className="status-item"><span>{t('employees.concurrency')}</span><strong>{employee.concurrency_policy.max_running_tasks}</strong></div>
-          <div className="status-item"><span>{t('employees.tabs.projects')}</span><strong>{record.project_bindings.length}</strong></div>
+          <div className="status-item"><span>{overviewCopy.concurrency}</span><strong>{employee.concurrency_policy.max_running_tasks}</strong></div>
+          <div className="status-item"><span>{overviewCopy.projects}</span><strong>{record.project_bindings.length}</strong></div>
         </div>
         <div className="split-8-4 employee-prototype-overview">
           <div className="stack">
             <section className="panel">
-              <div className="panel-head"><div><h2>{t('employees.charter')}</h2><p>{t('employees.description')}</p></div></div>
+              <div className="panel-head"><div><h2>{t('employees.charter')}</h2><p>{overviewCopy.charterHint}</p></div></div>
               <p>{employee.charter || t('employees.description')}</p>
               <div className="grid-2">
-                <div><h3>{t('employees.responsibilities')}</h3><ul>{employee.responsibilities.map((item) => <li key={item}>{item}</li>)}</ul></div>
-                <div><h3>{t('employees.behaviorBoundaries')}</h3><ul>{employee.behavior_boundaries.map((item) => <li key={item}>{item}</li>)}</ul></div>
+                <div><h3>{t('employees.responsibilities')}</h3><ul>{employee.responsibilities.slice(0, 3).map((item) => <li key={item}>{item}</li>)}</ul></div>
+                <div><h3>{t('employees.behaviorBoundaries')}</h3><ul>{employee.behavior_boundaries.slice(0, 2).map((item) => <li key={item}>{item}</li>)}</ul></div>
               </div>
             </section>
-            <section className="panel"><div className="panel-head"><div><h2>{t('tasks.execution')}</h2><p>{t('tasks.listBoundary')}</p></div></div><p className="muted">{t('common.empty')}</p></section>
+            <section className="panel"><div className="panel-head"><div><h2>{overviewCopy.recent}</h2><p>{overviewCopy.recentHint}</p></div></div><p className="muted">{overviewCopy.noRecent}</p></section>
           </div>
           <aside className="panel">
-            <div className="panel-head"><div><h2>{t('employees.readiness')}</h2><p>{t('employees.runDryRunHint')}</p></div></div>
+            <div className="panel-head"><div><h2>{overviewCopy.beforeWork}</h2><p>{overviewCopy.beforeWorkHint}</p></div></div>
             <ul className="readiness-list">
-              <li className="readiness-item"><span className="readiness-icon">✓</span><div><strong>{t('employees.tabs.projects')}</strong><div className="muted tiny">{record.project_bindings.length} · {employee.permission_policy.network_allowed ? t('common.yes') : t('common.no')}</div></div></li>
-              <li className="readiness-item"><span className="readiness-icon">✓</span><div><strong>{t('employees.tabs.skills')}</strong><div className="muted tiny">{employee.skill_bindings.length} {t('employees.skills')}</div></div></li>
-              <li className="readiness-item"><span className={`readiness-icon${dryRun?.ready === false ? ' fail' : ''}`}>{dryRun?.ready === false ? '!' : '✓'}</span><div><strong>{t('employees.defaultModel')}</strong><div className="muted tiny">{model?.label ?? employee.default_selection.model}</div></div></li>
+              <li className="readiness-item"><span className="readiness-icon"><Check size={13} aria-hidden="true" /></span><div><strong>{overviewCopy.projectBoundary}</strong><div className="muted tiny">{record.project_bindings.length} · {employee.permission_policy.network_allowed ? t('common.yes') : t('common.no')}</div></div></li>
+              <li className="readiness-item"><span className="readiness-icon"><Check size={13} aria-hidden="true" /></span><div><strong>{overviewCopy.skillBinding}</strong><div className="muted tiny">{employee.skill_bindings.length} current</div></div></li>
+              <li className="readiness-item"><span className={`readiness-icon${dryRun?.ready === false ? ' fail' : ''}`}>{dryRun?.ready === false ? '!' : <Check size={13} aria-hidden="true" />}</span><div><strong>{overviewCopy.modelAuth}</strong><div className="muted tiny">{model?.label ?? employee.default_selection.model}</div></div></li>
             </ul>
             <div className="notice info">{dryRun ? (dryRun.ready ? t('employees.ready') : t('employees.blocked')) : t('employees.runDryRunHint')}</div>
           </aside>
         </div>
-        <details className="employee-definition-editor" open>
+        <details ref={definitionRef} className="employee-definition-editor" open>
           <summary>{t('employees.setup')}</summary>
         <section className="projection-card employee-overview-card">
           <div className="employee-card-heading">
