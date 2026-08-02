@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Button } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
@@ -420,7 +421,7 @@ export function LoopsPage() {
           </label>
           {draft.schedule.kind === 'daily' ? <label>{t('loops.runTime')}<input type="time" value={draft.schedule.local_time} onChange={(event) => setDraft({ ...draft, schedule: { ...draft.schedule, local_time: event.target.value } })} /></label> : null}
         </div>
-        <button className="button button--primary" type="button" disabled={creating || !connectivity.canMutate || !draft.employee_id || !draft.name.trim() || !draft.contract.goal.trim()} onClick={() => void saveNew()}>{t('loops.createAndConfigure')}</button>
+        <Button type="primary" loading={creating} disabled={!connectivity.canMutate || !draft.employee_id || !draft.name.trim() || !draft.contract.goal.trim()} onClick={() => void saveNew()}>{t('loops.createAndConfigure')}</Button>
         <details className="advanced-panel">
           <summary>{t('loops.advanced')}</summary>
           <DefinitionForm value={draft} onChange={setDraft} info={info} includeId />
@@ -428,7 +429,7 @@ export function LoopsPage() {
             <h3>{t('loops.import')}</h3>
             <textarea aria-label={t('loops.import')} value={importText} onChange={(event) => setImportText(event.target.value)} />
             {strictError ? <p role="alert">{strictError}</p> : null}
-            <button type="button" disabled={!connectivity.canMutate} onClick={() => void importStrict()}>{t('loops.import')}</button>
+            <Button type="default" disabled={!connectivity.canMutate} onClick={() => void importStrict()}>{t('loops.import')}</Button>
           </section>
         </details>
       </section>

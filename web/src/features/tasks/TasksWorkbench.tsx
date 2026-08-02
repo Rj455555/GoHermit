@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Button, Card } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
@@ -236,7 +237,7 @@ export function TasksWorkbenchPage() {
     <article className="feature-page">
       <PageHeader title={t('pages.tasks.title')} description={t('tasks.description')} />
       <p className="stale-notice">{t('tasks.listBoundary')}</p>
-      <section className="projection-card">
+      <Card className="projection-card" variant="borderless">
         <h2>{t('tasks.create')}</h2>
         <div className="form-grid">
           <label>{t('tasks.employee')}<select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}>{activeEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label>
@@ -257,8 +258,8 @@ export function TasksWorkbenchPage() {
           <label>{t('tasks.maxTokens')}<input type="number" min="1" value={budget.max_tokens} onChange={(event) => setBudget({ ...budget, max_tokens: Number(event.target.value) })} /></label>
           <label>{t('tasks.timeoutSeconds')}<input type="number" min="1" value={budget.timeout_seconds} onChange={(event) => setBudget({ ...budget, timeout_seconds: Number(event.target.value) })} /></label>
         </div>
-        <button type="button" disabled={creating || !connectivity.canMutate || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || !projectId} onClick={() => void create()}>{t('tasks.createQueued')}</button>
-      </section>
+        <Button type="primary" loading={creating} disabled={!connectivity.canMutate || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || !projectId} onClick={() => void create()}>{t('tasks.createQueued')}</Button>
+      </Card>
       <div className="filter-row">
         <label>{t('tasks.employeeFilter')}<select aria-label={t('tasks.employeeFilter')} value={params.get('employee') ?? ''} onChange={(event) => setFilter('employee', event.target.value)}><option value="">{t('employees.all')}</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label>
         <label>{t('tasks.projectFilter')}<select aria-label={t('tasks.projectFilter')} value={params.get('project') ?? ''} onChange={(event) => setFilter('project', event.target.value)}><option value="">{t('employees.all')}</option>{projectOptions.map((project) => <option key={project.id} value={project.id}>{project.label}</option>)}</select></label>

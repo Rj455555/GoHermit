@@ -422,11 +422,14 @@ describe('Employees Phase 4 pages', () => {
     renderEmployees()
 
     expect(await screen.findByText('Ada')).toBeVisible()
-    await user.selectOptions(screen.getByLabelText('State'), 'active')
-    await waitFor(() => expect(api.listEmployees).toHaveBeenLastCalledWith(
-      expect.objectContaining({ state: 'active' }),
-      expect.anything(),
-    ))
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'State' }))
+    const activeLabel = screen.getAllByText('Active', { exact: true }).find((node) =>
+      node.classList.contains('ant-select-item-option-content'))
+    expect(activeLabel).toBeDefined()
+    fireEvent.mouseDown(activeLabel!)
+    fireEvent.click(activeLabel!)
+    await waitFor(() => expect(api.listEmployees.mock.calls.some(([query]) =>
+      (query as { state?: string }).state === 'active')).toBe(true))
     await user.click(screen.getByRole('button', { name: 'Load more' }))
     await waitFor(() => expect(api.listEmployees).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: 'next-page' }),

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { Button, Input } from 'antd'
+import { Alert, Button, Card, Input } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, KeyRound, ShieldCheck } from 'lucide-react'
 
@@ -254,7 +254,7 @@ export function SettingsPage() {
   return (
     <article className="feature-page settings-page">
       <PageHeader title={t('pages.settings.title')} description={t('settings.description')} />
-      {loadError || connectivity.status === 'offline' ? <p className="stale-notice">{t('connectivity.stale')}</p> : null}
+      {loadError || connectivity.status === 'offline' ? <Alert className="stale-notice" type="warning" showIcon message={t('connectivity.stale')} /> : null}
       <form className="projection-card form-grid settings-owner-card" onSubmit={(event) => void submitProfile(event)}>
         <h2>{t('settings.owner')}</h2>
         <label>
@@ -292,7 +292,7 @@ export function SettingsPage() {
         </Button>
       </form>
 
-      <section className="projection-card settings-facts-card">
+      <Card className="projection-card settings-facts-card" variant="borderless">
         <h2>{t('settings.facts')}</h2>
         {profile.facts.length === 0 ? <p>{t('common.empty')}</p> : (
           <ul className="fact-list">
@@ -311,9 +311,9 @@ export function SettingsPage() {
           <label>{t('settings.factValue')}<Input value={factDraft.value} onChange={(event) => setFactDraft((current) => ({ ...current, value: event.target.value }))} /></label>
           <Button htmlType="submit" disabled={!connectivity.canMutate || busy}>{t('settings.addFact')}</Button>
         </form>
-      </section>
+      </Card>
 
-      <section className="projection-card settings-connections" aria-label={t('settings.providers')}>
+      <Card className="projection-card settings-connections" variant="borderless" aria-label={t('settings.providers')}>
         <header className="settings-section-heading">
           <div><span className="loop-kicker">MODEL ACCESS</span><h2>{t('settings.providers')}</h2><p>{t('settings.description')}</p></div>
           <span className="settings-connection-count"><strong>{configuredAccessCount}</strong> / {accesses.length}</span>
@@ -346,8 +346,8 @@ export function SettingsPage() {
             </article>
           })() : <div className="settings-provider-config settings-provider-config--empty">{t('common.empty')}</div>}
         </div>
-      </section>
-      <section className="projection-card notification-settings-card" aria-live="polite">
+      </Card>
+      <Card className="projection-card notification-settings-card" variant="borderless" aria-live="polite">
         <div className="section-heading-row">
           <div>
             <span className="loop-kicker">NOTIFY</span>
@@ -365,9 +365,9 @@ export function SettingsPage() {
           {notification?.last_error ? <><dt>{t('settings.notificationLastError')}</dt><dd className="text-danger">{notification.last_error}</dd></> : null}
         </dl>
         {!notification?.configured ? <p className="stale-notice">{t('settings.notificationSetupHint')}</p> : null}
-      </section>
+      </Card>
       {login ? (
-        <section className="projection-card" aria-live="polite">
+        <Card className="projection-card" variant="borderless" aria-live="polite">
           <h2>{t('settings.codexLogin')}</h2>
           <p>{t(`settings.loginStatus.${login.status}`)}</p>
           {login.user_code ? <strong>{login.user_code}</strong> : null}
@@ -375,7 +375,7 @@ export function SettingsPage() {
           {['error', 'expired', 'cancelled'].includes(login.status) ? (
             <Button type="primary" className="button button--primary" onClick={() => void beginCodexLogin()}>{t('settings.loginAgain')}</Button>
           ) : null}
-        </section>
+        </Card>
       ) : null}
     </article>
   )

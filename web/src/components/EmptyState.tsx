@@ -1,3 +1,5 @@
+import { Empty, Typography } from 'antd'
+
 export function EmptyState({
   title,
   description,
@@ -9,9 +11,10 @@ export function EmptyState({
 }) {
   return (
     <section className="state-panel state-panel--empty">
-      <h2>{title}</h2>
-      <p>{description}</p>
-      {action ? <div className="state-panel__actions">{action}</div> : null}
+      <Typography.Title level={2}>{title}</Typography.Title>
+      <Empty description={description} image={Empty.PRESENTED_IMAGE_SIMPLE}>
+        {action ? <div className="state-panel__actions">{action}</div> : null}
+      </Empty>
     </section>
   )
 }

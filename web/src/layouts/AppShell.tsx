@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { Layout } from 'antd'
 import { Menu, PanelRightOpen, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { NavLink, useLocation } from 'react-router-dom'
@@ -99,11 +100,22 @@ function AppShellFrame({ children }: { children: ReactNode }) {
         data-testid="shell-background"
         inert={shellIsolated}
       >
-        <NavigationRail />
-        <ConnectivityBanner />
-        <div className="app-shell__workspace">
+        <Layout className="app-shell__antd-layout" hasSider>
+          {!mobile ? (
+            <Layout.Sider
+              className="app-shell__sider"
+              collapsed={state.navigationCollapsed}
+              collapsedWidth={68}
+              width={228}
+              trigger={null}
+            >
+              <NavigationRail />
+            </Layout.Sider>
+          ) : null}
+          <Layout className="app-shell__workspace">
+          <ConnectivityBanner />
           {mobile ? (
-            <header className="mobile-bar">
+            <Layout.Header className="mobile-bar">
               <span className="navigation-rail__mark" aria-hidden="true">
                 GH
               </span>
@@ -138,7 +150,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
                   </NavLink>
                 ))}
               </nav>
-            </header>
+            </Layout.Header>
           ) : null}
           {agentRoute && mobile ? (
             <div className="mobile-session-toolbar">
@@ -176,7 +188,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               <LanguageSwitcher />
             </div>
           </div>
-          <main id="main-content" className="app-shell__content" tabIndex={-1}>{children}</main>
+          <Layout.Content id="main-content" className="app-shell__content" tabIndex={-1}>{children}</Layout.Content>
           {agentRoute && !mobile && !state.sessionSidebarCollapsed ? (
             <SessionSidebar onCollapse={collapseSessionSidebar} />
           ) : null}
@@ -192,7 +204,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               <PanelRightOpen size={18} aria-hidden="true" />
             </button>
           ) : null}
-        </div>
+          </Layout>
+        </Layout>
       </div>
       <MobileSessionDrawer
         open={drawerOpen}

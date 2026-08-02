@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Button, Card, Col, Row, Select, Tag, Typography } from 'antd'
 import { Plus, SlidersHorizontal, UsersRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -259,7 +260,7 @@ export function EmployeesPage() {
       <ErrorState
         title={t('employees.loadError')}
         description={t('common.retryDescription')}
-        action={<button type="button" className="button button--primary" onClick={() => void load()}>{t('actions.retry')}</button>}
+        action={<Button type="primary" onClick={() => void load()}>{t('actions.retry')}</Button>}
       />
     )
   }
@@ -269,53 +270,58 @@ export function EmployeesPage() {
         title={t('pages.employees.title')}
         description={t('employees.description')}
         actions={(
-          <button type="button" className="button button--primary" disabled={!connectivity.canMutate} onClick={() => setWizard(true)}>
-            <Plus size={16} aria-hidden="true" />
+          <Button type="primary" icon={<Plus size={16} aria-hidden="true" />} disabled={!connectivity.canMutate} onClick={() => setWizard(true)}>
             {t('employees.create')}
-          </button>
+          </Button>
         )}
       />
       {wizard ? <Phase4EmployeeWizard onClose={() => setWizard(false)} onCreated={(record) => { void navigate(`/employees/${encodeURIComponent(record.employee.id)}`) }} /> : null}
-      <label className="filter-field">
-        <span><SlidersHorizontal size={16} aria-hidden="true" />{t('employees.state')}</span>
-        <select
+      <div className="filter-field">
+        <Typography.Text strong><SlidersHorizontal size={16} aria-hidden="true" />{t('employees.state')}</Typography.Text>
+        <Select
           aria-label={t('employees.state')}
-          value={state}
-          onChange={(event) => {
+          value={state || undefined}
+          placeholder={t('employees.all')}
+          allowClear
+          options={[
+            { value: 'active', label: statusLabel(t, 'active') },
+            { value: 'disabled', label: statusLabel(t, 'disabled') },
+            { value: 'archived', label: statusLabel(t, 'archived') },
+          ]}
+          onChange={(value) => {
             const next = new URLSearchParams(searchParams)
-            if (event.target.value) next.set('state', event.target.value)
+            if (value) next.set('state', value)
             else next.delete('state')
             setSearchParams(next)
           }}
-        >
-          <option value="">{t('employees.all')}</option>
-          <option value="active">{statusLabel(t, 'active')}</option>
-          <option value="disabled">{statusLabel(t, 'disabled')}</option>
-          <option value="archived">{statusLabel(t, 'archived')}</option>
-        </select>
-      </label>
+        />
+      </div>
       {items.length === 0 ? (
         <EmptyState
           title={t('employees.emptyTitle')}
           description={t('employees.emptyDescription')}
           action={(
-            <button type="button" className="button button--primary" disabled={!connectivity.canMutate} onClick={() => setWizard(true)}>
-              <UsersRound size={17} aria-hidden="true" />
+            <Button type="primary" icon={<UsersRound size={17} aria-hidden="true" />} disabled={!connectivity.canMutate} onClick={() => setWizard(true)}>
               {t('employees.createFirst')}
-            </button>
+            </Button>
           )}
         />
-      ) : <ul className="entity-list employee-grid">
-        {items.map((employee) => (
-          <li key={employee.id}>
-            <Link className="employee-card-link" to={`/employees/${encodeURIComponent(employee.id)}`}>
-              <strong>{employee.name}</strong>
-              <span>{employee.job_title} · {statusLabel(t, employee.state)}</span>
-            </Link>
-          </li>
-        ))}
-      </ul>}
-      {cursor ? <button type="button" className="button button--secondary" onClick={() => void load(cursor)}>{t('employees.loadMore')}</button> : null}
+      ) : (
+        <Row gutter={[16, 16]} className="employee-grid">
+          {items.map((employee) => (
+            <Col key={employee.id} xs={24} sm={12} xl={8} xxl={6}>
+              <Link className="employee-card-link" to={`/employees/${encodeURIComponent(employee.id)}`}>
+                <Card hoverable className="employee-card">
+                  <Typography.Title level={4} ellipsis={{ tooltip: employee.name }}>{employee.name}</Typography.Title>
+                  <Typography.Paragraph type="secondary" ellipsis={{ rows: 2 }}>{employee.job_title || t('employees.jobTitle')}</Typography.Paragraph>
+                  <Tag color={employee.state === 'active' ? 'success' : employee.state === 'archived' ? 'default' : 'warning'}>{statusLabel(t, employee.state)}</Tag>
+                </Card>
+              </Link>
+            </Col>
+          ))}
+        </Row>
+      )}
+      {cursor ? <Button onClick={() => void load(cursor)}>{t('employees.loadMore')}</Button> : null}
     </article>
   )
 }

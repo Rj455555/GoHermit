@@ -5941,6 +5941,108 @@ button {
   }
 }
 
+/* Ant Design workbench shell: keep the existing URL/focus contracts while
+   letting Layout own the page geometry instead of nested ad-hoc grids. */
+.app-shell__antd-layout.ant-layout {
+  display: flex;
+  min-height: 100vh;
+  background: var(--color-canvas);
+}
+
+.app-shell__background {
+  display: block;
+  min-height: 100vh;
+  background: var(--color-canvas);
+}
+
+.app-shell__sider.ant-layout-sider {
+  flex: 0 0 auto;
+  background: var(--color-navigation);
+}
+
+.app-shell__sider .ant-layout-sider-children {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+}
+
+.app-shell__sider .navigation-rail {
+  width: 100%;
+  min-height: 100vh;
+}
+
+.app-shell__workspace.ant-layout {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--color-canvas);
+}
+
+.app-shell__content.ant-layout-content {
+  min-width: 0;
+  padding: 24px clamp(20px, 3vw, 48px) 48px;
+  overflow: visible;
+  background: var(--color-canvas);
+}
+
+.mobile-bar.ant-layout-header {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.page-header {
+  margin-bottom: 24px;
+}
+
+.page-header .ant-typography {
+  margin-top: 0;
+}
+
+.page-header .ant-typography h1,
+.page-header h1.ant-typography {
+  margin-bottom: 8px;
+  color: var(--color-text);
+  font-size: clamp(1.75rem, 2.5vw, 2.25rem);
+  line-height: 1.2;
+}
+
+.page-header .ant-typography p,
+.page-header p.ant-typography {
+  max-width: 72ch;
+  margin-bottom: 0;
+  line-height: 1.6;
+}
+
+.state-panel .ant-alert,
+.state-panel .ant-empty {
+  border-radius: 12px;
+}
+
+.state-panel .ant-typography h2,
+.state-panel h2.ant-typography {
+  margin-top: 0;
+  margin-bottom: 16px;
+  font-size: 1.15rem;
+}
+
+.status-badge.ant-tag {
+  margin-inline-end: 0;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .app-shell__content.ant-layout-content {
+    padding: 20px 16px 32px;
+  }
+}
+
 /* Project bindings */
 .employee-projects-tab .project-binding-grid {
   grid-template-columns: minmax(0, 1fr);

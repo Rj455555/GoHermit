@@ -126,7 +126,9 @@ describe('Agent pages', () => {
     api.listSessions.mockRejectedValue(new ApiError('invalid_response', 200))
     renderAgent()
 
-    expect(await screen.findByRole('option', { name: 'Codex' })).toBeVisible()
+    await screen.findByRole('button', { name: i18n.t('agent.createSession') })
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: i18n.t('agent.access') }))
+    expect(await screen.findByRole('option', { name: 'Codex' })).toBeInTheDocument()
     expect(screen.queryByText(i18n.t('agent.loadError'))).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: i18n.t('agent.createSession') })).toBeEnabled()
   })
@@ -139,6 +141,8 @@ describe('Agent pages', () => {
     const user = userEvent.setup()
     renderAgent()
 
+    await screen.findByRole('button', { name: i18n.t('agent.createSession') })
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: i18n.t('agent.access') }))
     await screen.findByRole('option', { name: 'Codex' })
     expect(screen.queryByRole('option', { name: /unconfigured/u })).not.toBeInTheDocument()
     await user.type(screen.getByLabelText(/标题|Title/u), 'New Session')
