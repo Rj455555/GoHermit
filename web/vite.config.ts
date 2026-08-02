@@ -31,6 +31,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
+    // GitHub's shared runner can starve the three Ant Design-heavy suites when
+    // Vitest executes files concurrently, causing actionability waits to hit
+    // their timeout despite passing assertions. Keep local feedback parallel,
+    // but make CI scheduling deterministic without weakening test semantics.
+    fileParallelism: !process.env.CI,
     coverage: {
       provider: 'v8',
       reporter: ['text'],
