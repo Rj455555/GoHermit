@@ -13,6 +13,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   ConnectivityBanner,
   ConnectivityProvider,
+  useConnectivity,
 } from '../components/ConnectivityProvider'
 import { MobileSessionDrawer } from '../components/MobileSessionDrawer'
 import { ToastRegion } from '../components/ToastRegion'
@@ -22,6 +23,7 @@ import { getRouteTitleKey, isAgentRoute } from '../routes/routeMeta'
 import { useUI } from '../state/UIContext'
 import { NavigationRail } from './NavigationRail'
 import { SessionSidebar } from './SessionSidebar'
+import { LanguageSwitcher } from './LanguageSwitcher'
 
 const MOBILE_QUERY = '(max-width: 900px)'
 
@@ -40,6 +42,7 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   const { t } = useTranslation()
   const location = useLocation()
   const { state, actions } = useUI()
+  const connectivity = useConnectivity()
   const mobile = useMediaQuery(MOBILE_QUERY)
   const agentRoute = isAgentRoute(location.pathname)
   const restoreSidebarRef = useRef<HTMLButtonElement>(null)
@@ -107,6 +110,20 @@ function AppShellFrame({ children }: { children: ReactNode }) {
               </button>
             </div>
           ) : null}
+          <div className="review-bar" aria-label={t('brand.subtitle')}>
+            <div className="review-note">
+              <span className={`review-dot${connectivity.status === 'offline' ? ' review-dot--offline' : ''}`} aria-hidden="true" />
+              <strong>{t('brand.subtitle')}</strong>
+              <span className="review-note__detail">· {connectivity.status === 'offline' ? t('connectivity.offline') : 'API-aware · live projection'}</span>
+            </div>
+            <div className="review-controls">
+              <span className="review-controls__label">{t('employees.state')}</span>
+              <span className={`review-state review-state--${connectivity.status === 'offline' ? 'offline' : 'ready'}`}>
+                {connectivity.status === 'offline' ? t('connectivity.reconnect') : t('dashboard.idle')}
+              </span>
+              <LanguageSwitcher />
+            </div>
+          </div>
           <main id="main-content" className="app-shell__content" tabIndex={-1}>{children}</main>
           {agentRoute && !mobile && !state.sessionSidebarCollapsed ? (
             <SessionSidebar onCollapse={collapseSessionSidebar} />

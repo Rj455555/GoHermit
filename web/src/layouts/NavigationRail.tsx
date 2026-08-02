@@ -4,7 +4,6 @@ import { NavLink } from 'react-router-dom'
 
 import { navigationItems } from '../routes/routeMeta'
 import { useUI } from '../state/UIContext'
-import { LanguageSwitcher } from './LanguageSwitcher'
 
 export function NavigationRail() {
   const { t } = useTranslation()
@@ -49,7 +48,6 @@ export function NavigationRail() {
         ))}
       </ul>
       <div className="navigation-rail__footer">
-        <LanguageSwitcher compact={collapsed} />
         <button
           type="button"
           className="navigation-rail__toggle"

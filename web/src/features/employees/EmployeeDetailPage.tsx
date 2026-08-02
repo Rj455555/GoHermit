@@ -343,7 +343,7 @@ export function EmployeeDetailPage() {
           <div className="employee-avatar" aria-hidden="true">{avatarLabel}</div>
           <div className="employee-detail-hero__copy">
             <div className="employee-detail-hero__eyebrow"><Sparkles size={14} aria-hidden="true" />{t('employees.tabs.overview')} <span>·</span> {employee.id}</div>
-            <PageHeader title={employee.name} description={`${employee.id} · r${employee.revision}`} />
+            <PageHeader title={employee.name} description={`${employee.id} · rev ${employee.revision}`} />
             <div className="employee-detail-hero__statusline">
               <span className={`status-badge status-badge--${statusTone}`} data-testid="employee-status">
                 <CircleCheck size={14} aria-hidden="true" />
@@ -396,6 +396,45 @@ export function EmployeeDetailPage() {
       </nav>
 
       {tab === 'overview' ? (
+        <>
+        <header className="page-header employee-prototype-page-head">
+          <div>
+            <span className="section-kicker">EMPLOYEE / OVERVIEW</span>
+            <h1>{t('employees.tabs.overview')}</h1>
+            <p>{t('employees.description')}</p>
+          </div>
+          {!archived ? <Link className="button button--primary" to="/tasks"><ListChecks size={16} aria-hidden="true" />{t('tasks.create')}</Link> : null}
+        </header>
+        <div className="status-strip employee-prototype-status">
+          <div className="status-item"><span>Revision</span><strong>rev {employee.revision}</strong></div>
+          <div className="status-item"><span>{t('employees.defaultModel')}</span><strong>{model?.label ?? employee.default_selection.model}</strong></div>
+          <div className="status-item"><span>{t('employees.concurrency')}</span><strong>{employee.concurrency_policy.max_running_tasks}</strong></div>
+          <div className="status-item"><span>{t('employees.tabs.projects')}</span><strong>{record.project_bindings.length}</strong></div>
+        </div>
+        <div className="split-8-4 employee-prototype-overview">
+          <div className="stack">
+            <section className="panel">
+              <div className="panel-head"><div><h2>{t('employees.charter')}</h2><p>{t('employees.description')}</p></div></div>
+              <p>{employee.charter || t('employees.description')}</p>
+              <div className="grid-2">
+                <div><h3>{t('employees.responsibilities')}</h3><ul>{employee.responsibilities.map((item) => <li key={item}>{item}</li>)}</ul></div>
+                <div><h3>{t('employees.behaviorBoundaries')}</h3><ul>{employee.behavior_boundaries.map((item) => <li key={item}>{item}</li>)}</ul></div>
+              </div>
+            </section>
+            <section className="panel"><div className="panel-head"><div><h2>{t('tasks.execution')}</h2><p>{t('tasks.listBoundary')}</p></div></div><p className="muted">{t('common.empty')}</p></section>
+          </div>
+          <aside className="panel">
+            <div className="panel-head"><div><h2>{t('employees.readiness')}</h2><p>{t('employees.runDryRunHint')}</p></div></div>
+            <ul className="readiness-list">
+              <li className="readiness-item"><span className="readiness-icon">✓</span><div><strong>{t('employees.tabs.projects')}</strong><div className="muted tiny">{record.project_bindings.length} · {employee.permission_policy.network_allowed ? t('common.yes') : t('common.no')}</div></div></li>
+              <li className="readiness-item"><span className="readiness-icon">✓</span><div><strong>{t('employees.tabs.skills')}</strong><div className="muted tiny">{employee.skill_bindings.length} {t('employees.skills')}</div></div></li>
+              <li className="readiness-item"><span className={`readiness-icon${dryRun?.ready === false ? ' fail' : ''}`}>{dryRun?.ready === false ? '!' : '✓'}</span><div><strong>{t('employees.defaultModel')}</strong><div className="muted tiny">{model?.label ?? employee.default_selection.model}</div></div></li>
+            </ul>
+            <div className="notice info">{dryRun ? (dryRun.ready ? t('employees.ready') : t('employees.blocked')) : t('employees.runDryRunHint')}</div>
+          </aside>
+        </div>
+        <details className="employee-definition-editor" open>
+          <summary>{t('employees.setup')}</summary>
         <section className="projection-card employee-overview-card">
           <div className="employee-card-heading">
             <div>
@@ -476,6 +515,8 @@ export function EmployeeDetailPage() {
           </div> : null}
           {dryRun ? <section className="employee-readiness-card" data-testid="employee-detail-readiness"><div className="employee-readiness-card__heading"><div><span className="section-kicker">SERVER CHECK</span><h3>{t('employees.readiness')}</h3></div><span className={`status-badge status-badge--${dryRun.ready ? 'success' : 'warning'}`}>{dryRun.ready ? t('employees.ready') : t('employees.blocked')}</span></div><ul>{dryRun.checks.map((check) => <li className={check.ready ? 'is-ready' : 'is-blocked'} key={check.name}><CircleCheck size={16} aria-hidden="true" /><span><strong>{check.name}: {check.detail}</strong><small>{check.ready ? t('employees.ready') : t('employees.blocked')}</small></span></li>)}</ul></section> : null}
         </section>
+        </details>
+        </>
       ) : null}
 
       {tab === 'skills' ? (
