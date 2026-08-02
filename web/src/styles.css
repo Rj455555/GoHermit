@@ -5361,26 +5361,15 @@ button {
 }
 
 .employee-prototype-overview {
-  height: 447.78125px;
+  min-height: 0;
   margin-bottom: 18px;
 }
 
-.employee-prototype-overview .stack > .panel:first-child {
-  height: 265.390625px;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.employee-prototype-overview .stack > .panel:last-child {
-  height: 150.390625px;
-  min-height: 0;
-  overflow: hidden;
-}
-
+.employee-prototype-overview .stack > .panel,
 .employee-prototype-overview > .panel {
-  height: 447.78125px;
   min-height: 0;
-  overflow: hidden;
+  height: auto;
+  overflow: visible;
 }
 
 .employee-prototype-overview .panel > p,
