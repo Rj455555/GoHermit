@@ -325,6 +325,31 @@ describe('Employees Phase 4 pages', () => {
     expect(api.dryRunEmployee).not.toHaveBeenCalled()
   })
 
+  it('persists a model selected for the Employee in quick create', async () => {
+    const user = userEvent.setup()
+    api.getInfo.mockResolvedValueOnce({
+      workspace: '/workspace',
+      available_companies: [
+        {
+          id: 'openai',
+          label: 'OpenAI',
+          access: [{ id: 'codex', label: 'Codex', supported: true, models: [{ id: 'gpt', label: 'GPT', provider: 'openai' }, { id: 'gpt-pro', label: 'GPT Pro', provider: 'openai' }] }],
+        },
+      ],
+      agents: [{ id: 'coding', label: 'Coding' }],
+    })
+    renderEmployees()
+
+    await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.type(screen.getByLabelText('Name'), '新闻员工')
+    await user.selectOptions(screen.getByLabelText('Model'), 'gpt-pro')
+    await user.click(screen.getByRole('button', { name: 'Create now' }))
+
+    await waitFor(() => expect(api.createEmployee).toHaveBeenCalledOnce())
+    const payload = api.createEmployee.mock.calls[0]?.[0] as { employee: { default_selection: { model: string } } }
+    expect(payload.employee.default_selection.model).toBe('gpt-pro')
+  })
+
   it('validates required identity fields before advancing the creation wizard', async () => {
     const user = userEvent.setup()
     renderEmployees()

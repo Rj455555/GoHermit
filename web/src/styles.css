@@ -2264,6 +2264,43 @@ textarea {
   line-height: 1.55;
 }
 
+.quick-employee__model-picker {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 26%, var(--color-border));
+  border-radius: 14px;
+  background: var(--color-surface);
+}
+
+.quick-employee__model-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.quick-employee__model-heading h3,
+.quick-employee__model-heading p {
+  margin: 0;
+}
+
+.quick-employee__model-heading h3 {
+  margin-top: 4px;
+  font-size: 1rem;
+}
+
+.quick-employee__model-heading p {
+  margin-top: 5px;
+  color: var(--color-text-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.quick-employee__model-picker .form-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .quick-employee__actions {
   justify-content: flex-end;
 }
