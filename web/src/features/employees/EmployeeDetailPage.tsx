@@ -78,6 +78,7 @@ export function EmployeeDetailPage() {
   const tab: Tab = TABS.includes(requestedTab as Tab) ? requestedTab as Tab : 'overview'
   const requestEpoch = useRef(0)
   const definitionRef = useRef<HTMLDetailsElement>(null)
+  const tabsRef = useRef<HTMLElement>(null)
   const [record, setRecord] = useState<EmployeeRecord | null>(null)
   const [info, setInfo] = useState<Info | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -94,6 +95,7 @@ export function EmployeeDetailPage() {
   const [tasks, setTasks] = useState<EmployeeTask[] | null>(null)
   const [activity, setActivity] = useState<EmployeeActivity | null>(null)
   const [dryRun, setDryRun] = useState<EmployeeDryRun | null>(null)
+  const [knowledgeComposerOpen, setKnowledgeComposerOpen] = useState(false)
   const [sourceDraft, setSourceDraft] = useState({
     id: '', kind: 'manual_text' as 'manual_text' | 'file' | 'project_docs', title: '', content: '',
   })
@@ -132,6 +134,7 @@ export function EmployeeDetailPage() {
     setTasks(null)
     setActivity(null)
     setDryRun(null)
+    setKnowledgeComposerOpen(false)
     setSkillQuery('')
     setSelectedSkillKey(null)
     setBusy(false)
@@ -141,6 +144,13 @@ export function EmployeeDetailPage() {
       controller.abort()
     }
   }, [refresh, connectivity.generation])
+
+  useEffect(() => {
+    const activeTab = tabsRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
+    if (activeTab && typeof activeTab.scrollIntoView === 'function') {
+      activeTab.scrollIntoView({ block: 'nearest', inline: 'center' })
+    }
+  }, [tab, record?.employee.id])
 
   useEffect(() => {
     if (
@@ -269,6 +279,21 @@ export function EmployeeDetailPage() {
     modelAuth: 'Model authentication',
     noRecent: 'No recent task.',
   }
+  const tabCopy = zh ? {
+    knowledge: { kicker: 'EMPLOYEE / KNOWLEDGE', title: '知识', description: '来源、索引、文档与 Citation 保持可追溯层级，失败不会被空状态吞掉。', add: '添加来源', inspector: 'Citation 检查器', inspectorHint: '选择树节点后显示不可变证据', citationNote: '引用只展示服务端返回的行号与 Digest，不从浏览器重新推断。' },
+    memory: { kicker: 'EMPLOYEE / MEMORY', title: '记忆', description: '候选与已确认事实分层：只有 Owner 明确接受后，候选才能成为可注入上下文的 Fact。', candidatesHint: '附带 Task / Session / Run 来源链', factsHint: '仅这些内容可进入后续快照', boundary: '记忆边界', candidateGeneration: '候选生成', enabled: '启用', contextLimit: '上下文上限', byteLimit: '字节上限', warning: '不要把模型输出直接写成长期记忆；必须保留验证来源。' },
+    projects: { kicker: 'EMPLOYEE / PROJECTS', title: '项目与权限', description: '用真实路径指纹与能力清单界定执行边界；高风险能力不使用含糊的“完全访问”开关。', add: '添加项目', bound: '已绑定', realPath: '真实路径', allowed: '允许', blocked: '禁止', allowedCapabilities: '允许能力', rootOnly: '限定在已验证 Workspace Root 内', pathNote: '路径指纹由服务端生成；界面不允许手动编辑，也不显示未验证的符号链接解析结果。' },
+    loops: { kicker: 'EMPLOYEE / LOOPS', title: '员工 Loops', description: '只显示归属于该员工的持久工作契约，执行详情仍回到全局 Loop 与 Task 真相。', create: '创建 Loop', schedule: 'Schedule', last: 'Last', next: 'Next', open: '打开 Loop', nextTitle: '创建下一个 Loop', nextHint: '从 Goal、Boundaries、SOP、Definition of Done 与 Stop Conditions 建立可审计契约。', invocationNote: '每次 Invocation 都创建普通 EmployeeTask；Loop 不引入第二套执行系统。', goTo: '前往 Loops' },
+    tasks: { kicker: 'EMPLOYEE / TASKS', title: '员工任务', description: '以该员工为作用域查看任务快照；状态、Session 与 Run 仍与全局任务详情一致。', create: '新建任务', task: '任务', employee: '员工', status: '状态', sessionRun: 'Session / Run', updated: '更新时间', snapshot: 'snapshot' },
+    activity: { kicker: 'EMPLOYEE / ACTIVITY', title: '员工活动', description: '按时间展示可审计事件，并保留 Employee revision、Task、Session 与 Run 的交叉链接。', open: '打开' },
+  } : {
+    knowledge: { kicker: 'EMPLOYEE / KNOWLEDGE', title: 'Knowledge', description: 'Keep sources, indexes, documents, and Citations in a traceable hierarchy; failures never disappear into an empty state.', add: 'Add source', inspector: 'Citation inspector', inspectorHint: 'Select a tree node to inspect immutable evidence', citationNote: 'Citations display only server-returned lines and digests; the browser does not infer them.' },
+    memory: { kicker: 'EMPLOYEE / MEMORY', title: 'Memory', description: 'Candidates and confirmed facts stay separate. Only explicit Owner acceptance promotes a candidate into injectable context.', candidatesHint: 'Includes Task / Session / Run provenance', factsHint: 'Only these facts may enter later snapshots', boundary: 'Memory boundary', candidateGeneration: 'Candidate generation', enabled: 'Enabled', contextLimit: 'Context limit', byteLimit: 'Byte limit', warning: 'Never write model output directly as long-term memory; verified provenance is required.' },
+    projects: { kicker: 'EMPLOYEE / PROJECTS', title: 'Projects & permissions', description: 'Use verified workspace identity and explicit capabilities to bound execution; high-risk access is never a vague full-access switch.', add: 'Add project', bound: 'Bound', realPath: 'Real path', allowed: 'Allowed', blocked: 'Blocked', allowedCapabilities: 'Allowed capabilities', rootOnly: 'Limited to the verified Workspace Root', pathNote: 'Workspace fingerprints are generated by the service; the UI cannot edit them or infer unverified symlink resolution.' },
+    loops: { kicker: 'EMPLOYEE / LOOPS', title: 'Employee Loops', description: 'Show only persistent work contracts owned by this Employee; execution truth remains in global Loops and Tasks.', create: 'Create Loop', schedule: 'Schedule', last: 'Last', next: 'Next', open: 'Open Loop', nextTitle: 'Create the next Loop', nextHint: 'Build an auditable contract from Goal, Boundaries, SOP, Definition of Done, and Stop Conditions.', invocationNote: 'Every Invocation creates an ordinary EmployeeTask; Loops do not add a second execution system.', goTo: 'Go to Loops' },
+    tasks: { kicker: 'EMPLOYEE / TASKS', title: 'Employee tasks', description: 'Review task snapshots in this Employee scope; state, Session, and Run remain consistent with global task details.', create: 'New task', task: 'Task', employee: 'Employee', status: 'Status', sessionRun: 'Session / Run', updated: 'Updated', snapshot: 'snapshot' },
+    activity: { kicker: 'EMPLOYEE / ACTIVITY', title: 'Employee activity', description: 'Show auditable events over time while preserving Employee revision, Task, Session, and Run cross-links.', open: 'Open' },
+  }
   const lines = (value: string) =>
     value.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean)
   const patchEmployee = (value: Partial<typeof employee>) =>
@@ -292,6 +317,14 @@ export function EmployeeDetailPage() {
   const selectedSkillStatus = activeSkillKey
     ? skills?.bindings.find((item) => skillKey(item.binding) === activeSkillKey) ?? null
     : null
+  const firstKnowledgeIndex = knowledge?.indexes.find((item) =>
+    item.documents.some((document) => document.citations.length > 0),
+  )
+  const firstKnowledgeCitation = firstKnowledgeIndex?.documents
+    .flatMap((document) => document.citations)[0]
+  const firstKnowledgeSource = knowledge?.sources.find((source) =>
+    source.id === firstKnowledgeIndex?.source_id,
+  )
 
   function saveEmployee(nextRecord: EmployeeRecord | null = record) {
     if (!nextRecord) return Promise.resolve()
@@ -421,7 +454,7 @@ export function EmployeeDetailPage() {
       </section> : null}
 
       {archived ? <p className="stale-notice employee-detail-notice">{t('employees.archivedReadOnly')}</p> : null}
-      <nav className="tab-list employee-detail-tabs" aria-label={t('employees.sections')}>
+      <nav className="tab-list employee-detail-tabs" aria-label={t('employees.sections')} ref={tabsRef}>
         <span className="employee-detail-tabs__label"><Workflow size={15} aria-hidden="true" />{t('employees.sections')}</span>
         <div className="employee-detail-tabs__items">
           {TABS.map((value) => <button key={value} type="button" aria-current={tab === value ? 'page' : undefined} onClick={() => setSearchParams(value === 'overview' ? {} : { tab: value })}>{t(`employees.tabs.${value}`)}</button>)}
@@ -635,43 +668,121 @@ export function EmployeeDetailPage() {
       ) : null}
 
       {tab === 'knowledge' ? (
-        <section className="projection-card employee-tab-page employee-knowledge-tab">
-          <header className="employee-tab-header"><div><span className="section-kicker">KNOWLEDGE BASE</span><h2>{t('employees.tabs.knowledge')}</h2><p>{t('employees.knowledgeDescription')}</p></div><div className="employee-tab-actions"><span className="status-badge status-badge--success"><Database size={14} aria-hidden="true" />{knowledge?.sources.length ?? '—'} {t('employees.sources')}</span></div></header>
-          {knowledge ? <div className="knowledge-source-grid">{knowledge.sources.map((source) => {
+        <section className="employee-tab-page employee-knowledge-tab">
+          <header className="page-header employee-tab-page-head"><div><span className="section-kicker">{tabCopy.knowledge.kicker}</span><h1>{tabCopy.knowledge.title}</h1><p>{tabCopy.knowledge.description}</p></div>{!archived ? <button className="button button--primary" type="button" onClick={() => setKnowledgeComposerOpen((open) => !open)}><Database size={16} aria-hidden="true" />{tabCopy.knowledge.add}</button> : null}</header>
+          {knowledge ? <div className="split-7-5 employee-knowledge-workspace"><section><div className="knowledge-source-grid">{knowledge.sources.map((source) => {
             const index = knowledge.indexes.find((item) => item.source_id === source.id)
             const citations = index?.documents.flatMap((document) => document.citations) ?? []
             return <article className="knowledge-source-card" key={source.id} data-testid="knowledge-source"><div className="knowledge-source-card__header"><span className="knowledge-source-card__icon"><FileText size={18} aria-hidden="true" /></span><div><h3>{source.title}</h3><p>{source.id} · {translatedEnum(t, 'knowledgeKind', source.kind)}</p></div><span className={`status-badge status-badge--${source.status === 'ready' ? 'success' : 'warning'}`}>{translatedEnum(t, 'knowledgeStatus', source.status)}</span></div><div className="knowledge-source-card__digest"><span>{t('employees.sourceDigest')}</span><code>{source.digest.slice(0, 16)}…</code></div>{citations.length ? <div className="citation-list"><div className="citation-list__heading"><span>{t('employees.citations')}</span><strong>{citations.length}</strong></div><ul>{citations.map((citation) => <li key={citation.id} data-testid="knowledge-citation"><span>{citation.path}:{citation.start_line}-{citation.end_line}</span><code>{citation.digest.slice(0, 10)}…</code></li>)}</ul></div> : <p className="knowledge-source-card__empty">{t('employees.noCitations')}</p>}{!archived ? <div className="button-row"><button type="button" disabled={!canMutate} onClick={() => void mutate((signal) => refreshEmployeeKnowledge(employee.id, source.id, { signal }), setKnowledge, false)}>{t('employees.refresh')}</button><button type="button" disabled={!canMutate} onClick={() => confirmKnowledgeDelete(source.id)}>{t('employees.delete')}</button></div> : null}</article>
-          })}{!knowledge.sources.length ? <div className="employee-empty-panel"><Database size={22} aria-hidden="true" /><p>{t('employees.noKnowledge')}</p></div> : null}</div> : <p role="status">{t('common.loading')}</p>}
-          {!archived ? <section className="knowledge-add-panel"><div className="employee-section-heading"><div><span className="section-kicker">ADD SOURCE</span><h3>{t('employees.addKnowledge')}</h3></div></div><div className="form-grid"><label>{t('employees.knowledgeKind')}<select value={sourceDraft.kind} onChange={(event) => setSourceDraft({ ...sourceDraft, kind: event.target.value as typeof sourceDraft.kind })}><option value="manual_text">{t('knowledgeKind.manual_text')}</option><option value="file">{t('knowledgeKind.file')}</option><option value="project_docs">{t('knowledgeKind.project_docs')}</option></select></label><label>{t('employees.sourceId')}<input value={sourceDraft.id} onChange={(event) => setSourceDraft({ ...sourceDraft, id: event.target.value })} /></label><label>{t('employees.sourceTitle')}<input value={sourceDraft.title} onChange={(event) => setSourceDraft({ ...sourceDraft, title: event.target.value })} /></label><label className="wide">{sourceDraft.kind === 'manual_text' ? t('knowledgeKind.manual_text') : t('employees.relativePath')}<textarea value={sourceDraft.content} onChange={(event) => setSourceDraft({ ...sourceDraft, content: event.target.value })} /></label><button className="button button--primary" type="button" disabled={!canMutate} onClick={() => void mutate((signal) => addEmployeeKnowledge(employee.id, { id: sourceDraft.id, kind: sourceDraft.kind, title: sourceDraft.title, ...(sourceDraft.kind === 'manual_text' ? { manual_text: sourceDraft.content } : { relative_path: sourceDraft.content }) }, { signal }), setKnowledge, false)}>{t('employees.addKnowledge')}</button></div></section> : null}
+          })}{!knowledge.sources.length ? <div className="employee-empty-panel"><Database size={22} aria-hidden="true" /><p>{t('employees.noKnowledge')}</p></div> : null}</div></section><aside className="panel employee-citation-inspector"><div className="panel-head"><div><h2>{tabCopy.knowledge.inspector}</h2><p>{tabCopy.knowledge.inspectorHint}</p></div></div>{firstKnowledgeCitation ? <dl className="employee-definition-list"><dt>Path</dt><dd className="mono">{firstKnowledgeCitation.path}</dd><dt>Lines</dt><dd>{firstKnowledgeCitation.start_line}–{firstKnowledgeCitation.end_line}</dd><dt>Digest</dt><dd className="mono">{firstKnowledgeCitation.digest}</dd><dt>Source</dt><dd>{firstKnowledgeSource?.id ?? firstKnowledgeCitation.source_id}</dd></dl> : <div className="employee-empty-panel"><FileText size={22} aria-hidden="true" /><p>{t('employees.noCitations')}</p></div>}<div className="notice info">{tabCopy.knowledge.citationNote}</div></aside></div> : <p role="status">{t('common.loading')}</p>}
+          {!archived && knowledgeComposerOpen ? <section className="panel knowledge-add-panel"><div className="employee-section-heading"><div><span className="section-kicker">ADD SOURCE</span><h3>{t('employees.addKnowledge')}</h3></div></div><div className="form-grid"><label>{t('employees.knowledgeKind')}<select value={sourceDraft.kind} onChange={(event) => setSourceDraft({ ...sourceDraft, kind: event.target.value as typeof sourceDraft.kind })}><option value="manual_text">{t('knowledgeKind.manual_text')}</option><option value="file">{t('knowledgeKind.file')}</option><option value="project_docs">{t('knowledgeKind.project_docs')}</option></select></label><label>{t('employees.sourceId')}<input value={sourceDraft.id} onChange={(event) => setSourceDraft({ ...sourceDraft, id: event.target.value })} /></label><label>{t('employees.sourceTitle')}<input value={sourceDraft.title} onChange={(event) => setSourceDraft({ ...sourceDraft, title: event.target.value })} /></label><label className="wide">{sourceDraft.kind === 'manual_text' ? t('knowledgeKind.manual_text') : t('employees.relativePath')}<textarea value={sourceDraft.content} onChange={(event) => setSourceDraft({ ...sourceDraft, content: event.target.value })} /></label><button className="button button--primary" type="button" disabled={!canMutate} onClick={() => void mutate((signal) => addEmployeeKnowledge(employee.id, { id: sourceDraft.id, kind: sourceDraft.kind, title: sourceDraft.title, ...(sourceDraft.kind === 'manual_text' ? { manual_text: sourceDraft.content } : { relative_path: sourceDraft.content }) }, { signal }), setKnowledge, false)}>{t('employees.addKnowledge')}</button></div></section> : null}
         </section>
       ) : null}
 
       {tab === 'memory' ? (
-        <section className="projection-card employee-tab-page employee-memory-tab">
-          <header className="employee-tab-header"><div><span className="section-kicker">PRIVATE MEMORY</span><h2>{t('employees.tabs.memory')}</h2><p>{t('employees.memoryDescription')}</p></div><div className="employee-tab-actions"><span className="status-badge status-badge--success"><Database size={14} aria-hidden="true" />{memory?.facts.length ?? '—'} {t('employees.facts')}</span></div></header>
-          <div className="employee-tab-metrics"><div><span>{t('employees.pendingCandidates')}</span><strong>{memory?.candidates.length ?? '—'}</strong></div><div><span>{t('employees.acceptedMemory')}</span><strong>{memory?.facts.length ?? '—'}</strong></div><div><span>{t('employees.promotion')}</span><strong>{employee.memory_policy.promotion}</strong></div></div>
+        <section className="employee-tab-page employee-memory-tab">
+          <header className="page-header employee-tab-page-head"><div><span className="section-kicker">{tabCopy.memory.kicker}</span><h1>{tabCopy.memory.title}</h1><p>{tabCopy.memory.description}</p></div></header>
+          <div className="split-7-5 employee-memory-workspace"><section className="stack">
           <section className="employee-subsection"><div className="employee-section-heading"><div><span className="section-kicker">REVIEW QUEUE</span><h3>{t('employees.pendingCandidates')}</h3></div></div><div className="memory-card-grid">{memory?.candidates.map((candidate) => <article className="memory-candidate-card" key={candidate.id} data-testid="memory-candidate"><div className="memory-card__topline"><span className="status-badge status-badge--warning">{t('employees.pending')}</span><code>{candidate.category}</code></div><p>{candidate.value}</p><small>{candidate.provenance.map((item) => `${item.source_type}:${item.source_id}`).join(' · ')}</small>{!archived ? <div className="button-row"><button type="button" className="button button--primary" disabled={!canMutate} onClick={() => void mutate(async (signal) => { await acceptEmployeeMemoryCandidate(employee.id, candidate.id, { signal }); const [value, pending] = await Promise.all([getEmployeeMemory(employee.id, { signal }), getEmployeeMemoryCandidates(employee.id, { signal })]); return { facts: value.facts, candidates: pending.candidates } }, setMemory, false)}>{t('employees.accept')}</button><button type="button" disabled={!canMutate} onClick={() => confirmMemoryReject(candidate.id)}>{t('employees.reject')}</button></div> : null}</article>)}{memory && !memory.candidates.length ? <div className="employee-empty-panel"><Check size={22} aria-hidden="true" /><p>{t('employees.noPendingMemory')}</p></div> : null}</div></section>
           <section className="employee-subsection"><div className="employee-section-heading"><div><span className="section-kicker">ACCEPTED FACTS</span><h3>{t('employees.acceptedMemory')}</h3></div></div><div className="memory-fact-grid">{memory?.facts.map((fact) => <article className="memory-fact-card" key={fact.id}><div className="memory-card__topline"><span className="status-badge status-badge--success">{fact.category}</span><code>{fact.digest.slice(0, 12)}…</code></div><label>{t('employees.factValue')}<input disabled={archived} value={factDraft[fact.id] ?? fact.value} onChange={(event) => setFactDraft((current) => ({ ...current, [fact.id]: event.target.value }))} /></label><small>{fact.owner_edited ? t('employees.editedByOwner') : t('employees.generatedFact')}</small>{!archived ? <div className="button-row"><button type="button" disabled={!canMutate} onClick={() => void mutate(async (signal) => { await editEmployeeMemory(employee.id, fact.id, factDraft[fact.id] ?? fact.value, { signal }); const [facts, candidates] = await Promise.all([getEmployeeMemory(employee.id, { signal }), getEmployeeMemoryCandidates(employee.id, { signal })]); return { facts: facts.facts, candidates: candidates.candidates } }, setMemory, false)}>{t('employees.edit')}</button><button type="button" disabled={!canMutate} onClick={() => confirmMemoryForget(fact.id)}>{t('employees.forget')}</button></div> : null}</article>)}{memory && !memory.facts.length ? <div className="employee-empty-panel"><Database size={22} aria-hidden="true" /><p>{t('employees.noAcceptedMemory')}</p></div> : null}</div></section>
+          </section><aside className="panel employee-memory-boundary"><h2>{tabCopy.memory.boundary}</h2><dl className="employee-definition-list"><dt>{tabCopy.memory.candidateGeneration}</dt><dd>{employee.memory_policy.candidate_generation ? tabCopy.memory.enabled : t('common.no')}</dd><dt>{t('employees.promotion')}</dt><dd>{employee.memory_policy.promotion}</dd><dt>{tabCopy.memory.contextLimit}</dt><dd>{employee.memory_policy.max_context_facts} facts</dd><dt>{tabCopy.memory.byteLimit}</dt><dd>{employee.memory_policy.max_context_bytes}</dd></dl><div className="notice">{tabCopy.memory.warning}</div></aside></div>
         </section>
       ) : null}
 
       {tab === 'projects' ? (
-        <section className="projection-card employee-tab-page employee-projects-tab">
-          <header className="employee-tab-header"><div><span className="section-kicker">WORKSPACE ACCESS</span><h2>{t('employees.tabs.projects')}</h2><p>{t('employees.projectsDescription')}</p></div><div className="employee-tab-actions"><span className="status-badge status-badge--success"><FolderKanban size={14} aria-hidden="true" />{record.project_bindings.length} {t('employees.projects')}</span></div></header>
+        <section className="employee-tab-page employee-projects-tab">
+          <header className="page-header employee-tab-page-head"><div><span className="section-kicker">{tabCopy.projects.kicker}</span><h1>{tabCopy.projects.title}</h1><p>{tabCopy.projects.description}</p></div>{!archived ? <button className="button button--primary" type="button" disabled={!canMutate} onClick={() => void saveEmployee()}>{t('employees.save')}</button> : null}</header>
           <div className="project-binding-grid">{record.project_bindings.map((binding, index) => <fieldset className="project-binding-card" key={binding.id}><legend><FolderOpen size={16} aria-hidden="true" />{binding.label}</legend><div className="project-binding-card__path"><span>{t('employees.workspace')}</span><code>{binding.workspace_fingerprint}</code></div><div className="project-permission-list"><label><input type="checkbox" aria-label={t('employees.readAllowed')} disabled={archived} checked={binding.read_allowed} onChange={(event) => setRecord({ ...record, project_bindings: record.project_bindings.map((item, itemIndex) => itemIndex === index ? { ...item, read_allowed: event.target.checked } : item) })} /><span><strong>{t('employees.readAllowed')}</strong><small>{t('employees.readAllowedHint')}</small></span></label><label><input type="checkbox" aria-label={t('employees.mutationAllowed')} disabled={archived} checked={binding.mutation_allowed} onChange={(event) => setRecord({ ...record, project_bindings: record.project_bindings.map((item, itemIndex) => itemIndex === index ? { ...item, mutation_allowed: event.target.checked } : item) })} /><span><strong>{t('employees.mutationAllowed')}</strong><small>{t('employees.mutationAllowedHint')}</small></span></label><label><input type="checkbox" aria-label={t('employees.networkAllowed')} disabled={archived} checked={binding.network_allowed} onChange={(event) => setRecord({ ...record, project_bindings: record.project_bindings.map((item, itemIndex) => itemIndex === index ? { ...item, network_allowed: event.target.checked } : item) })} /><span><strong>{t('employees.networkAllowed')}</strong><small>{t('employees.networkAllowedHint')}</small></span></label></div><div className="project-binding-card__footer"><span>{t('employees.capabilities')}: {binding.allowed_tool_capabilities.join(', ') || t('common.none')}</span><span>{t('employees.budgetOverride')}: {binding.budget_override ? `${binding.budget_override.max_model_calls}/${binding.budget_override.max_tokens}/${binding.budget_override.timeout_seconds}s` : t('employees.employeeDefault')}</span></div></fieldset>)}{!record.project_bindings.length ? <div className="employee-empty-panel"><FolderKanban size={22} aria-hidden="true" /><p>{t('employees.noProjects')}</p></div> : null}</div>
-          {!archived ? <div className="employee-sticky-actions"><span>{t('employees.projectsSaveHint')}</span><button className="button button--primary" type="button" disabled={!canMutate} onClick={() => void saveEmployee()}>{t('employees.save')}</button></div> : null}
         </section>
       ) : null}
 
       {tab === 'loops' ? (
-        <section className="projection-card employee-tab-page employee-loops-tab">
-          <header className="employee-tab-header"><div><span className="section-kicker">LOOP CONTRACTS</span><h2>{t('employees.tabs.loops')}</h2><p>{t('loops.heroDescription')}</p></div>{!archived ? <Link className="button button--primary" to="/loops">{t('loops.newLoop')}</Link> : null}</header>
-          {loops === null ? <p role="status">{t('common.loading')}</p> : loops.length ? <div className="loop-card-grid">{loops.map((item) => <article className="loop-card" key={item.id}><div className="loop-card__topline"><span className="loop-pill">{item.schedule.kind === 'daily' ? t('loops.daily') : t('loops.manual')}</span><span>{item.enabled ? t('loops.enabled') : t('loops.disabled')}</span></div><h2><Link to={`/loops/${encodeURIComponent(item.id)}`}>{item.name}</Link></h2><p>{item.contract.goal}</p><dl className="loop-card__facts"><div><dt>{t('loops.when')}</dt><dd>{item.schedule.kind === 'daily' ? item.schedule.local_time : t('loops.manual')}</dd></div><div><dt>{t('loops.does')}</dt><dd>{item.contract.sop[0]}</dd></div><div><dt>{t('loops.youGet')}</dt><dd>{item.contract.definition_of_done[0] ?? t('loops.verifiedReport')}</dd></div></dl><Link className="loop-card__action" to={`/loops/${encodeURIComponent(item.id)}`}>{t('loops.openLoop')} →</Link></article>)}</div> : <div className="employee-empty-panel"><Workflow size={22} aria-hidden="true" /><p>{t('loops.noRuns')}</p></div>}
+        <section className="employee-tab-page employee-loops-tab">
+          <header className="page-header employee-tab-page-head"><div><span className="section-kicker">{tabCopy.loops.kicker}</span><h1>{tabCopy.loops.title}</h1><p>{tabCopy.loops.description}</p></div>{!archived ? <Link className="button button--primary" to="/loops">{tabCopy.loops.create}</Link> : null}</header>
+          <div className="grid-2 employee-loop-workspace"><section>{loops === null ? <p role="status">{t('common.loading')}</p> : loops.length ? <div className="loop-card-grid">{loops.map((item) => <article className="loop-card" key={item.id}><div className="loop-card__topline"><span className="loop-pill">{item.schedule.kind === 'daily' ? t('loops.daily') : t('loops.manual')}</span><span className={`status-badge status-badge--${item.enabled ? 'success' : 'muted'}`}>{item.enabled ? t('loops.enabled') : t('loops.disabled')}</span></div><h2><Link to={`/loops/${encodeURIComponent(item.id)}`}>{item.name}</Link></h2><p>{item.contract.goal}</p><dl className="loop-card__facts"><div><dt>{tabCopy.loops.schedule}</dt><dd>{item.schedule.kind === 'daily' ? `${item.schedule.local_time} · ${item.schedule.timezone}` : t('loops.manual')}</dd></div><div><dt>{t('loops.does')}</dt><dd>{item.contract.sop[0]}</dd></div><div><dt>{t('loops.youGet')}</dt><dd>{item.contract.definition_of_done[0] ?? t('loops.verifiedReport')}</dd></div></dl><Link className="loop-card__action" to={`/loops/${encodeURIComponent(item.id)}`}>{tabCopy.loops.open}</Link></article>)}</div> : <div className="employee-empty-panel"><Workflow size={22} aria-hidden="true" /><p>{t('loops.noRuns')}</p></div>}</section><aside className="panel contract-card employee-loop-create-card"><h2>{tabCopy.loops.nextTitle}</h2><p className="muted">{tabCopy.loops.nextHint}</p><div className="notice info">{tabCopy.loops.invocationNote}</div><Link className="button button--secondary" to="/loops">{tabCopy.loops.goTo}</Link></aside></div>
         </section>
       ) : null}
 
-      {tab === 'tasks' ? <section className="projection-card employee-tab-page employee-tasks-tab"><header className="employee-tab-header"><div><span className="section-kicker">TASK QUEUE</span><h2>{t('employees.tabs.tasks')}</h2><p>{t('tasks.listBoundary')}</p></div><div className="employee-tab-actions"><span className="status-badge status-badge--success"><ListChecks size={14} aria-hidden="true" />{tasks?.length ?? '—'}</span></div></header>{tasks === null ? <p role="status">{t('common.loading')}</p> : tasks.length ? <div className="employee-task-list">{tasks.map((task) => <Link className="employee-task-card" key={task.id} to={`/tasks/${encodeURIComponent(task.id)}`}><div className="employee-task-card__icon"><ListChecks size={17} aria-hidden="true" /></div><div className="employee-task-card__body"><div className="employee-task-card__topline"><span className={`status-badge status-badge--${task.state === 'completed' ? 'success' : task.state === 'failed' || task.state === 'cancelled' ? 'warning' : 'muted'}`}>{translatedEnum(t, 'taskStatus', task.state)}</span><time>{task.created_at}</time></div><strong>{task.prompt}</strong><small>{task.session_id || t('employees.notStarted')} · {task.id}</small></div><span className="employee-task-card__arrow">→</span></Link>)}</div> : <div className="employee-empty-panel"><ListChecks size={22} aria-hidden="true" /><p>{t('employees.noTasks')}</p></div>}</section> : null}
-      {tab === 'activity' ? <section className="projection-card employee-tab-page employee-activity-tab"><header className="employee-tab-header"><div><span className="section-kicker">AUDIT TRAIL</span><h2>{t('employees.tabs.activity')}</h2><p>{t('employees.activityDescription')}</p></div><div className="employee-tab-actions"><span className="status-badge status-badge--muted"><History size={14} aria-hidden="true" />{activity?.events.length ?? '—'}</span></div></header>{activity === null ? <p role="status">{t('common.loading')}</p> : activity.events.length ? <ol className="employee-activity-timeline">{activity.events.map((event) => <li key={event.id}><span className="employee-activity-timeline__dot" aria-hidden="true" /><article><div className="employee-activity-timeline__topline"><time>{event.time}</time><span className="status-badge status-badge--muted">{translatedEnum(t, 'employeeActivityType', event.type)}</span></div><strong>{event.task_id || event.subject_id || `r${event.employee_revision ?? '—'}`}</strong>{event.session_id ? <small>{event.session_id}/{event.run_id ?? ''}</small> : null}</article></li>)}</ol> : <div className="employee-empty-panel"><History size={22} aria-hidden="true" /><p>{t('employees.noActivity')}</p></div>}{activity?.next_cursor ? <div className="employee-sticky-actions"><span>{t('employees.activityLoadHint')}</span><button type="button" onClick={() => { const cursor = activity.next_cursor; if (!cursor) return; const owner = employeeId; const epoch = requestEpoch.current; const controller = new AbortController(); void getEmployeeActivity(employee.id, { limit: 100, cursor }, { signal: controller.signal }).then((page) => { if (epoch !== requestEpoch.current || owner !== employeeId) return; setActivity({ events: [...activity.events, ...page.events], ...(page.next_cursor ? { next_cursor: page.next_cursor } : {}) }) }).catch(() => undefined) }}>{t('employees.loadMore')}</button></div> : null}</section> : null}
+      {tab === 'tasks' ? (
+        <section className="employee-tab-page employee-tasks-tab">
+          <header className="page-header employee-tab-page-head">
+            <div>
+              <span className="section-kicker">{tabCopy.tasks.kicker}</span>
+              <h1>{tabCopy.tasks.title}</h1>
+              <p>{tabCopy.tasks.description}</p>
+            </div>
+            {!archived ? <Link className="button button--primary" to="/tasks"><ListChecks size={16} aria-hidden="true" />{tabCopy.tasks.create}</Link> : null}
+          </header>
+          {tasks === null ? <p role="status">{t('common.loading')}</p> : tasks.length ? (
+            <div className="table-wrap employee-task-table">
+              <table>
+                <thead><tr><th>{tabCopy.tasks.task}</th><th>{tabCopy.tasks.employee}</th><th>{tabCopy.tasks.status}</th><th>{tabCopy.tasks.sessionRun}</th><th>{tabCopy.tasks.updated}</th></tr></thead>
+                <tbody>
+                  {tasks.map((task) => (
+                    <tr key={task.id}>
+                      <td data-label={tabCopy.tasks.task}>
+                        <Link className="row-title employee-task-title" title={task.prompt} to={`/tasks/${encodeURIComponent(task.id)}`}>{task.prompt}</Link>
+                        <span className="row-sub mono">{task.id} · {tabCopy.tasks.snapshot} {task.snapshot_digest.slice(0, 15)}…</span>
+                      </td>
+                      <td data-label={tabCopy.tasks.employee}><span className="employee-task-cell-value">{task.employee_id}</span><span className="row-sub">rev {task.employee_revision}</span></td>
+                      <td data-label={tabCopy.tasks.status}><span className={`status-badge status-badge--${task.state === 'completed' ? 'success' : task.state === 'failed' || task.state === 'cancelled' || task.state === 'interrupted' ? 'warning' : 'muted'}`}>{translatedEnum(t, 'taskStatus', task.state)}</span></td>
+                      <td data-label={tabCopy.tasks.sessionRun}><span className="mono employee-task-cell-value">{task.session_id || '—'}</span><span className="row-sub mono employee-task-cell-value">{task.run_id || '—'}</span></td>
+                      <td data-label={tabCopy.tasks.updated}><time>{task.updated_at.slice(0, 19).replace('T', ' ')}</time></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <div className="employee-empty-panel"><ListChecks size={22} aria-hidden="true" /><p>{t('employees.noTasks')}</p></div>}
+        </section>
+      ) : null}
+      {tab === 'activity' ? (
+        <section className="employee-tab-page employee-activity-tab">
+          <header className="page-header employee-tab-page-head">
+            <div>
+              <span className="section-kicker">{tabCopy.activity.kicker}</span>
+              <h1>{tabCopy.activity.title}</h1>
+              <p>{tabCopy.activity.description}</p>
+            </div>
+          </header>
+          {activity === null ? <p role="status">{t('common.loading')}</p> : activity.events.length ? (
+            <section className="panel employee-audit-panel">
+              <ol className="employee-audit-timeline">
+                {activity.events.map((event) => {
+                  const translatedType = translatedEnum(t, 'employeeActivityType', event.type)
+                  return (
+                    <li key={event.id}>
+                      <time>{event.time}</time>
+                      <span className="employee-audit-timeline__dot" aria-hidden="true" />
+                      <div>
+                        <strong>{translatedType === t('status.unknown') ? event.type : translatedType}</strong>
+                        <span className="row-sub">rev {event.employee_revision ?? '—'}{event.subject_id ? ` · ${event.subject_id}` : ''}{event.task_id ? ` · ${event.task_id}` : ''}{event.session_id ? ` · ${event.session_id}` : ''}{event.run_id ? ` · ${event.run_id}` : ''}</span>
+                      </div>
+                      {event.task_id ? <Link className="button button--secondary" to={`/tasks/${encodeURIComponent(event.task_id)}`}>{tabCopy.activity.open}</Link> : null}
+                    </li>
+                  )
+                })}
+              </ol>
+            </section>
+          ) : <div className="employee-empty-panel"><History size={22} aria-hidden="true" /><p>{t('employees.noActivity')}</p></div>}
+          {activity?.next_cursor ? (
+            <div className="employee-sticky-actions">
+              <span>{t('employees.activityLoadHint')}</span>
+              <button type="button" onClick={() => {
+                const cursor = activity.next_cursor
+                if (!cursor) return
+                const owner = employeeId
+                const epoch = requestEpoch.current
+                const controller = new AbortController()
+                void getEmployeeActivity(employee.id, { limit: 100, cursor }, { signal: controller.signal }).then((page) => {
+                  if (epoch !== requestEpoch.current || owner !== employeeId) return
+                  setActivity({ events: [...activity.events, ...page.events], ...(page.next_cursor ? { next_cursor: page.next_cursor } : {}) })
+                }).catch(() => undefined)
+              }}>{t('employees.loadMore')}</button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
     </article>
   )
 }
