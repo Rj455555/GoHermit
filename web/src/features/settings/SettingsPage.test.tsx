@@ -66,6 +66,46 @@ beforeEach(() => {
 })
 
 describe('SettingsPage', () => {
+  it('uses one stable provider configuration panel and switches it from the provider list', async () => {
+    api.getInfo.mockResolvedValue({
+      companies: [{
+        id: 'openai',
+        label: 'OpenAI',
+        access: [{
+          id: 'openai-api',
+          label: 'OpenAI API',
+          auth_type: 'api_key',
+          description: 'OpenAI compatible API',
+          supported: true,
+          models: [],
+        }],
+      }, {
+        id: 'deepseek',
+        label: 'DeepSeek',
+        access: [{
+          id: 'deepseek-api',
+          label: 'DeepSeek API',
+          auth_type: 'api_key',
+          description: 'DeepSeek API',
+          supported: true,
+          models: [],
+        }],
+      }],
+      auth_status: {
+        'openai-api': { configured: true, source: 'GoHermit', detail: 'ready' },
+        'deepseek-api': { configured: false, source: '', detail: 'API Key required' },
+      },
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    expect(await screen.findByLabelText('OpenAI API API Key')).toBeInTheDocument()
+    expect(screen.queryByLabelText('DeepSeek API API Key')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /DeepSeek DeepSeek API/u }))
+    expect(screen.getByLabelText('DeepSeek API API Key')).toBeInTheDocument()
+    expect(screen.queryByLabelText('OpenAI API API Key')).not.toBeInTheDocument()
+  })
+
   it('never persists or re-displays API keys and clears the key after failure', async () => {
     api.saveProviderAPIKey.mockRejectedValue(new Error('failure'))
     const storageSpy = vi.spyOn(Storage.prototype, 'setItem')

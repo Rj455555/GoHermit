@@ -17,6 +17,7 @@ test('Settings keeps credentials transient and requires confirmation to delete',
 
   await expect(page.getByRole('heading', { name: '设置' })).toBeVisible()
   await expect(page.getByLabel('显示名称')).toHaveValue('Phase 3 Owner')
+  await page.locator('.settings-provider-option').filter({ hasText: 'OpenAI API' }).click()
   const password = page.getByLabel('OpenAI API API Key')
   await password.fill('e2e-transient-secret')
   await page.getByRole('button', { name: '保存 API Key' }).click()
@@ -34,13 +35,15 @@ test('Settings completes one Codex login poll and refreshes readiness', async ({
   await request.post('/__test__/codex-unconfigured')
   await page.goto('/settings')
 
-  const codexCard = page.locator('.provider-card').filter({ hasText: 'Codex' })
-  await codexCard.locator('button.button--primary').click()
+  const codexOption = page.locator('.settings-provider-option').filter({ hasText: 'Codex' })
+  await codexOption.click()
+  const codexPanel = page.locator('.settings-provider-config')
+  await codexPanel.locator('button.button--primary').click()
   await expect.poll(
     async () => (await (await request.get('/__test__/state')).json()).loginPolls,
     { timeout: 8_000 },
   ).toBe(1)
-  await expect(codexCard.locator('button.button--danger')).toBeVisible()
+  await expect(codexPanel.locator('button.button--danger')).toBeVisible()
 })
 
 test('Agent creates a Session only from an explicit submission and restores it through the URL', async ({

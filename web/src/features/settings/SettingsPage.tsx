@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { CheckCircle2, KeyRound, ShieldCheck } from 'lucide-react'
 
 import {
   deleteProviderCredentials,
@@ -40,6 +41,7 @@ export function SettingsPage() {
   const [keys, setKeys] = useState<Record<string, string>>({})
   const [factDraft, setFactDraft] = useState({ category: '', value: '' })
   const [login, setLogin] = useState<CodexLoginSession | null>(null)
+  const [selectedAccessId, setSelectedAccessId] = useState<string | null>(null)
   const mounted = useRef(true)
   const busyRef = useRef(false)
 
@@ -116,6 +118,8 @@ export function SettingsPage() {
     () => info?.companies.flatMap((company) => company.access.map((access) => ({ company, access }))) ?? [],
     [info],
   )
+  const activeAccessEntry = accesses.find(({ access }) => access.id === selectedAccessId) ?? accesses[0] ?? null
+  const configuredAccessCount = accesses.filter(({ access }) => info?.auth_status[access.id]?.configured).length
 
   async function submitProfile(event: FormEvent) {
     event.preventDefault()
@@ -250,7 +254,7 @@ export function SettingsPage() {
     <article className="feature-page settings-page">
       <PageHeader title={t('pages.settings.title')} description={t('settings.description')} />
       {loadError || connectivity.status === 'offline' ? <p className="stale-notice">{t('connectivity.stale')}</p> : null}
-      <form className="projection-card form-grid" onSubmit={(event) => void submitProfile(event)}>
+      <form className="projection-card form-grid settings-owner-card" onSubmit={(event) => void submitProfile(event)}>
         <h2>{t('settings.owner')}</h2>
         <label>
           {t('settings.displayName')}
@@ -287,7 +291,7 @@ export function SettingsPage() {
         </button>
       </form>
 
-      <section className="projection-card">
+      <section className="projection-card settings-facts-card">
         <h2>{t('settings.facts')}</h2>
         {profile.facts.length === 0 ? <p>{t('common.empty')}</p> : (
           <ul className="fact-list">
@@ -301,49 +305,46 @@ export function SettingsPage() {
             ))}
           </ul>
         )}
-        <form className="inline-form" onSubmit={(event) => void addFact(event)}>
+        <form className="inline-form settings-fact-form" onSubmit={(event) => void addFact(event)}>
           <label>{t('settings.factCategory')}<input value={factDraft.category} onChange={(event) => setFactDraft((current) => ({ ...current, category: event.target.value }))} /></label>
           <label>{t('settings.factValue')}<input value={factDraft.value} onChange={(event) => setFactDraft((current) => ({ ...current, value: event.target.value }))} /></label>
           <button type="submit" className="button button--secondary" disabled={!connectivity.canMutate || busy}>{t('settings.addFact')}</button>
         </form>
       </section>
 
-      <section className="provider-grid" aria-label={t('settings.providers')}>
-        {accesses.map(({ company, access }) => {
-          const readiness = info?.auth_status[access.id]
-          return (
-            <article className="projection-card provider-card" key={access.id}>
-              <h2>{company.label} · {access.label}</h2>
-              <p>{readiness?.configured ? t('settings.connected') : t('settings.notConnected')}</p>
-              <small>{readiness?.detail}</small>
-              {access.auth_type === 'api_key' ? (
-                <div className="inline-form">
-                  <label>
-                    {access.label} API Key
-                    <input
-                      type="password"
-                      autoComplete="off"
-                      value={keys[access.id] ?? ''}
-                      onChange={(event) => setKeys((current) => ({ ...current, [access.id]: event.target.value }))}
-                    />
-                  </label>
-                  <button type="button" className="button button--primary" disabled={!connectivity.canMutate || busy} onClick={() => void saveKey(access.id)}>
-                    {t('settings.saveKey')}
-                  </button>
-                </div>
-              ) : access.id === 'openai-codex' && !readiness?.configured ? (
-                <button type="button" className="button button--primary" disabled={!connectivity.canMutate || busy} onClick={() => void beginCodexLogin()}>
-                  {t('settings.loginCodex')}
-                </button>
-              ) : null}
-              {readiness?.configured ? (
-                <button type="button" className="button button--danger" disabled={!connectivity.canMutate || busy} onClick={() => confirmDeleteCredentials(access.id)}>
-                  {t('settings.deleteCredentials')}
-                </button>
-              ) : null}
+      <section className="projection-card settings-connections" aria-label={t('settings.providers')}>
+        <header className="settings-section-heading">
+          <div><span className="loop-kicker">MODEL ACCESS</span><h2>{t('settings.providers')}</h2><p>{t('settings.description')}</p></div>
+          <span className="settings-connection-count"><strong>{configuredAccessCount}</strong> / {accesses.length}</span>
+        </header>
+        <div className="settings-provider-workbench">
+          <nav className="settings-provider-list" aria-label={t('settings.providers')}>
+            {accesses.map(({ company, access }) => {
+              const readiness = info?.auth_status[access.id]
+              const selected = activeAccessEntry?.access.id === access.id
+              return <button type="button" className={`settings-provider-option${selected ? ' is-selected' : ''}`} aria-pressed={selected} key={access.id} onClick={() => setSelectedAccessId(access.id)}>
+                <span className={`settings-provider-option__icon${readiness?.configured ? ' is-connected' : ''}`} aria-hidden="true">{readiness?.configured ? <CheckCircle2 size={18} /> : <KeyRound size={18} />}</span>
+                <span className="settings-provider-option__copy"><strong>{company.label}</strong><small>{access.label}</small></span>
+                <span className={`status-badge status-badge--${readiness?.configured ? 'success' : 'muted'}`}>{readiness?.configured ? t('settings.connected') : t('settings.notConnected')}</span>
+              </button>
+            })}
+          </nav>
+          {activeAccessEntry ? (() => {
+            const { company, access } = activeAccessEntry
+            const readiness = info?.auth_status[access.id]
+            return <article className="settings-provider-config" key={access.id}>
+              <header><span className="settings-provider-config__icon"><ShieldCheck size={20} aria-hidden="true" /></span><div><span className="loop-kicker">{company.label}</span><h3>{access.label}</h3></div><span className={`status-badge status-badge--${readiness?.configured ? 'success' : 'muted'}`}>{readiness?.configured ? t('settings.connected') : t('settings.notConnected')}</span></header>
+              <p className="settings-provider-config__description">{access.description || readiness?.detail}</p>
+              <div className="settings-provider-readiness"><span>{readiness?.configured ? t('settings.connected') : t('settings.notConnected')}</span><strong>{readiness?.detail}</strong></div>
+              {access.auth_type === 'api_key' ? <label className="settings-provider-key-field">{access.label} API Key<input type="password" autoComplete="off" value={keys[access.id] ?? ''} onChange={(event) => setKeys((current) => ({ ...current, [access.id]: event.target.value }))} /></label> : null}
+              <footer className="settings-provider-actions">
+                {access.auth_type === 'api_key' ? <button type="button" className="button button--primary" disabled={!connectivity.canMutate || busy || !(keys[access.id]?.trim())} onClick={() => void saveKey(access.id)}>{t('settings.saveKey')}</button> : null}
+                {access.id === 'openai-codex' && !readiness?.configured ? <button type="button" className="button button--primary" disabled={!connectivity.canMutate || busy} onClick={() => void beginCodexLogin()}>{t('settings.loginCodex')}</button> : null}
+                {readiness?.configured ? <button type="button" className="button button--danger" disabled={!connectivity.canMutate || busy} onClick={() => confirmDeleteCredentials(access.id)}>{t('settings.deleteCredentials')}</button> : null}
+              </footer>
             </article>
-          )
-        })}
+          })() : <div className="settings-provider-config settings-provider-config--empty">{t('common.empty')}</div>}
+        </div>
       </section>
       <section className="projection-card notification-settings-card" aria-live="polite">
         <div className="section-heading-row">
