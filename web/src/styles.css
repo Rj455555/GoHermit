@@ -5916,6 +5916,31 @@ button {
   margin-bottom: 10px;
 }
 
+/* Memory is a compact three-column workbench on wide screens: review queue,
+   accepted facts, and the policy boundary stay in one visual row. */
+.split-7-5.employee-memory-workspace {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+}
+
+.employee-memory-workspace > .stack {
+  display: contents;
+}
+
+.employee-memory-workspace .employee-memory-boundary {
+  position: static;
+}
+
+@media (max-width: 1279px) {
+  .split-7-5.employee-memory-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .employee-memory-workspace > .stack {
+    display: grid;
+  }
+}
+
 /* Project bindings */
 .employee-projects-tab .project-binding-grid {
   grid-template-columns: minmax(0, 1fr);
