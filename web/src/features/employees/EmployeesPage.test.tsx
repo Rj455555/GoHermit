@@ -421,6 +421,14 @@ describe('Employees Phase 4 pages', () => {
     expect(screen.getByText('Archived Employees are read-only.')).toBeVisible()
   })
 
+  it('renders the Employee shell without waiting for the auxiliary model catalog', async () => {
+    api.getInfo.mockReturnValue(new Promise(() => undefined))
+    renderEmployees('/employees/employee-ada')
+
+    expect(await screen.findByLabelText('Name')).toHaveValue('Ada')
+    expect(screen.getByTestId('employee-status')).toHaveTextContent('Active')
+  })
+
   it('edits the authoritative overview and project policy with expected revision', async () => {
     const user = userEvent.setup()
     const activeRecord = {
@@ -471,10 +479,11 @@ describe('Employees Phase 4 pages', () => {
 
     await user.click(screen.getByRole('button', { name: 'Disable' }))
     await user.click(screen.getByRole('button', { name: 'Projects' }))
+    await user.click(screen.getByRole('button', { name: 'Edit permissions' }))
     await user.click(await screen.findByRole('checkbox', { name: 'Read allowed' }))
     await user.click(screen.getByRole('checkbox', { name: 'Mutation allowed' }))
     await user.click(screen.getByRole('checkbox', { name: 'Network allowed' }))
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(screen.getByRole('button', { name: 'Save permissions' }))
     await waitFor(() => expect(api.updateEmployee).toHaveBeenLastCalledWith(summary.id, expect.objectContaining({
       project_bindings: [expect.objectContaining({
         read_allowed: false,

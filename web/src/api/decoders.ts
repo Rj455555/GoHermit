@@ -947,7 +947,7 @@ export function decodeSkillCatalog(value: unknown): { skills: SkillCatalogItem[]
         kind: enumeration(skill.kind, ['native', 'skill_md_adapter'] as const),
         title: string(skill.title, 8192),
         description: string(skill.description),
-        requested_capabilities: array(
+        requested_capabilities: optionalArray(
           skill.requested_capabilities,
           (item) => string(item, 256),
           MAX_SMALL_COLLECTION,

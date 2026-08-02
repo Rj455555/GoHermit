@@ -27,6 +27,591 @@
   text-rendering: optimizeLegibility;
 }
 
+/* Employee Skills + Projects — approved workbench screens */
+.employee-skills-tab {
+  gap: 20px;
+}
+
+.skill-catalog-status {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.skill-catalog-status > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 15px 17px;
+  border-right: 1px solid var(--color-border);
+}
+
+.skill-catalog-status > div:last-child {
+  border-right: 0;
+}
+
+.skill-catalog-status span,
+.skill-kind-filter > span {
+  color: var(--employee-muted);
+  font-size: 0.7rem;
+  font-weight: 760;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.skill-catalog-status strong {
+  overflow: hidden;
+  color: var(--employee-ink);
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-catalog-status strong.is-healthy {
+  color: #237a46;
+}
+
+.skill-catalog-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.skill-catalog-toolbar .skill-search {
+  width: min(430px, 100%);
+}
+
+.skill-catalog-toolbar .skill-search input,
+.skill-kind-filter select {
+  min-height: 44px;
+  background: var(--color-surface);
+}
+
+.skill-kind-filter {
+  display: grid;
+  min-width: 190px;
+  gap: 6px;
+}
+
+.employee-skills-tab .skill-workbench {
+  grid-template-columns: minmax(0, 2fr) minmax(340px, 1fr);
+  gap: 16px;
+}
+
+.employee-skills-tab .skill-directory-panel,
+.employee-skills-tab .skill-config-panel {
+  padding: 20px;
+  border-color: var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.employee-skills-tab .skill-directory-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.employee-skills-tab .skill-directory-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 0;
+  min-height: 164px;
+  padding: 0;
+  overflow: hidden;
+  border-color: var(--color-border);
+  border-radius: 12px;
+  cursor: default;
+  transform: none;
+}
+
+.employee-skills-tab .skill-directory-card:hover {
+  border-color: #aebbd2;
+  box-shadow: 0 8px 24px rgb(25 43 73 / 8%);
+  transform: none;
+}
+
+.employee-skills-tab .skill-directory-card.is-selected {
+  border-color: var(--color-accent);
+  box-shadow: inset 3px 0 0 var(--color-accent), 0 0 0 1px rgb(35 81 191 / 12%);
+}
+
+.employee-skills-tab .skill-directory-card.is-bound {
+  background: #f8fbff;
+}
+
+.skill-directory-card__select {
+  display: block;
+  min-width: 0;
+  padding: 16px 12px 14px 17px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.skill-directory-card__select:hover,
+.skill-directory-card__select:focus-visible {
+  background: rgb(35 81 191 / 4%);
+}
+
+.employee-skills-tab .skill-directory-card__main {
+  gap: 6px;
+}
+
+.employee-skills-tab .skill-directory-card__title {
+  font-size: 0.98rem;
+}
+
+.employee-skills-tab .skill-directory-card__description {
+  display: -webkit-box;
+  min-height: 42px;
+  overflow: hidden;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.45;
+}
+
+.skill-directory-card__binding {
+  display: grid;
+  min-width: 86px;
+  align-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 12px;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+  color: var(--employee-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.skill-directory-card__binding input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.skill-directory-card__binding .skill-directory-card__check {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+}
+
+.skill-directory-card.is-bound .skill-directory-card__binding {
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.skill-config-panel__facts {
+  display: grid;
+  grid-template-columns: 105px minmax(0, 1fr);
+  margin: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.skill-config-panel__facts dt,
+.skill-config-panel__facts dd {
+  margin: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.skill-config-panel__facts dt {
+  color: var(--employee-muted);
+  font-weight: 700;
+}
+
+.skill-config-panel__facts dd {
+  overflow-wrap: anywhere;
+  color: var(--employee-ink);
+}
+
+.skill-catalog-loading {
+  grid-column: 1 / -1;
+}
+
+.employee-skills-tab .employee-sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-top: 0;
+  padding: 12px 0 0;
+  background: color-mix(in srgb, var(--color-canvas) 94%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.employee-projects-tab {
+  gap: 20px;
+}
+
+.employee-projects-tab .project-binding-card {
+  padding: 0;
+}
+
+.employee-skills-tab .skill-directory-card:not(.is-bound) .skill-directory-card__check {
+  background: var(--color-surface);
+  color: transparent;
+}
+
+.employee-skills-tab .skill-directory-card.is-bound .skill-directory-card__check {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+}
+
+@media (max-width: 640px) {
+  .employee-skills-tab .employee-sticky-actions {
+    position: static;
+    backdrop-filter: none;
+  }
+}
+
+.project-binding-card__header {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 19px 22px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.project-binding-card__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: #edf3ff;
+  color: var(--color-accent);
+}
+
+.project-binding-card__header h2,
+.project-binding-card__header p {
+  margin: 0;
+}
+
+.project-binding-card__header h2 {
+  color: var(--employee-ink);
+  font-size: 1rem;
+}
+
+.project-binding-card__header p {
+  margin-top: 3px;
+  color: var(--employee-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.project-identity-list {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  margin: 0;
+  padding: 0 22px;
+}
+
+.project-identity-list dt,
+.project-identity-list dd {
+  margin: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.78rem;
+}
+
+.project-identity-list dt {
+  color: var(--employee-muted);
+  font-weight: 700;
+}
+
+.project-identity-list dd {
+  min-width: 0;
+}
+
+.project-identity-list code {
+  display: block;
+  overflow: hidden;
+  color: var(--employee-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-permission-summary {
+  padding: 6px 22px;
+}
+
+.project-permission-summary > div,
+.project-permission-summary > label {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  min-height: 66px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.project-permission-summary > label {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  cursor: pointer;
+}
+
+.project-permission-summary input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.project-permission-summary span:nth-child(2) {
+  display: grid;
+  gap: 3px;
+}
+
+.project-permission-summary strong {
+  color: var(--employee-ink);
+  font-size: 0.87rem;
+}
+
+.project-permission-summary small {
+  color: var(--employee-muted);
+  font-size: 0.73rem;
+}
+
+.project-permission-summary em {
+  min-width: 58px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #f0f1f3;
+  color: #6a7380;
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 750;
+  text-align: center;
+}
+
+.project-permission-summary em.is-allowed {
+  background: #eaf8ef;
+  color: #237a46;
+}
+
+.project-permission-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: #f0f1f3;
+  color: #798391;
+}
+
+.project-permission-icon.is-allowed {
+  background: #eaf8ef;
+  color: #237a46;
+}
+
+.project-capabilities {
+  display: grid;
+  gap: 10px;
+  margin: 10px 22px 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface-subtle);
+}
+
+.project-capabilities ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-capabilities li {
+  display: grid;
+  grid-template-columns: minmax(150px, .7fr) minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--color-border);
+  font-size: 0.72rem;
+}
+
+.project-capabilities li > span {
+  color: var(--employee-muted);
+}
+
+.project-capabilities li > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #237a46;
+}
+
+.project-binding-note {
+  margin: 14px 22px 18px;
+}
+
+.project-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+}
+
+@media (max-width: 900px) {
+  .skill-catalog-status {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .skill-catalog-status > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .skill-catalog-status > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .employee-skills-tab .skill-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .employee-skills-tab .skill-config-panel {
+    position: static;
+  }
+
+  .project-capabilities li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .project-capabilities li > span {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .skill-catalog-toolbar {
+    display: grid;
+  }
+
+  .skill-kind-filter {
+    min-width: 0;
+  }
+
+  .employee-skills-tab .skill-directory-grid,
+  .skill-catalog-status {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .skill-catalog-status > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .skill-catalog-status > div:last-child {
+    border-bottom: 0;
+  }
+
+  .employee-skills-tab .skill-directory-panel,
+  .employee-skills-tab .skill-config-panel {
+    padding: 16px;
+  }
+
+  .employee-skills-tab .skill-directory-card {
+    grid-template-columns: minmax(0, 1fr) 74px;
+  }
+
+  .skill-directory-card__binding {
+    min-width: 74px;
+    padding: 8px;
+  }
+
+  .employee-skills-tab .employee-sticky-actions {
+    display: grid;
+  }
+
+  .employee-skills-tab .employee-sticky-actions .button {
+    width: 100%;
+  }
+
+  .project-binding-card__header {
+    grid-template-columns: 38px minmax(0, 1fr);
+    padding: 16px;
+  }
+
+  .project-binding-card__header .status-badge {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .project-identity-list {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0 16px;
+  }
+
+  .project-identity-list dt {
+    padding-bottom: 3px;
+    border-bottom: 0;
+  }
+
+  .project-identity-list dd {
+    padding-top: 0;
+  }
+
+  .project-permission-summary {
+    padding: 6px 16px;
+  }
+
+  .project-permission-summary > div,
+  .project-permission-summary > label {
+    grid-template-columns: 30px minmax(0, 1fr);
+    padding: 10px 0;
+  }
+
+  .project-permission-summary em {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .project-capabilities {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .project-capabilities li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-capabilities li > span {
+    grid-column: auto;
+  }
+
+  .project-capabilities li > strong {
+    justify-self: start;
+  }
+
+  .project-binding-note {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .project-edit-actions {
+    display: grid;
+    padding: 14px 16px;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -5526,4 +6111,9 @@ button {
     grid-column: 2;
     justify-self: start;
   }
+}
+
+/* Keep the final Projects surface flush after the earlier compatibility rules. */
+.employee-projects-tab .project-binding-card {
+  padding: 0;
 }

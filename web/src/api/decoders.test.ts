@@ -248,7 +248,7 @@ describe('endpoint decoders', () => {
 
     expect(decodeEmployeeList({ employees: [summary], next_cursor: 'next' }).employees).toHaveLength(1)
     expect(decodeEmployeeRecord({ employee, project_bindings: [project] }).employee.name).toBe('Literal Employee')
-    expect(decodeSkillCatalog({ skills: [{
+    const decodedCatalog = decodeSkillCatalog({ skills: [{
       skill_id: 'review',
       version: '1.0.0',
       digest: 'digest',
@@ -257,7 +257,18 @@ describe('endpoint decoders', () => {
       description: 'Literal',
       requested_capabilities: ['read'],
       configuration_schema: {},
-    }] }).skills).toHaveLength(1)
+    }, {
+      skill_id: 'adapter',
+      version: 'synthetic-1',
+      digest: 'adapter-digest',
+      kind: 'skill_md_adapter',
+      title: 'Adapter',
+      description: 'Zero-capability adapter',
+      requested_capabilities: null,
+      configuration_schema: {},
+    }] }).skills
+    expect(decodedCatalog).toHaveLength(2)
+    expect(decodedCatalog[1]?.requested_capabilities).toEqual([])
     expect(decodeEmployeeSkills({
       employee_id: 'employee-1',
       revision: 2,

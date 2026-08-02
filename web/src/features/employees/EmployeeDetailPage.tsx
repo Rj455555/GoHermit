@@ -11,6 +11,7 @@ import {
   FolderOpen,
   History,
   ListChecks,
+  Pencil,
   Search,
   ShieldCheck,
   Settings2,
@@ -76,7 +77,8 @@ export function EmployeeDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedTab = searchParams.get('tab')
   const tab: Tab = TABS.includes(requestedTab as Tab) ? requestedTab as Tab : 'overview'
-  const requestEpoch = useRef(0)
+  const detailEpoch = useRef(0)
+  const tabEpoch = useRef(0)
   const definitionRef = useRef<HTMLDetailsElement>(null)
   const tabsRef = useRef<HTMLElement>(null)
   const [record, setRecord] = useState<EmployeeRecord | null>(null)
@@ -88,6 +90,7 @@ export function EmployeeDetailPage() {
   const [skillDraft, setSkillDraft] = useState<SkillBinding[]>([])
   const [skillConfiguration, setSkillConfiguration] = useState<Record<string, string>>({})
   const [skillQuery, setSkillQuery] = useState('')
+  const [skillKindFilter, setSkillKindFilter] = useState<'all' | 'native' | 'skill_md_adapter'>('all')
   const [selectedSkillKey, setSelectedSkillKey] = useState<string | null>(null)
   const [knowledge, setKnowledge] = useState<EmployeeKnowledge | null>(null)
   const [memory, setMemory] = useState<{ facts: MemoryFact[]; candidates: MemoryCandidate[] } | null>(null)
@@ -100,33 +103,35 @@ export function EmployeeDetailPage() {
     id: '', kind: 'manual_text' as 'manual_text' | 'file' | 'project_docs', title: '', content: '',
   })
   const [factDraft, setFactDraft] = useState<Record<string, string>>({})
+  const [projectDraft, setProjectDraft] = useState<EmployeeRecord['project_bindings']>([])
+  const [projectEditMode, setProjectEditMode] = useState(false)
+  const loadedEmployeeId = record?.employee.id
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!employeeId) return
-    const epoch = ++requestEpoch.current
-    setRecord(null)
+    const epoch = ++detailEpoch.current
     setNotFound(false)
+    const options = signal ? { signal } : {}
+    void getInfo(options).then((catalogInfo) => {
+      if (epoch === detailEpoch.current) setInfo(catalogInfo)
+    }).catch(() => undefined)
     try {
-      const [value, catalogInfo] = await Promise.all([
-        getEmployee(employeeId, signal ? { signal } : {}),
-        getInfo(signal ? { signal } : {}),
-      ])
-      if (epoch !== requestEpoch.current) return
+      const value = await getEmployee(employeeId, options)
+      if (epoch !== detailEpoch.current) return
       setRecord(value)
-      setInfo(catalogInfo)
+      setProjectDraft(value.project_bindings)
       setSkillDraft(value.employee.skill_bindings)
       setSkillConfiguration(Object.fromEntries(value.employee.skill_bindings.map((binding) => [
         `${binding.skill_id}:${binding.version}`,
         JSON.stringify(binding.configuration, null, 2),
       ])))
     } catch (error) {
-      if (epoch !== requestEpoch.current) return
+      if (epoch !== detailEpoch.current) return
       setNotFound(error instanceof ApiError && error.status === 404)
     }
   }, [employeeId])
 
   useEffect(() => {
-    const controller = new AbortController()
     setSkills(null)
     setKnowledge(null)
     setMemory(null)
@@ -136,11 +141,17 @@ export function EmployeeDetailPage() {
     setDryRun(null)
     setKnowledgeComposerOpen(false)
     setSkillQuery('')
+    setSkillKindFilter('all')
     setSelectedSkillKey(null)
     setBusy(false)
+    setProjectEditMode(false)
+  }, [employeeId])
+
+  useEffect(() => {
+    const controller = new AbortController()
     void refresh(controller.signal)
     return () => {
-      requestEpoch.current += 1
+      detailEpoch.current += 1
       controller.abort()
     }
   }, [refresh, connectivity.generation])
@@ -155,22 +166,21 @@ export function EmployeeDetailPage() {
   useEffect(() => {
     if (
       !employeeId ||
-      !record ||
-      record.employee.id !== employeeId ||
+      loadedEmployeeId !== employeeId ||
       tab === 'overview' ||
       tab === 'projects'
     ) return
     const controller = new AbortController()
-    const epoch = ++requestEpoch.current
+    const epoch = ++tabEpoch.current
     const apply = <T,>(setter: (value: T) => void) => (value: T) => {
-      if (epoch === requestEpoch.current) setter(value)
+      if (epoch === tabEpoch.current) setter(value)
     }
     if (tab === 'skills') {
       void Promise.all([
         getEmployeeSkills(employeeId, { signal: controller.signal }),
         listSkills({ signal: controller.signal }),
       ]).then(([projection, skillCatalog]) => {
-        if (epoch !== requestEpoch.current) return
+        if (epoch !== tabEpoch.current) return
         setSkills(projection)
         setCatalog(skillCatalog.skills)
         setSelectedSkillKey((current) => {
@@ -201,8 +211,11 @@ export function EmployeeDetailPage() {
       void getEmployeeActivity(employeeId, { limit: 100 }, { signal: controller.signal })
         .then(apply(setActivity)).catch(() => undefined)
     }
-    return () => controller.abort()
-  }, [employeeId, record, tab])
+    return () => {
+      tabEpoch.current += 1
+      controller.abort()
+    }
+  }, [employeeId, loadedEmployeeId, tab])
 
   async function mutate<T>(
     action: (signal: AbortSignal) => Promise<T>,
@@ -210,18 +223,18 @@ export function EmployeeDetailPage() {
     refreshAfter = true,
   ) {
     if (!connectivity.canMutate) return
-    const epoch = requestEpoch.current
+    const epoch = detailEpoch.current
     const owner = employeeId
     const controller = new AbortController()
     setBusy(true)
     try {
       const value = await action(controller.signal)
-      if (epoch !== requestEpoch.current || owner !== employeeId) return
+      if (epoch !== detailEpoch.current || owner !== employeeId) return
       onSuccess?.(value)
       actions.showToast({ messageKey: 'toast.saved', tone: 'success' })
       if (refreshAfter) await refresh()
     } catch (error) {
-      if (epoch !== requestEpoch.current || owner !== employeeId) return
+      if (epoch !== detailEpoch.current || owner !== employeeId) return
       actions.showToast({ messageKey: errorKey(error), tone: 'error' })
       if (error instanceof ApiError && error.status === 409) await refresh()
     } finally {
@@ -280,16 +293,18 @@ export function EmployeeDetailPage() {
     noRecent: 'No recent task.',
   }
   const tabCopy = zh ? {
+    skills: { kicker: 'EMPLOYEE / SKILLS', title: 'Skills', description: '从服务端显式 Catalog 选择能力，并在右侧检查精确版本、Digest 与配置。', catalogRoot: 'Catalog Root', managedRoot: '服务端显式配置', catalogHealth: '目录状态', reachable: '可读取', parsed: '已解析', contract: '绑定契约', filter: '类型筛选', all: '全部类型', native: 'Native', adapter: 'SKILL.md Adapter', catalog: '可用目录', inspector: '配置检查器' },
     knowledge: { kicker: 'EMPLOYEE / KNOWLEDGE', title: '知识', description: '来源、索引、文档与 Citation 保持可追溯层级，失败不会被空状态吞掉。', add: '添加来源', inspector: 'Citation 检查器', inspectorHint: '选择树节点后显示不可变证据', citationNote: '引用只展示服务端返回的行号与 Digest，不从浏览器重新推断。' },
     memory: { kicker: 'EMPLOYEE / MEMORY', title: '记忆', description: '候选与已确认事实分层：只有 Owner 明确接受后，候选才能成为可注入上下文的 Fact。', candidatesHint: '附带 Task / Session / Run 来源链', factsHint: '仅这些内容可进入后续快照', boundary: '记忆边界', candidateGeneration: '候选生成', enabled: '启用', contextLimit: '上下文上限', byteLimit: '字节上限', warning: '不要把模型输出直接写成长期记忆；必须保留验证来源。' },
-    projects: { kicker: 'EMPLOYEE / PROJECTS', title: '项目与权限', description: '用真实路径指纹与能力清单界定执行边界；高风险能力不使用含糊的“完全访问”开关。', add: '添加项目', bound: '已绑定', realPath: '真实路径', allowed: '允许', blocked: '禁止', allowedCapabilities: '允许能力', rootOnly: '限定在已验证 Workspace Root 内', pathNote: '路径指纹由服务端生成；界面不允许手动编辑，也不显示未验证的符号链接解析结果。' },
+    projects: { kicker: 'EMPLOYEE / PROJECTS', title: '项目与权限', description: '用真实路径指纹与能力清单界定执行边界；高风险能力不使用含糊的“完全访问”开关。', edit: '编辑权限', cancel: '取消编辑', save: '保存权限', bound: '已绑定', realPath: '真实路径', fingerprint: '路径指纹', allowed: '允许', blocked: '禁止', read: '读取', mutation: '文件变更', network: '网络访问', allowedCapabilities: '允许能力', rootOnly: '限定在已验证 Workspace Root 内', pathNote: '路径指纹由服务端生成；界面不允许手动编辑，也不显示未验证的符号链接解析结果。' },
     loops: { kicker: 'EMPLOYEE / LOOPS', title: '员工 Loops', description: '只显示归属于该员工的持久工作契约，执行详情仍回到全局 Loop 与 Task 真相。', create: '创建 Loop', schedule: 'Schedule', last: 'Last', next: 'Next', open: '打开 Loop', nextTitle: '创建下一个 Loop', nextHint: '从 Goal、Boundaries、SOP、Definition of Done 与 Stop Conditions 建立可审计契约。', invocationNote: '每次 Invocation 都创建普通 EmployeeTask；Loop 不引入第二套执行系统。', goTo: '前往 Loops' },
     tasks: { kicker: 'EMPLOYEE / TASKS', title: '员工任务', description: '以该员工为作用域查看任务快照；状态、Session 与 Run 仍与全局任务详情一致。', create: '新建任务', task: '任务', employee: '员工', status: '状态', sessionRun: 'Session / Run', updated: '更新时间', snapshot: 'snapshot' },
     activity: { kicker: 'EMPLOYEE / ACTIVITY', title: '员工活动', description: '按时间展示可审计事件，并保留 Employee revision、Task、Session 与 Run 的交叉链接。', open: '打开' },
   } : {
+    skills: { kicker: 'EMPLOYEE / SKILLS', title: 'Skills', description: 'Select capabilities from the explicit server Catalog, then inspect the exact version, digest, and configuration.', catalogRoot: 'Catalog Root', managedRoot: 'Server configured', catalogHealth: 'Catalog health', reachable: 'Readable', parsed: 'Parsed', contract: 'Binding contract', filter: 'Type filter', all: 'All types', native: 'Native', adapter: 'SKILL.md Adapter', catalog: 'Available catalog', inspector: 'Configuration inspector' },
     knowledge: { kicker: 'EMPLOYEE / KNOWLEDGE', title: 'Knowledge', description: 'Keep sources, indexes, documents, and Citations in a traceable hierarchy; failures never disappear into an empty state.', add: 'Add source', inspector: 'Citation inspector', inspectorHint: 'Select a tree node to inspect immutable evidence', citationNote: 'Citations display only server-returned lines and digests; the browser does not infer them.' },
     memory: { kicker: 'EMPLOYEE / MEMORY', title: 'Memory', description: 'Candidates and confirmed facts stay separate. Only explicit Owner acceptance promotes a candidate into injectable context.', candidatesHint: 'Includes Task / Session / Run provenance', factsHint: 'Only these facts may enter later snapshots', boundary: 'Memory boundary', candidateGeneration: 'Candidate generation', enabled: 'Enabled', contextLimit: 'Context limit', byteLimit: 'Byte limit', warning: 'Never write model output directly as long-term memory; verified provenance is required.' },
-    projects: { kicker: 'EMPLOYEE / PROJECTS', title: 'Projects & permissions', description: 'Use verified workspace identity and explicit capabilities to bound execution; high-risk access is never a vague full-access switch.', add: 'Add project', bound: 'Bound', realPath: 'Real path', allowed: 'Allowed', blocked: 'Blocked', allowedCapabilities: 'Allowed capabilities', rootOnly: 'Limited to the verified Workspace Root', pathNote: 'Workspace fingerprints are generated by the service; the UI cannot edit them or infer unverified symlink resolution.' },
+    projects: { kicker: 'EMPLOYEE / PROJECTS', title: 'Projects & permissions', description: 'Use verified workspace identity and explicit capabilities to bound execution; high-risk access is never a vague full-access switch.', edit: 'Edit permissions', cancel: 'Cancel edit', save: 'Save permissions', bound: 'Bound', realPath: 'Real path', fingerprint: 'Path fingerprint', allowed: 'Allowed', blocked: 'Blocked', read: 'Read', mutation: 'File mutation', network: 'Network access', allowedCapabilities: 'Allowed capabilities', rootOnly: 'Limited to the verified Workspace Root', pathNote: 'Workspace fingerprints are generated by the service; the UI cannot edit them or infer unverified symlink resolution.' },
     loops: { kicker: 'EMPLOYEE / LOOPS', title: 'Employee Loops', description: 'Show only persistent work contracts owned by this Employee; execution truth remains in global Loops and Tasks.', create: 'Create Loop', schedule: 'Schedule', last: 'Last', next: 'Next', open: 'Open Loop', nextTitle: 'Create the next Loop', nextHint: 'Build an auditable contract from Goal, Boundaries, SOP, Definition of Done, and Stop Conditions.', invocationNote: 'Every Invocation creates an ordinary EmployeeTask; Loops do not add a second execution system.', goTo: 'Go to Loops' },
     tasks: { kicker: 'EMPLOYEE / TASKS', title: 'Employee tasks', description: 'Review task snapshots in this Employee scope; state, Session, and Run remain consistent with global task details.', create: 'New task', task: 'Task', employee: 'Employee', status: 'Status', sessionRun: 'Session / Run', updated: 'Updated', snapshot: 'snapshot' },
     activity: { kicker: 'EMPLOYEE / ACTIVITY', title: 'Employee activity', description: 'Show auditable events over time while preserving Employee revision, Task, Session, and Run cross-links.', open: 'Open' },
@@ -301,6 +316,7 @@ export function EmployeeDetailPage() {
   const skillKey = (item: Pick<SkillCatalogItem, 'skill_id' | 'version'> | SkillBinding) =>
     `${item.skill_id}:${item.version}`
   const filteredCatalog = catalog.filter((item) => {
+    if (skillKindFilter !== 'all' && item.kind !== skillKindFilter) return false
     const query = skillQuery.trim().toLocaleLowerCase()
     if (!query) return true
     return `${item.title} ${item.skill_id} ${item.description} ${item.version}`
@@ -333,6 +349,19 @@ export function EmployeeDetailPage() {
         employee: nextRecord.employee,
         project_bindings: nextRecord.project_bindings,
       }, { signal }), setRecord)
+  }
+
+  function saveProjects() {
+    const nextRecord = { ...record, project_bindings: projectDraft }
+    return mutate((signal) => updateEmployee(employee.id, {
+      expected_revision: employee.revision,
+      employee,
+      project_bindings: nextRecord.project_bindings,
+    }, { signal }), (updated) => {
+      setRecord(updated)
+      setProjectDraft(updated.project_bindings)
+      setProjectEditMode(false)
+    }, false)
   }
 
   function lifecycle(action: 'disable' | 'enable' | 'archive') {
@@ -586,32 +615,14 @@ export function EmployeeDetailPage() {
       ) : null}
 
       {tab === 'skills' ? (
-        <section className="projection-card employee-tab-page employee-skills-tab">
-          <header className="employee-tab-header">
-            <div>
-              <span className="section-kicker">SKILL DIRECTORY</span>
-              <h2>{t('employees.tabs.skills')}</h2>
-              <p>{t('employees.skillDirectoryDescription')}</p>
-            </div>
-            <div className="employee-tab-actions"><span className="status-badge status-badge--success"><FolderOpen size={14} aria-hidden="true" />{t('employees.catalogBindings')}</span></div>
-          </header>
-          <div className="employee-tab-metrics">
-            <div><span>{t('employees.boundSkills')}</span><strong>{skillDraft.length}</strong></div>
-            <div><span>{t('employees.availableSkills')}</span><strong>{catalog.length}</strong></div>
-            <div><span>{t('employees.skillContract')}</span><strong>{t('employees.skillContractValue')}</strong></div>
+        <section className="employee-tab-page employee-skills-tab">
+          <header className="page-header employee-tab-page-head"><div><span className="section-kicker">{tabCopy.skills.kicker}</span><h1>{tabCopy.skills.title}</h1><p>{tabCopy.skills.description}</p></div></header>
+          <div className="skill-catalog-status" aria-busy={!skills}>
+            <div><span>{tabCopy.skills.catalogRoot}</span><strong>{tabCopy.skills.managedRoot}</strong></div>
+            <div><span>{tabCopy.skills.catalogHealth}</span><strong className={skills ? 'is-healthy' : ''}>{skills ? tabCopy.skills.reachable : t('common.loading')}</strong></div>
+            <div><span>{tabCopy.skills.parsed}</span><strong>{catalog.length} Skills</strong></div>
+            <div><span>{tabCopy.skills.contract}</span><strong>{t('employees.skillContractValue')}</strong></div>
           </div>
-          {skills ? <section className="employee-subsection employee-current-bindings">
-            <div className="employee-section-heading"><div><span className="section-kicker">ACTIVE CONFIGURATION</span><h3>{t('employees.currentSkills')}</h3></div><span className="employee-section-heading__meta">{skillDraft.length} / {catalog.length}</span></div>
-            {skills.bindings.length ? <div className="skill-binding-grid">{skills.bindings.map((item) => {
-              const label = `${item.binding.skill_id}@${item.binding.version}`
-              return <article className={`skill-binding-card skill-binding-card--${item.status}`} key={label}>
-                <div className="skill-binding-card__topline"><span className="skill-kind-icon"><Settings2 size={15} aria-hidden="true" /></span><span className={`status-badge status-badge--${item.status === 'current' ? 'success' : 'warning'}`}>{translatedEnum(t, 'skillStatus', item.status)}</span></div>
-                <h4>{label}</h4>
-                <code>{item.binding.digest.slice(0, 12)}…</code>
-                <p>{translatedEnum(t, 'bindingStatus', item.binding.enabled ? 'enabled' : 'disabled')}{item.kind === 'skill_md_adapter' ? ` · ${t('employees.adapterZeroCapability')}` : ''}</p>
-              </article>
-            })}</div> : <div className="employee-empty-panel"><FolderOpen size={22} aria-hidden="true" /><p>{t('employees.noSkillsBound')}</p></div>}
-          </section> : <p role="status">{t('common.loading')}</p>}
           {active && skills ? <div className="employee-inline-alert">{skills.bindings.filter((item) => item.status !== 'current').map((item) => {
             const label = `${item.binding.skill_id}@${item.binding.version}`
             const current = catalog.find((candidate) => candidate.skill_id === item.binding.skill_id && candidate.version === item.binding.version)
@@ -619,39 +630,43 @@ export function EmployeeDetailPage() {
               ? <button type="button" key={label} disabled={!canMutate} onClick={() => setSkillDraft((draft) => draft.map((binding) => skillKey(binding) === skillKey(item.binding) ? { ...binding, digest: current.digest } : binding))}>{t('employees.upgradeSkill')} {label}</button>
               : <button type="button" key={label} disabled={!canMutate} onClick={() => setSkillDraft((draft) => draft.filter((binding) => skillKey(binding) !== skillKey(item.binding)))}>{t('employees.removeSkill')} {label}</button>
           })}</div> : null}
-          {active ? <div className="skill-workbench">
+          <div className="skill-catalog-toolbar">
+            <label className="skill-search"><Search size={16} aria-hidden="true" /><span className="sr-only">{t('employees.searchSkills')}</span><input aria-label={t('employees.searchSkills')} placeholder={t('employees.searchSkills')} value={skillQuery} onChange={(event) => setSkillQuery(event.target.value)} /></label>
+            <label className="skill-kind-filter"><span>{tabCopy.skills.filter}</span><select value={skillKindFilter} onChange={(event) => setSkillKindFilter(event.target.value as typeof skillKindFilter)}><option value="all">{tabCopy.skills.all}</option><option value="native">{tabCopy.skills.native}</option><option value="skill_md_adapter">{tabCopy.skills.adapter}</option></select></label>
+          </div>
+          <div className="skill-workbench" aria-busy={!skills}>
             <section className="skill-directory-panel">
-              <div className="employee-section-heading"><div><span className="section-kicker">CATALOG</span><h3>{t('employees.catalogBindings')}</h3><p>{t('employees.selectSkillHint')}</p></div><label className="skill-search"><Search size={16} aria-hidden="true" /><span className="sr-only">{t('employees.searchSkills')}</span><input aria-label={t('employees.searchSkills')} placeholder={t('employees.searchSkills')} value={skillQuery} onChange={(event) => setSkillQuery(event.target.value)} /></label></div>
+              <div className="employee-section-heading"><div><span className="section-kicker">CATALOG</span><h3>{tabCopy.skills.catalog}</h3><p>{t('employees.selectSkillHint')}</p></div><span className="employee-section-heading__meta">{filteredCatalog.length} / {catalog.length}</span></div>
               <fieldset className="skill-catalog-fieldset"><legend className="sr-only">{t('employees.catalogBindings')}</legend><div className="skill-directory-grid">
                 {filteredCatalog.map((item) => {
                   const key = skillKey(item)
                   const binding = skillDraft.find((candidate) => skillKey(candidate) === key)
-                  const selected = selectedSkillKey === key
-                  return <label className={`skill-directory-card${selected ? ' is-selected' : ''}${binding ? ' is-bound' : ''}`} key={key}>
-                    <input type="checkbox" checked={Boolean(binding)} aria-label={item.title} onChange={(event) => {
+                  const selected = activeSkillKey === key
+                  return <article className={`skill-directory-card${selected ? ' is-selected' : ''}${binding ? ' is-bound' : ''}`} key={key}>
+                    <button className="skill-directory-card__select" type="button" aria-pressed={selected} onClick={() => setSelectedSkillKey(key)}><span className="skill-directory-card__main"><span className="skill-directory-card__title">{item.title}</span><span className="skill-directory-card__id">{item.skill_id} · v{item.version}</span><span className="skill-directory-card__description">{item.description}</span><span className="skill-directory-card__footer"><span>{item.kind === 'native' ? t('employees.nativeSkill') : t('employees.adapterSkill')}</span><code>{item.digest.slice(0, 10)}…</code></span></span></button>
+                    <label className="skill-directory-card__binding"><input type="checkbox" disabled={!active} checked={Boolean(binding)} aria-label={item.title} onChange={(event) => {
                       setSelectedSkillKey(key)
                       setSkillDraft((current) => event.target.checked
                         ? current.some((candidate) => skillKey(candidate) === key) ? current : [...current, { skill_id: item.skill_id, version: item.version, digest: item.digest, configuration: {}, enabled: true }]
                         : current.filter((candidate) => skillKey(candidate) !== key))
                       if (event.target.checked) setSkillConfiguration((current) => ({ ...current, [key]: current[key] ?? '{}' }))
-                    }} />
-                    <span className="skill-directory-card__check" aria-hidden="true"><Check size={14} /></span>
-                    <span className="skill-directory-card__main"><span className="skill-directory-card__title">{item.title}</span><span className="skill-directory-card__id">{item.skill_id} · v{item.version}</span><span className="skill-directory-card__description">{item.description}</span><span className="skill-directory-card__footer"><span>{item.kind === 'native' ? t('employees.nativeSkill') : t('employees.adapterSkill')}</span><code>{item.digest.slice(0, 10)}…</code></span></span>
-                  </label>
+                    }} /><span className="skill-directory-card__check" aria-hidden="true"><Check size={14} /></span><span>{binding ? t('employees.boundSkills') : t('employees.notBound')}</span></label>
+                  </article>
                 })}
-                {!filteredCatalog.length ? <div className="employee-empty-panel"><Search size={22} aria-hidden="true" /><p>{t('employees.noSkillsFound')}</p></div> : null}
+                {!skills ? <div className="employee-empty-panel skill-catalog-loading" role="status"><Search size={22} aria-hidden="true" /><p>{t('common.loading')}</p></div> : !filteredCatalog.length ? <div className="employee-empty-panel"><Search size={22} aria-hidden="true" /><p>{t('employees.noSkillsFound')}</p></div> : null}
               </div></fieldset>
             </section>
             <aside className="skill-config-panel" aria-label={t('employees.selectedSkill')}>
               {selectedSkill ? <>
-                <div className="skill-config-panel__heading"><span className="skill-kind-icon"><Settings2 size={17} aria-hidden="true" /></span><div><span className="section-kicker">SELECTED SKILL</span><h3>{selectedSkill.title}</h3><p>{selectedSkill.skill_id}@{selectedSkill.version}</p></div></div>
+                <div className="skill-config-panel__heading"><span className="skill-kind-icon"><Settings2 size={17} aria-hidden="true" /></span><div><span className="section-kicker">{tabCopy.skills.inspector}</span><h3>{selectedSkill.title}</h3><p>{selectedSkill.skill_id}@{selectedSkill.version}</p></div></div>
                 <div className="skill-config-panel__meta"><span className={`status-badge status-badge--${selectedSkillStatus?.status === 'current' ? 'success' : 'warning'}`}>{selectedSkillStatus ? translatedEnum(t, 'skillStatus', selectedSkillStatus.status) : t('employees.notBound')}</span><code>{selectedSkill.digest}</code></div>
-                {selectedBinding ? <label className="skill-enabled-toggle"><input type="checkbox" checked={selectedBinding.enabled} aria-label={`${t('bindingStatus.enabled')} ${selectedSkill.title}`} onChange={(event) => setSkillDraft((current) => current.map((candidate) => skillKey(candidate) === activeSkillKey ? { ...candidate, enabled: event.target.checked } : candidate))} /><span><strong>{t('bindingStatus.enabled')}</strong><small>{t('employees.enabledSkillHint')}</small></span></label> : <div className="skill-config-panel__empty"><FolderOpen size={18} aria-hidden="true" /><p>{t('employees.selectSkillToBind')}</p></div>}
-                {selectedBinding && selectedSkill.kind === 'native' ? <label className="skill-config-field">{t('employees.configurationJSON')} {selectedSkill.title}<textarea aria-label={`${t('employees.configurationJSON')} ${selectedSkill.title}`} value={skillConfiguration[activeSkillKey ?? ''] ?? '{}'} onChange={(event) => setSkillConfiguration((current) => ({ ...current, [activeSkillKey ?? '']: event.target.value }))} /><small>{t('employees.configurationHint')}</small></label> : null}
+                <dl className="skill-config-panel__facts"><dt>{tabCopy.skills.contract}</dt><dd>{selectedSkill.skill_id} · {selectedSkill.version}</dd><dt>Capabilities</dt><dd>{selectedSkill.requested_capabilities?.join(', ') || t('common.none')}</dd><dt>Type</dt><dd>{selectedSkill.kind === 'native' ? tabCopy.skills.native : tabCopy.skills.adapter}</dd></dl>
+                {selectedBinding ? <label className="skill-enabled-toggle"><input type="checkbox" disabled={!active} checked={selectedBinding.enabled} aria-label={`${t('bindingStatus.enabled')} ${selectedSkill.title}`} onChange={(event) => setSkillDraft((current) => current.map((candidate) => skillKey(candidate) === activeSkillKey ? { ...candidate, enabled: event.target.checked } : candidate))} /><span><strong>{t('bindingStatus.enabled')}</strong><small>{t('employees.enabledSkillHint')}</small></span></label> : <div className="skill-config-panel__empty"><FolderOpen size={18} aria-hidden="true" /><p>{t('employees.selectSkillToBind')}</p></div>}
+                {selectedBinding && selectedSkill.kind === 'native' ? <label className="skill-config-field">{t('employees.configurationJSON')} {selectedSkill.title}<textarea disabled={!active} aria-label={`${t('employees.configurationJSON')} ${selectedSkill.title}`} value={skillConfiguration[activeSkillKey ?? ''] ?? '{}'} onChange={(event) => setSkillConfiguration((current) => ({ ...current, [activeSkillKey ?? '']: event.target.value }))} /><small>{t('employees.configurationHint')}</small></label> : null}
                 {selectedBinding && selectedSkill.kind === 'skill_md_adapter' ? <p className="skill-adapter-note"><FileText size={16} aria-hidden="true" />{t('employees.adapterZeroCapability')}</p> : null}
               </> : <div className="skill-config-panel__empty"><FolderOpen size={24} aria-hidden="true" /><h3>{t('employees.selectSkill')}</h3><p>{t('employees.selectSkillHint')}</p></div>}
             </aside>
-          </div> : <p className="stale-notice">{t('employees.skillsActiveOnly')}</p>}
+          </div>
           {active ? <div className="employee-sticky-actions"><span>{t('employees.saveSkillsHint')}</span><button className="button button--primary" type="button" disabled={!canMutate} onClick={() => void mutate(async (signal) => {
             const normalized = skillDraft.map((binding) => {
               const item = catalog.find((candidate) => skillKey(candidate) === skillKey(binding))
@@ -691,8 +706,25 @@ export function EmployeeDetailPage() {
 
       {tab === 'projects' ? (
         <section className="employee-tab-page employee-projects-tab">
-          <header className="page-header employee-tab-page-head"><div><span className="section-kicker">{tabCopy.projects.kicker}</span><h1>{tabCopy.projects.title}</h1><p>{tabCopy.projects.description}</p></div>{!archived ? <button className="button button--primary" type="button" disabled={!canMutate} onClick={() => void saveEmployee()}>{t('employees.save')}</button> : null}</header>
-          <div className="project-binding-grid">{record.project_bindings.map((binding, index) => <fieldset className="project-binding-card" key={binding.id}><legend><FolderOpen size={16} aria-hidden="true" />{binding.label}</legend><div className="project-binding-card__path"><span>{t('employees.workspace')}</span><code>{binding.workspace_fingerprint}</code></div><div className="project-permission-list"><label><input type="checkbox" aria-label={t('employees.readAllowed')} disabled={archived} checked={binding.read_allowed} onChange={(event) => setRecord({ ...record, project_bindings: record.project_bindings.map((item, itemIndex) => itemIndex === index ? { ...item, read_allowed: event.target.checked } : item) })} /><span><strong>{t('employees.readAllowed')}</strong><small>{t('employees.readAllowedHint')}</small></span></label><label><input type="checkbox" aria-label={t('employees.mutationAllowed')} disabled={archived} checked={binding.mutation_allowed} onChange={(event) => setRecord({ ...record, project_bindings: record.project_bindings.map((item, itemIndex) => itemIndex === index ? { ...item, mutation_allowed: event.target.checked } : item) })} /><span><strong>{t('employees.mutationAllowed')}</strong><small>{t('employees.mutationAllowedHint')}</small></span></label><label><input type="checkbox" aria-label={t('employees.networkAllowed')} disabled={archived} checked={binding.network_allowed} onChange={(event) => setRecord({ ...record, project_bindings: record.project_bindings.map((item, itemIndex) => itemIndex === index ? { ...item, network_allowed: event.target.checked } : item) })} /><span><strong>{t('employees.networkAllowed')}</strong><small>{t('employees.networkAllowedHint')}</small></span></label></div><div className="project-binding-card__footer"><span>{t('employees.capabilities')}: {binding.allowed_tool_capabilities.join(', ') || t('common.none')}</span><span>{t('employees.budgetOverride')}: {binding.budget_override ? `${binding.budget_override.max_model_calls}/${binding.budget_override.max_tokens}/${binding.budget_override.timeout_seconds}s` : t('employees.employeeDefault')}</span></div></fieldset>)}{!record.project_bindings.length ? <div className="employee-empty-panel"><FolderKanban size={22} aria-hidden="true" /><p>{t('employees.noProjects')}</p></div> : null}</div>
+          <header className="page-header employee-tab-page-head"><div><span className="section-kicker">{tabCopy.projects.kicker}</span><h1>{tabCopy.projects.title}</h1><p>{tabCopy.projects.description}</p></div>{!archived && !projectEditMode ? <button className="button button--secondary" type="button" disabled={!canMutate} onClick={() => { setProjectDraft(record.project_bindings); setProjectEditMode(true) }}><Pencil size={16} aria-hidden="true" />{tabCopy.projects.edit}</button> : null}</header>
+          <div className="project-binding-grid">{record.project_bindings.map((binding, index) => {
+            const draft = projectDraft[index] ?? binding
+            const permissions = [
+              { key: 'read_allowed' as const, label: tabCopy.projects.read, hint: t('employees.readAllowedHint'), value: draft.read_allowed },
+              { key: 'mutation_allowed' as const, label: tabCopy.projects.mutation, hint: t('employees.mutationAllowedHint'), value: draft.mutation_allowed },
+              { key: 'network_allowed' as const, label: tabCopy.projects.network, hint: t('employees.networkAllowedHint'), value: draft.network_allowed },
+            ]
+            return <article className="project-binding-card" key={binding.id}>
+              <header className="project-binding-card__header"><span className="project-binding-card__icon"><FolderOpen size={18} aria-hidden="true" /></span><div><h2>{binding.label}</h2><p>{binding.id}</p></div><span className="status-badge status-badge--success"><CircleCheck size={14} aria-hidden="true" />{tabCopy.projects.bound}</span></header>
+              <dl className="project-identity-list"><dt>{tabCopy.projects.realPath}</dt><dd><code>{binding.workspace_real_path}</code></dd><dt>{tabCopy.projects.fingerprint}</dt><dd><code>{binding.workspace_fingerprint}</code></dd></dl>
+              <section className="project-permission-summary" aria-label={t('employees.capabilities')}>
+                {permissions.map((permission) => projectEditMode ? <label key={permission.key}><input type="checkbox" aria-label={permission.key === 'read_allowed' ? t('employees.readAllowed') : permission.key === 'mutation_allowed' ? t('employees.mutationAllowed') : t('employees.networkAllowed')} checked={permission.value} onChange={(event) => setProjectDraft((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [permission.key]: event.target.checked } : item))} /><span><strong>{permission.label}</strong><small>{permission.hint}</small></span><em>{permission.value ? tabCopy.projects.allowed : tabCopy.projects.blocked}</em></label> : <div key={permission.key}><span className={`project-permission-icon${permission.value ? ' is-allowed' : ''}`}><ShieldCheck size={16} aria-hidden="true" /></span><span><strong>{permission.label}</strong><small>{permission.hint}</small></span><em className={permission.value ? 'is-allowed' : ''}>{permission.value ? tabCopy.projects.allowed : tabCopy.projects.blocked}</em></div>)}
+              </section>
+              <section className="project-capabilities"><div className="employee-section-heading"><div><span className="section-kicker">POLICY</span><h3>{tabCopy.projects.allowedCapabilities}</h3></div><span>{binding.allowed_tool_capabilities.length}</span></div><ul>{binding.allowed_tool_capabilities.map((capability) => <li key={capability}><code>{capability}</code><span>{tabCopy.projects.rootOnly}</span><strong><Check size={13} aria-hidden="true" />{tabCopy.projects.allowed}</strong></li>)}</ul></section>
+              <div className="notice info project-binding-note">{tabCopy.projects.pathNote}</div>
+              {projectEditMode ? <footer className="project-edit-actions"><button className="button button--secondary" type="button" onClick={() => { setProjectDraft(record.project_bindings); setProjectEditMode(false) }}>{tabCopy.projects.cancel}</button><button className="button button--primary" type="button" disabled={!canMutate} onClick={() => void saveProjects()}>{tabCopy.projects.save}</button></footer> : null}
+            </article>
+          })}{!record.project_bindings.length ? <div className="employee-empty-panel"><FolderKanban size={22} aria-hidden="true" /><p>{t('employees.noProjects')}</p></div> : null}</div>
         </section>
       ) : null}
 
@@ -772,10 +804,10 @@ export function EmployeeDetailPage() {
                 const cursor = activity.next_cursor
                 if (!cursor) return
                 const owner = employeeId
-                const epoch = requestEpoch.current
+                const epoch = tabEpoch.current
                 const controller = new AbortController()
                 void getEmployeeActivity(employee.id, { limit: 100, cursor }, { signal: controller.signal }).then((page) => {
-                  if (epoch !== requestEpoch.current || owner !== employeeId) return
+                  if (epoch !== tabEpoch.current || owner !== employeeId) return
                   setActivity({ events: [...activity.events, ...page.events], ...(page.next_cursor ? { next_cursor: page.next_cursor } : {}) })
                 }).catch(() => undefined)
               }}>{t('employees.loadMore')}</button>
