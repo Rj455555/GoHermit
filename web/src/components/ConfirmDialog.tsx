@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Button } from 'antd'
 
 import { useUI } from '../state/UIContext'
 import { trapFocus } from './focusTrap'
@@ -57,16 +58,18 @@ export function ConfirmDialog() {
         <h2 id="confirm-dialog-title">{t(dialog.titleKey)}</h2>
         <p>{t(dialog.descriptionKey)}</p>
         <div className="confirm-dialog__actions">
-          <button ref={cancelRef} type="button" className="button button--secondary" onClick={close}>
+          <Button ref={cancelRef} type="default" aria-label={t('actions.cancel')} className="button button--secondary" onClick={close}>
             {t('actions.cancel')}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            type="primary"
+            danger={dialog.tone === 'error'}
+            aria-label={t(dialog.confirmKey)}
             className={`button button--${dialog.tone === 'error' ? 'danger' : 'primary'}`}
             onClick={confirm}
           >
             {t(dialog.confirmKey)}
-          </button>
+          </Button>
         </div>
       </section>
     </div>

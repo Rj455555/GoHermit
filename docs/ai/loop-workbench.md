@@ -1,5 +1,7 @@
 # Loop 工作台与完成通知
 
+Loop 与 Employee Task 的终态通知现在统一进入 [汇报中心](report-center.md)。执行层只写 bounded 报告，投递、幂等、失败重试和微信渠道均由汇报中心负责。
+
 GoHermit 的 Loop 不是一段隐藏的提示词，而是一份可审计的契约和一次可恢复的执行记录。
 
 ## 核心闭环

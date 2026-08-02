@@ -5628,6 +5628,125 @@ button {
   position: static;
 }
 
+.report-center-page {
+  gap: 20px;
+}
+
+.report-center-overview {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-left: 3px solid var(--accent, #2f5bea);
+}
+
+.report-center-overview__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: 12px;
+  color: #2f5bea;
+  background: #edf2ff;
+}
+
+.report-center-overview p {
+  margin: 4px 0 0;
+  color: var(--muted, #64748b);
+}
+
+.report-center-overview > .status-badge {
+  margin-left: auto;
+}
+
+.report-center-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 56px 24px;
+  color: var(--muted, #64748b);
+  text-align: center;
+}
+
+.report-center-empty h2,
+.report-center-empty p {
+  margin: 0;
+}
+
+.report-center-list {
+  padding: 24px;
+}
+
+.report-center-items {
+  display: grid;
+  gap: 12px;
+}
+
+.report-center-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  padding: 16px;
+  border: 1px solid var(--line, #d9e0ec);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.report-center-item__status {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.report-center-item__heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.report-center-item__body p {
+  margin: 7px 0;
+  color: var(--muted, #64748b);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.report-center-item__body small {
+  color: var(--muted, #64748b);
+}
+
+.report-center-item__error {
+  margin-top: 8px;
+  color: #b42318;
+  font-size: 0.875rem;
+}
+
+@media (max-width: 720px) {
+  .report-center-overview {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .report-center-overview > .status-badge {
+    margin-left: 60px;
+  }
+
+  .report-center-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .report-center-item > .button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
 .split-7-5 {
   display: grid;
   min-width: 0;

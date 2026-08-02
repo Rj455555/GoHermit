@@ -197,24 +197,32 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 // EmailNotificationStatus is the safe Settings projection for completion
 // notifications. It never contains the SMTP password or provider tokens.
 type EmailNotificationStatus struct {
-	Configured bool       `json:"configured"`
-	Recipient  string     `json:"recipient"`
-	From       string     `json:"from,omitempty"`
-	Host       string     `json:"host,omitempty"`
-	LastError  string     `json:"last_error,omitempty"`
-	LastSentAt *time.Time `json:"last_sent_at,omitempty"`
+	Configured         bool       `json:"configured"`
+	EmailConfigured    bool       `json:"email_configured"`
+	OpenClawConfigured bool       `json:"openclaw_configured"`
+	Recipient          string     `json:"recipient"`
+	From               string     `json:"from,omitempty"`
+	Host               string     `json:"host,omitempty"`
+	OpenClawChannel    string     `json:"openclaw_channel,omitempty"`
+	OpenClawTarget     string     `json:"openclaw_target,omitempty"`
+	LastError          string     `json:"last_error,omitempty"`
+	LastSentAt         *time.Time `json:"last_sent_at,omitempty"`
 }
 
 func (s *Service) EmailNotificationStatus() EmailNotificationStatus {
 	s.notificationMu.Lock()
 	defer s.notificationMu.Unlock()
 	return EmailNotificationStatus{
-		Configured: s.notificationConfig.Configured(),
-		Recipient:  s.notificationConfig.To,
-		From:       s.notificationConfig.From,
-		Host:       s.notificationConfig.Host,
-		LastError:  s.notificationLastError,
-		LastSentAt: cloneTime(s.notificationLastSent),
+		Configured:         s.notificationConfig.AnyConfigured(),
+		EmailConfigured:    s.notificationConfig.Configured(),
+		OpenClawConfigured: s.notificationConfig.OpenClaw.Configured(),
+		Recipient:          s.notificationConfig.To,
+		From:               s.notificationConfig.From,
+		Host:               s.notificationConfig.Host,
+		OpenClawChannel:    s.notificationConfig.OpenClaw.Channel,
+		OpenClawTarget:     s.notificationConfig.OpenClaw.Target,
+		LastError:          s.notificationLastError,
+		LastSentAt:         cloneTime(s.notificationLastSent),
 	}
 }
 
@@ -230,7 +238,7 @@ func cloneTime(value *time.Time) *time.Time {
 // persisted only after delivery succeeds, so a restart can retry a failed
 // notification without creating a second execution state machine.
 func (s *Service) notifyLoopCompletion(ctx context.Context, invocation loop.Invocation) {
-	s.notifyTerminalCompletion(ctx, invocation.ID, invocation.ID, invocation.DefinitionSnapshot.Name, invocation.Status, invocation.FinishedAt, invocation.FailureCode, invocation.FailureSummary)
+	s.notifyTerminalCompletion(ctx, invocation.ID, invocation.ID, invocation.DefinitionSnapshot.Name, "loop", invocation.Status, invocation.FinishedAt, invocation.FailureCode, invocation.FailureSummary)
 }
 
 // notifyEmployeeTaskCompletion uses the same bounded delivery path as Loop
@@ -239,11 +247,11 @@ func (s *Service) notifyLoopCompletion(ctx context.Context, invocation loop.Invo
 func (s *Service) notifyEmployeeTaskCompletion(ctx context.Context, task employee.EmployeeTask, status employee.TaskState, finishedAt *time.Time, summary string) {
 	sum := sha256.Sum256([]byte("employee-task-notification\x00" + task.ID))
 	key := "task-" + hex.EncodeToString(sum[:16])
-	s.notifyTerminalCompletion(ctx, key, task.ID, task.EmployeeSnapshot.Employee.Name, loop.Status(status), finishedAt, "", summary)
+	s.notifyTerminalCompletion(ctx, key, task.ID, task.EmployeeSnapshot.Employee.Name, "employee_task", loop.Status(status), finishedAt, "", summary)
 }
 
-func (s *Service) notifyTerminalCompletion(ctx context.Context, key, displayID, name string, status loop.Status, finishedAt *time.Time, failureCode, summary string) {
-	if !status.Terminal() || !s.notificationConfig.Configured() || s.loopStore == nil {
+func (s *Service) notifyTerminalCompletion(ctx context.Context, key, displayID, name, sourceType string, status loop.Status, finishedAt *time.Time, failureCode, summary string) {
+	if !status.Terminal() || s.loopStore == nil {
 		return
 	}
 	if ctx == nil || ctx.Err() != nil {
@@ -253,6 +261,22 @@ func (s *Service) notifyTerminalCompletion(ctx context.Context, key, displayID, 
 	defer cancel()
 	s.notificationDeliveryMu.Lock()
 	defer s.notificationDeliveryMu.Unlock()
+	summary = clipNotificationText(summary)
+	err := s.loopStore.SaveReport(loopstore.ReportRecord{
+		ID: key, SourceType: sourceType, SourceID: displayID, Title: clipNotificationText(name),
+		Status: status, FailureCode: clipNotificationText(failureCode), Summary: summary,
+		FinishedAt: finishedAt, DeliveryStatus: "pending",
+	})
+	if err != nil {
+		s.notificationMu.Lock()
+		s.notificationLastError = "保存汇报记录失败"
+		s.notificationMu.Unlock()
+		return
+	}
+	report, err := s.loopStore.GetReport(key)
+	if err == nil && report.DeliveryStatus == "sent" {
+		return
+	}
 	sent, err := s.loopStore.NotificationSent(key, status)
 	if err != nil {
 		s.notificationMu.Lock()
@@ -261,6 +285,9 @@ func (s *Service) notifyTerminalCompletion(ctx context.Context, key, displayID, 
 		return
 	}
 	if sent {
+		now := time.Now().UTC()
+		report.DeliveryStatus, report.DeliveryChannel, report.DeliveredAt, report.LastError = "sent", "legacy", &now, ""
+		_ = s.loopStore.SaveReport(report)
 		return
 	}
 	subject := fmt.Sprintf("GoHermit 任务状态：%s", name)
@@ -269,12 +296,26 @@ func (s *Service) notifyTerminalCompletion(ctx context.Context, key, displayID, 
 	if failureCode != "" {
 		body += fmt.Sprintf("Failure: %s\n", failureCode)
 	}
-	if summary = clipNotificationText(summary); summary != "" {
+	if summary != "" {
 		body += "Summary: " + summary + "\n"
 	}
-	if err = s.notificationConfig.SendTLS(deliveryCtx, subject, body); err != nil {
+	var channel string
+	if s.notificationConfig.OpenClaw.Configured() {
+		err = s.notificationConfig.OpenClaw.Send(deliveryCtx, key, name, body)
+		channel = "openclaw-weixin"
+	}
+	if err != nil && s.notificationConfig.Configured() {
+		err = s.notificationConfig.SendTLS(deliveryCtx, subject, body)
+		channel = "email"
+	}
+	if !s.notificationConfig.AnyConfigured() {
+		err = errors.New("汇报通道未配置")
+	}
+	if err != nil {
+		report.DeliveryStatus, report.DeliveryChannel, report.LastError = "failed", channel, clipNotificationText(err.Error())
+		_ = s.loopStore.SaveReport(report)
 		s.notificationMu.Lock()
-		s.notificationLastError = clipNotificationText(err.Error())
+		s.notificationLastError = report.LastError
 		s.notificationMu.Unlock()
 		return
 	}
@@ -285,10 +326,45 @@ func (s *Service) notifyTerminalCompletion(ctx context.Context, key, displayID, 
 		s.notificationMu.Unlock()
 		return
 	}
+	report.DeliveryStatus, report.DeliveryChannel, report.DeliveredAt, report.LastError = "sent", channel, &now, ""
+	_ = s.loopStore.SaveReport(report)
 	s.notificationMu.Lock()
 	s.notificationLastError = ""
 	s.notificationLastSent = &now
 	s.notificationMu.Unlock()
+}
+
+// ListReports returns the bounded report-center projection.
+func (s *Service) ListReports(_ context.Context, limit int) ([]loopstore.ReportRecord, error) {
+	if s.loopStore == nil {
+		return nil, classified(KindInternal, errors.New("loop store unavailable"))
+	}
+	reports, err := s.loopStore.ListReports(limit)
+	if err != nil {
+		return nil, classified(KindInternal, err)
+	}
+	return reports, nil
+}
+
+// RetryReport reuses the immutable report snapshot and never starts a new
+// Loop/Task execution.
+func (s *Service) RetryReport(ctx context.Context, id string) (loopstore.ReportRecord, error) {
+	if s.loopStore == nil {
+		return loopstore.ReportRecord{}, classified(KindInternal, errors.New("loop store unavailable"))
+	}
+	report, err := s.loopStore.GetReport(id)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return loopstore.ReportRecord{}, classified(KindNotFound, err)
+		}
+		return loopstore.ReportRecord{}, classified(KindInternal, err)
+	}
+	s.notifyTerminalCompletion(ctx, report.ID, report.SourceID, report.Title, report.SourceType, report.Status, report.FinishedAt, report.FailureCode, report.Summary)
+	updated, err := s.loopStore.GetReport(id)
+	if err != nil {
+		return loopstore.ReportRecord{}, classified(KindInternal, err)
+	}
+	return updated, nil
 }
 
 func formatTime(value *time.Time) string {

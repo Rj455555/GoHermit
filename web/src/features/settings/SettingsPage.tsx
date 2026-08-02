@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Button, Input } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, KeyRound, ShieldCheck } from 'lucide-react'
 
@@ -258,7 +259,7 @@ export function SettingsPage() {
         <h2>{t('settings.owner')}</h2>
         <label>
           {t('settings.displayName')}
-          <input
+          <Input
             value={profile.identity.display_name}
             onChange={(event) => setProfile((current) => ({
               ...current,
@@ -268,7 +269,7 @@ export function SettingsPage() {
         </label>
         <label>
           {t('settings.timezone')}
-          <input
+          <Input
             value={profile.identity.timezone}
             onChange={(event) => setProfile((current) => ({
               ...current,
@@ -278,7 +279,7 @@ export function SettingsPage() {
         </label>
         <label>
           {t('settings.language')}
-          <input
+          <Input
             value={profile.identity.language}
             onChange={(event) => setProfile((current) => ({
               ...current,
@@ -286,9 +287,9 @@ export function SettingsPage() {
             }))}
           />
         </label>
-        <button className="button button--primary" type="submit" disabled={!connectivity.canMutate || busy}>
+        <Button type="primary" htmlType="submit" disabled={!connectivity.canMutate || busy}>
           {t('settings.saveProfile')}
-        </button>
+        </Button>
       </form>
 
       <section className="projection-card settings-facts-card">
@@ -298,17 +299,17 @@ export function SettingsPage() {
             {profile.facts.map((fact) => (
               <li key={fact.id}>
                 <span><strong>{fact.category}</strong> {fact.value}</span>
-                <button type="button" className="button button--danger" onClick={() => confirmForgetFact(fact.id)}>
+                  <Button danger aria-label={t('settings.forgetFact')} onClick={() => confirmForgetFact(fact.id)}>
                   {t('settings.forgetFact')}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
         )}
         <form className="inline-form settings-fact-form" onSubmit={(event) => void addFact(event)}>
-          <label>{t('settings.factCategory')}<input value={factDraft.category} onChange={(event) => setFactDraft((current) => ({ ...current, category: event.target.value }))} /></label>
-          <label>{t('settings.factValue')}<input value={factDraft.value} onChange={(event) => setFactDraft((current) => ({ ...current, value: event.target.value }))} /></label>
-          <button type="submit" className="button button--secondary" disabled={!connectivity.canMutate || busy}>{t('settings.addFact')}</button>
+          <label>{t('settings.factCategory')}<Input value={factDraft.category} onChange={(event) => setFactDraft((current) => ({ ...current, category: event.target.value }))} /></label>
+          <label>{t('settings.factValue')}<Input value={factDraft.value} onChange={(event) => setFactDraft((current) => ({ ...current, value: event.target.value }))} /></label>
+          <Button htmlType="submit" disabled={!connectivity.canMutate || busy}>{t('settings.addFact')}</Button>
         </form>
       </section>
 
@@ -322,11 +323,11 @@ export function SettingsPage() {
             {accesses.map(({ company, access }) => {
               const readiness = info?.auth_status[access.id]
               const selected = activeAccessEntry?.access.id === access.id
-              return <button type="button" className={`settings-provider-option${selected ? ' is-selected' : ''}`} aria-pressed={selected} key={access.id} onClick={() => setSelectedAccessId(access.id)}>
+              return <Button type="text" block className={`settings-provider-option${selected ? ' is-selected' : ''}`} aria-pressed={selected} key={access.id} onClick={() => setSelectedAccessId(access.id)}>
                 <span className={`settings-provider-option__icon${readiness?.configured ? ' is-connected' : ''}`} aria-hidden="true">{readiness?.configured ? <CheckCircle2 size={18} /> : <KeyRound size={18} />}</span>
                 <span className="settings-provider-option__copy"><strong>{company.label}</strong><small>{access.label}</small></span>
                 <span className={`status-badge status-badge--${readiness?.configured ? 'success' : 'muted'}`}>{readiness?.configured ? t('settings.connected') : t('settings.notConnected')}</span>
-              </button>
+              </Button>
             })}
           </nav>
           {activeAccessEntry ? (() => {
@@ -336,11 +337,11 @@ export function SettingsPage() {
               <header><span className="settings-provider-config__icon"><ShieldCheck size={20} aria-hidden="true" /></span><div><span className="loop-kicker">{company.label}</span><h3>{access.label}</h3></div><span className={`status-badge status-badge--${readiness?.configured ? 'success' : 'muted'}`}>{readiness?.configured ? t('settings.connected') : t('settings.notConnected')}</span></header>
               <p className="settings-provider-config__description">{access.description || readiness?.detail}</p>
               <div className="settings-provider-readiness"><span>{readiness?.configured ? t('settings.connected') : t('settings.notConnected')}</span><strong>{readiness?.detail}</strong></div>
-              {access.auth_type === 'api_key' ? <label className="settings-provider-key-field">{access.label} API Key<input type="password" autoComplete="off" value={keys[access.id] ?? ''} onChange={(event) => setKeys((current) => ({ ...current, [access.id]: event.target.value }))} /></label> : null}
+              {access.auth_type === 'api_key' ? <label className="settings-provider-key-field">{access.label} API Key<Input.Password autoComplete="new-password" value={keys[access.id] ?? ''} onChange={(event) => setKeys((current) => ({ ...current, [access.id]: event.target.value }))} /></label> : null}
               <footer className="settings-provider-actions">
-                {access.auth_type === 'api_key' ? <button type="button" className="button button--primary" disabled={!connectivity.canMutate || busy || !(keys[access.id]?.trim())} onClick={() => void saveKey(access.id)}>{t('settings.saveKey')}</button> : null}
-                {access.id === 'openai-codex' && !readiness?.configured ? <button type="button" className="button button--primary" disabled={!connectivity.canMutate || busy} onClick={() => void beginCodexLogin()}>{t('settings.loginCodex')}</button> : null}
-                {readiness?.configured ? <button type="button" className="button button--danger" disabled={!connectivity.canMutate || busy} onClick={() => confirmDeleteCredentials(access.id)}>{t('settings.deleteCredentials')}</button> : null}
+                {access.auth_type === 'api_key' ? <Button type="primary" className="button button--primary" disabled={!connectivity.canMutate || busy || !(keys[access.id]?.trim())} onClick={() => void saveKey(access.id)}>{t('settings.saveKey')}</Button> : null}
+                {access.id === 'openai-codex' && !readiness?.configured ? <Button type="primary" className="button button--primary" disabled={!connectivity.canMutate || busy} onClick={() => void beginCodexLogin()}>{t('settings.loginCodex')}</Button> : null}
+                {readiness?.configured ? <Button danger className="button button--danger" disabled={!connectivity.canMutate || busy} onClick={() => confirmDeleteCredentials(access.id)}>{t('settings.deleteCredentials')}</Button> : null}
               </footer>
             </article>
           })() : <div className="settings-provider-config settings-provider-config--empty">{t('common.empty')}</div>}
@@ -357,9 +358,10 @@ export function SettingsPage() {
           </span>
         </div>
         <p>{t('settings.notificationDescription')}</p>
-        <dl className="notification-status-list">
-          <dt>{t('settings.notificationRecipient')}</dt><dd>{notification?.recipient ?? '1143130628@qq.com'}</dd>
-          {notification?.last_sent_at ? <><dt>{t('settings.notificationLastSent')}</dt><dd>{new Date(notification.last_sent_at).toLocaleString()}</dd></> : null}
+          <dl className="notification-status-list">
+            <dt>{t('settings.notificationRecipient')}</dt><dd>{notification?.recipient ?? '1143130628@qq.com'}</dd>
+            <dt>{t('settings.notificationOpenClaw')}</dt><dd>{notification?.openclaw_configured ? `${notification.openclaw_channel ?? 'openclaw-weixin'} · ${notification.openclaw_target ?? ''}` : t('settings.notificationNotConfigured')}</dd>
+            {notification?.last_sent_at ? <><dt>{t('settings.notificationLastSent')}</dt><dd>{new Date(notification.last_sent_at).toLocaleString()}</dd></> : null}
           {notification?.last_error ? <><dt>{t('settings.notificationLastError')}</dt><dd className="text-danger">{notification.last_error}</dd></> : null}
         </dl>
         {!notification?.configured ? <p className="stale-notice">{t('settings.notificationSetupHint')}</p> : null}
@@ -371,7 +373,7 @@ export function SettingsPage() {
           {login.user_code ? <strong>{login.user_code}</strong> : null}
           {login.verification_url ? <a href={login.verification_url} target="_blank" rel="noopener noreferrer">{t('settings.openLogin')}</a> : null}
           {['error', 'expired', 'cancelled'].includes(login.status) ? (
-            <button type="button" className="button button--primary" onClick={() => void beginCodexLogin()}>{t('settings.loginAgain')}</button>
+            <Button type="primary" className="button button--primary" onClick={() => void beginCodexLogin()}>{t('settings.loginAgain')}</Button>
           ) : null}
         </section>
       ) : null}

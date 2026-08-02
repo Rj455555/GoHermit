@@ -26,6 +26,8 @@ import {
   decodeLoopRuntimeState,
   decodeLoopDefinitions,
   decodeNotificationStatus,
+  decodeReport,
+  decodeReports,
   decodeOwnerProfile,
   decodeProjects,
   decodeSkillCatalog,
@@ -73,6 +75,13 @@ export const getLoopRuntime = (loopId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/loops/${segment(loopId)}/runtime`, decodeLoopRuntimeState, options)
 export const getNotificationStatus = (options: ReadOptions = {}) =>
   apiRequest('/api/settings/notifications', decodeNotificationStatus, options)
+export const listReports = (options: ReadOptions = {}) =>
+  apiRequest('/api/reports?limit=100', decodeReports, options)
+export const retryReport = (reportId: string, options: ReadOptions = {}) =>
+  apiRequest(`/api/reports/${segment(reportId)}/retry`, decodeReport, {
+    ...options,
+    method: 'POST',
+  })
 export const listLoopInvocations = (loopId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/loops/${segment(loopId)}/invocations?limit=50`, decodeInvocations, options)
 

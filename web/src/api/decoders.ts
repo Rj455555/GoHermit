@@ -43,6 +43,8 @@ import type {
   PlanStepStatus,
   ProviderReadiness,
   ProjectCatalogItem,
+  ReportRecord,
+  ReportDeliveryStatus,
   Run,
   RunStatus,
   RuntimeEvent,
@@ -1428,7 +1430,7 @@ export function decodeLoopInvocationList(value: unknown): {
 
 export function decodeNotificationStatus(value: unknown): NotificationStatus {
   const source = object(value)
-  return {
+  const result: NotificationStatus = {
     configured: boolean(source.configured),
     recipient: string(source.recipient, 320),
     from: optionalString(source.from, 320),
@@ -1436,6 +1438,39 @@ export function decodeNotificationStatus(value: unknown): NotificationStatus {
     last_error: optionalString(source.last_error, 512),
     last_sent_at: optionalTime(source.last_sent_at),
   }
+  if (source.email_configured !== undefined) result.email_configured = boolean(source.email_configured)
+  if (source.openclaw_configured !== undefined) result.openclaw_configured = boolean(source.openclaw_configured)
+  if (source.openclaw_channel !== undefined) result.openclaw_channel = string(source.openclaw_channel, 128)
+  if (source.openclaw_target !== undefined) result.openclaw_target = string(source.openclaw_target, 512)
+  return result
+}
+
+const REPORT_DELIVERY_STATUSES = ['pending', 'sent', 'failed'] as const
+
+export function decodeReport(value: unknown): ReportRecord {
+  const source = object(value)
+  return {
+    schema_version: integer(source.schema_version),
+    id: id(source.id),
+    source_type: enumeration(source.source_type, ['loop', 'employee_task'] as const),
+    source_id: id(source.source_id),
+    title: string(source.title, 512),
+    status: enumeration(source.status, ['completed', 'skipped', 'blocked', 'failed', 'cancelled'] as const),
+    failure_code: optionalString(source.failure_code, 256),
+    summary: optionalString(source.summary, 12 << 10),
+    finished_at: optionalTime(source.finished_at),
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
+    delivery_status: enumeration<ReportDeliveryStatus>(source.delivery_status, REPORT_DELIVERY_STATUSES),
+    delivery_channel: optionalString(source.delivery_channel, 128),
+    delivered_at: optionalTime(source.delivered_at),
+    last_error: optionalString(source.last_error, 512),
+  }
+}
+
+export function decodeReports(value: unknown): { reports: ReportRecord[]; limit: number } {
+  const source = object(value)
+  return { reports: array(source.reports, decodeReport, MAX_SMALL_COLLECTION), limit: integer(source.limit) }
 }
 
 export function decodeDryRun(value: unknown): DryRunReport {

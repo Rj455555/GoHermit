@@ -114,6 +114,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/loops/{id}/invocations", s.startLoopInvocation)
 	mux.HandleFunc("GET /api/loop-invocations/{id}", s.getLoopInvocation)
 	mux.HandleFunc("POST /api/loop-invocations/{id}/cancel", s.cancelLoopInvocation)
+	mux.HandleFunc("GET /api/reports", s.listReports)
+	mux.HandleFunc("POST /api/reports/{id}/retry", s.retryReport)
 	mux.HandleFunc("POST /api/run", s.run)
 	mux.HandleFunc("POST /api/sessions", s.createSession)
 	mux.HandleFunc("GET /api/sessions", s.listSessions)

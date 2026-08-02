@@ -19,6 +19,13 @@ services:
       GOHERMIT_SMTP_USERNAME: "${GOHERMIT_SMTP_USERNAME:-}"
       GOHERMIT_SMTP_PASSWORD: "${GOHERMIT_SMTP_PASSWORD:-}"
       GOHERMIT_SMTP_FROM: "${GOHERMIT_SMTP_FROM:-}"
+      # OpenClaw owns WeChat login and delivery. GoHermit only calls its
+      # authenticated /hooks/agent endpoint with bounded report text.
+      GOHERMIT_OPENCLAW_URL: "${GOHERMIT_OPENCLAW_URL:-}"
+      GOHERMIT_OPENCLAW_HOOK_TOKEN: "${GOHERMIT_OPENCLAW_HOOK_TOKEN:-}"
+      GOHERMIT_OPENCLAW_CHANNEL: "${GOHERMIT_OPENCLAW_CHANNEL:-openclaw-weixin}"
+      GOHERMIT_OPENCLAW_TO: "${GOHERMIT_OPENCLAW_TO:-}"
+      GOHERMIT_OPENCLAW_AGENT_ID: "${GOHERMIT_OPENCLAW_AGENT_ID:-}"
       CODEX_HOME: "/codex"
       GOHERMIT_AUTH_STORE: "/data/auth.json"
       GOHERMIT_OWNER_STORE: "/data/owner.json"

@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { Button } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { NavLink } from 'react-router-dom'
 
@@ -48,8 +49,8 @@ export function NavigationRail() {
         ))}
       </ul>
       <div className="navigation-rail__footer">
-        <button
-          type="button"
+        <Button
+          type="text"
           className="navigation-rail__toggle"
           aria-label={toggleLabel}
           title={toggleLabel}
@@ -64,7 +65,7 @@ export function NavigationRail() {
               <span>{toggleLabel}</span>
             </>
           )}
-        </button>
+        </Button>
       </div>
     </nav>
   )

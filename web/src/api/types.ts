@@ -772,11 +772,35 @@ export interface LoopInvocation extends InvocationSummary {
 
 export interface NotificationStatus {
   configured: boolean
+  email_configured?: boolean
+  openclaw_configured?: boolean
   recipient: string
   from?: string | undefined
   host?: string | undefined
+  openclaw_channel?: string | undefined
+  openclaw_target?: string | undefined
   last_error?: string | undefined
   last_sent_at?: string | undefined
+}
+
+export type ReportDeliveryStatus = 'pending' | 'sent' | 'failed'
+
+export interface ReportRecord {
+  schema_version: number
+  id: string
+  source_type: 'loop' | 'employee_task'
+  source_id: string
+  title: string
+  status: InvocationStatus
+  failure_code?: string | undefined
+  summary?: string | undefined
+  finished_at?: string | undefined
+  created_at: string
+  updated_at: string
+  delivery_status: ReportDeliveryStatus
+  delivery_channel?: string | undefined
+  delivered_at?: string | undefined
+  last_error?: string | undefined
 }
 
 export interface DryRunReport {

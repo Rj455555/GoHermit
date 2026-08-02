@@ -3,6 +3,7 @@ import {
   Gauge,
   ListChecks,
   Settings,
+  BellRing,
   Users,
   Workflow,
   type LucideIcon,
@@ -51,6 +52,12 @@ export const navigationItems: NavigationItem[] = [
     labelKey: 'navigation.settings',
     titleKey: 'pages.settings.title',
     icon: Settings,
+  },
+  {
+    to: '/reports',
+    labelKey: 'navigation.reports',
+    titleKey: 'pages.reports.title',
+    icon: BellRing,
   },
 ]
 

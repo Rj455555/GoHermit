@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Button } from 'antd'
 import {
   Bot,
   Plus,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import { listLoopInvocations, getInfo, listLoops, listSessions } from '../../api/endpoints'
 import type { Info, InvocationSummary, LoopSummary, SessionSummary } from '../../api/types'
@@ -42,6 +43,7 @@ async function loadInvocations(
 
 export function DashboardPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const connectivity = useConnectivity()
   const [projection, setProjection] = useState<DashboardProjection | null>(null)
   const [error, setError] = useState(false)
@@ -117,7 +119,7 @@ export function DashboardPage() {
         description={t('dashboard.description')}
         actions={(
           <div className="button-row">
-            <Link className="button button--primary" to="/employees"><Plus size={16} aria-hidden="true" />{t('pages.employees.title')}</Link>
+            <Button type="primary" className="button button--primary" onClick={() => { void navigate('/employees') }} icon={<Plus size={16} aria-hidden="true" />}>{t('pages.employees.title')}</Button>
             <Link className="button button--secondary" to="/agent"><Bot size={16} aria-hidden="true" />{t('agent.newSession')}</Link>
           </div>
         )}
