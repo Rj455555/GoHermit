@@ -34,4 +34,11 @@ describe('responsive shell CSS contract', () => {
     expect(styles).toMatch(/max-width:\s*900px/)
     expect(styles).toMatch(/overflow-x:\s*hidden/)
   })
+
+  it('keeps horizontally scrollable tabs free of native scrollbar chrome', () => {
+    expect(styles).toContain('scrollbar-width: none')
+    expect(styles).toContain('-ms-overflow-style: none')
+    expect(styles).toContain('.tab-list::-webkit-scrollbar')
+    expect(styles).toContain('.employee-detail-tabs::-webkit-scrollbar')
+  })
 })

@@ -2466,6 +2466,20 @@ textarea {
   background: var(--color-surface-subtle);
 }
 
+/* Tab rows stay touch/keyboard scrollable without exposing browser chrome. */
+.tab-list,
+.employee-detail-tabs {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tab-list::-webkit-scrollbar,
+.employee-detail-tabs::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 .tab-list button {
   border: 0;
   background: transparent;
