@@ -20,9 +20,15 @@ export function NavigationRail() {
     >
       <div className="navigation-rail__brand" title={t('brand.label')}>
         <span className="navigation-rail__mark" aria-hidden="true">
-          G
+          GH
         </span>
-        {collapsed ? null : <strong>{t('brand.label')}</strong>}
+        {collapsed ? null : (
+          <span className="navigation-rail__brand-copy">
+            <strong className="navigation-rail__brand-name" aria-label="GoHermit" />
+            <span className="sr-only">{t('brand.label')}</span>
+            <small>{t('brand.subtitle')}</small>
+          </span>
+        )}
       </div>
       <ul className="navigation-rail__links">
         {navigationItems.map(({ to, labelKey, icon: Icon }) => (

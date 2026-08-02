@@ -14,6 +14,7 @@ export const translationResources = {
       },
       brand: {
         label: 'GOHERMIT · 工作流',
+        subtitle: 'Owner 控制台',
       },
       common: {
         empty: '暂无数据',
@@ -646,6 +647,7 @@ export const translationResources = {
         employees: '电子员工',
         expand: '展开主导航',
         label: '主导航',
+        skipToContent: '跳到主要内容',
         loops: '工作流',
         settings: '设置',
         tasks: '任务',
@@ -802,6 +804,7 @@ export const translationResources = {
       },
       brand: {
         label: 'GOHERMIT · LOOP WORKBENCH',
+        subtitle: 'Owner Console',
       },
       common: {
         empty: 'No data',
@@ -1434,6 +1437,7 @@ export const translationResources = {
         employees: 'Employees',
         expand: 'Expand navigation',
         label: 'Primary navigation',
+        skipToContent: 'Skip to main content',
         loops: 'Loops',
         settings: 'Settings',
         tasks: 'Tasks',

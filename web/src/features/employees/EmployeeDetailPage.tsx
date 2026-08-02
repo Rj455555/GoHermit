@@ -360,7 +360,7 @@ export function EmployeeDetailPage() {
         </div>
       </header>
 
-      <section className="employee-insights" aria-label={t('employees.sections')}>
+      {tab === 'overview' ? <section className="employee-insights" aria-label={t('employees.sections')}>
         <article className="employee-insight-card">
           <span className={`employee-insight-card__icon employee-insight-card__icon--${readinessTone}`}><ShieldCheck size={18} aria-hidden="true" /></span>
           <span className="employee-insight-card__label">{t('employees.readiness')}</span>
@@ -385,7 +385,7 @@ export function EmployeeDetailPage() {
           <strong>{record.project_bindings.length}</strong>
           <small>{employee.skill_bindings.length} skills · {employee.responsibilities.length} responsibilities</small>
         </article>
-      </section>
+      </section> : null}
 
       {archived ? <p className="stale-notice employee-detail-notice">{t('employees.archivedReadOnly')}</p> : null}
       <nav className="tab-list employee-detail-tabs" aria-label={t('employees.sections')}>
