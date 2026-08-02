@@ -832,7 +832,80 @@ a:focus-visible {
   grid-column: 1;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: start;
-  gap: 18px 14px;
+  gap: 16px 14px;
+  padding-right: 4px;
+}
+
+.employee-settings-grid {
+  display: grid;
+  gap: 12px !important;
+}
+
+.employee-settings-section {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #e2dbcf;
+  border-radius: 15px;
+  background: #fcfbf8;
+  box-shadow: 0 1px 2px rgb(37 35 31 / 3%);
+}
+
+.employee-settings-section legend {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 13px 16px 10px;
+  color: var(--employee-ink);
+}
+
+.employee-settings-section legend > span:first-child {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  border: 1px solid #e7b49f;
+  border-radius: 9px;
+  background: #fff0e9;
+  color: var(--color-accent-strong);
+  font-size: 0.69rem;
+  font-weight: 800;
+}
+
+.employee-settings-section legend > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.employee-settings-section legend strong {
+  font-size: 0.9rem;
+  font-weight: 760;
+}
+
+.employee-settings-section legend small {
+  color: var(--employee-muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.employee-settings-section__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 4px 16px 17px;
+}
+
+.employee-settings-section__grid .wide {
+  grid-column: 1 / -1;
+}
+
+.employee-settings-section__grid textarea {
+  min-height: 94px;
 }
 
 .employee-form-divider {
@@ -840,18 +913,19 @@ a:focus-visible {
   align-items: center;
   gap: 10px;
   min-height: 34px;
-  margin-top: 3px;
-  padding-top: 8px;
-  border-top: 1px solid var(--employee-line);
+  margin-top: 7px;
+  padding: 12px 0 4px;
+  border-top: 2px solid #dcd5c9;
 }
 
 .employee-form-divider span {
   display: grid;
-  width: 27px;
-  height: 27px;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border-radius: 8px;
-  background: var(--color-accent-soft);
+  border: 1px solid #e7b49f;
+  border-radius: 9px;
+  background: #fff0e9;
   color: var(--color-accent-strong);
   font-size: 0.69rem;
   font-weight: 800;
@@ -864,16 +938,20 @@ a:focus-visible {
 
 .employee-form-divider strong {
   color: var(--employee-ink);
-  font-size: 0.82rem;
+  font-size: 0.9rem;
+  font-weight: 760;
 }
 
 .employee-form-divider small {
   color: var(--employee-muted);
-  font-size: 0.72rem;
+  font-size: 0.76rem;
 }
 
 .employee-overview-card .form-grid label {
   min-width: 0;
+  color: #5f584f;
+  font-size: 0.82rem;
+  font-weight: 680;
 }
 
 .employee-overview-card .form-grid textarea {
@@ -893,6 +971,12 @@ a:focus-visible {
 .employee-overview-card .form-grid textarea:focus {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px rgb(196 90 58 / 12%);
+}
+
+.employee-overview-card .form-grid label:not(.form-toggle) > input:not([type="checkbox"]),
+.employee-overview-card .form-grid label:not(.form-toggle) > select,
+.employee-overview-card .form-grid label:not(.form-toggle) > textarea {
+  margin-top: 2px;
 }
 
 .form-toggle {
@@ -924,11 +1008,14 @@ a:focus-visible {
   grid-column: 2;
   grid-row: 2;
   align-self: start;
+  position: sticky;
+  top: 20px;
   margin: 0;
-  padding: 17px;
-  border: 1px solid var(--employee-line);
-  border-radius: 14px;
-  background: var(--employee-wash);
+  padding: 18px;
+  border: 1px solid #dfd8cb;
+  border-radius: 16px;
+  background: linear-gradient(160deg, #faf8f3 0%, #f2eee6 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 80%);
 }
 
 .employee-overview-card > dl dt {
@@ -950,6 +1037,14 @@ a:focus-visible {
   color: var(--employee-ink);
   font-size: 0.84rem;
   line-height: 1.45;
+}
+
+.employee-overview-card > dl .employee-summary-kicker {
+  margin: 0 0 13px;
+  color: var(--employee-ink);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
 }
 
 .employee-action-bar {
@@ -2313,6 +2408,11 @@ textarea {
 
   .employee-overview-card > dl {
     grid-row: auto;
+    position: static;
+  }
+
+  .employee-settings-section__grid {
+    grid-template-columns: 1fr;
   }
 
   .form-grid {
