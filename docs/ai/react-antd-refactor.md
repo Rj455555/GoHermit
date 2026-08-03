@@ -129,8 +129,8 @@ Foundation、Dashboard、Employees 列表、Agent、Settings、Loops 与 Tasks �
 - 目录卡片在桌面最多四列、同一行高度差不超过 2px；平板按 2 列/单列断点收缩，360px–390px 无页面级横向滚动。
 - Dashboard 在 1440/1280/1024/768/390px 均保持单一纵向栈；summary、metrics 和 recent/access 行共享 16px gutter，Hero 不再有空白固定高度或重复白色嵌套面。
 - Task prompt 的 geometry 断言覆盖 desktop/tablet/mobile Chrome/Safari；检查 `white-space`、容器宽度、scrollWidth 和 document width。
-- 新增/更新 Vitest：Dashboard 单 Hero/单栈、CSS 冲突契约、Employee anchor class；当前前端全量为 186/186 passed，zero-warning lint 与 typecheck 通过。
-- `round2-responsive.spec.ts` 的新增 grid、Dashboard 和 Task wrapping 断言已在 desktop-chrome、tablet、mobile-chrome、mobile-safari 通过；专项 8/8 通过。视觉截图继续输出到 `/tmp/gohermit-react-antd-round2-screenshots`，不提交到 Git，覆盖 1440×900、1280×800、1024×768、768×1024、430×932、390×844、375×812、360×800 的 Dashboard、Employee、Tasks、Loops/Mission 和 loading/empty/error 状态。
+- 新增/更新 Vitest：Dashboard 单 Hero/单栈、CSS 冲突契约、Employee anchor class 及本地化时间 fallback；当前前端全量为 189/189 passed，zero-warning lint 与 typecheck 通过，coverage 分支 80.03%。
+- `round2-responsive.spec.ts` 的新增 grid、Dashboard、Task wrapping、Activity、Agent 和 Loop 边界断言已在 desktop-chrome、tablet、mobile-chrome、mobile-safari 通过；专项 `--repeat-each=10` 为 390 passed、10 skipped（仅移动导航的桌面断言跳过）。视觉截图继续输出到 `/tmp/gohermit-react-antd-round2-screenshots`，不提交到 Git，覆盖 1440×900、1280×800、1024×768、768×1024、430×932、390×844、375×812、360×800 的 Dashboard、Employee、Tasks、Loops/Mission 和 loading/empty/error 状态。
 - `pnpm build` 通过，产物不生成 sourcemap；本轮 UI 修改只更新对应的 content-hashed dist 文件，后续提交前执行两次干净构建与 committed dist drift 检查。
 
 保留的旧 CSS 仅限仍被第一轮 Shell/Agent/Settings 或回滚兼容路径引用的规则；本次已通过引用检查、TypeScript、Vitest 和浏览器几何测试确认未再被 Employee/Task/Dashboard Ant Design 页面使用。未开始下一轮产品功能。
