@@ -7,7 +7,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
-import { Button, Card, Input } from 'antd'
+import { Button, Card, Empty, Input, type InputRef } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useParams } from 'react-router-dom'
 
@@ -66,6 +66,7 @@ export function AgentLandingPage() {
   })
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
+  const titleInputRef = useRef<InputRef>(null)
 
   const companies = info?.available_companies ?? []
   const selectedCompany = companies.find((company) => company.id === selection.company) ?? companies[0]
@@ -118,7 +119,8 @@ export function AgentLandingPage() {
   return (
     <article className="feature-page agent-page">
       <PageHeader title={t('agent.newSession')} description={t('agent.newSessionDescription')} />
-      <Card className="projection-card" variant="borderless">
+      <div className="agent-landing-layout">
+      <Card className="projection-card agent-create-card" variant="borderless">
       <form className="form-grid" onSubmit={(event) => void submit(event)}>
         <label>
           {t('agent.company')}
@@ -171,13 +173,19 @@ export function AgentLandingPage() {
         </label>
         <label>
           {t('agent.title')}
-          <Input aria-label={t('agent.title')} maxLength={4096} value={selection.title} onChange={(event) => setSelection((current) => ({ ...current, title: event.target.value }))} />
+          <Input ref={titleInputRef} aria-label={t('agent.title')} maxLength={4096} value={selection.title} onChange={(event) => setSelection((current) => ({ ...current, title: event.target.value }))} />
         </label>
         <Button type="primary" htmlType="submit" loading={submitting} disabled={!connectivity.canMutate || companies.length === 0}>
           {t('agent.createSession')}
         </Button>
       </form>
       </Card>
+      <Card className="agent-empty-panel" variant="borderless">
+        <Empty description={t('agent.selectSessionDescription')}>
+          <Button aria-label={t('agent.selectSessionDescription')} type="primary" onClick={() => titleInputRef.current?.focus()}>{t('agent.newSession')}</Button>
+        </Empty>
+      </Card>
+      </div>
     </article>
   )
 }
@@ -355,7 +363,7 @@ export function AgentSessionPage() {
     || Boolean(session.active_run_id)
 
   return (
-    <article className="feature-page session-page">
+    <article className="feature-page session-page session-workbench">
       <PageHeader title={session.title} description={`${session.selection.company} / ${session.selection.access} / ${session.selection.model} / ${session.selection.agent}`} />
       {error || connectivity.status === 'offline' ? <p className="stale-notice">{t('connectivity.stale')}</p> : null}
       {eventState.status === 'reconnecting' ? <p role="status">{t('session.reconnecting')}</p> : null}

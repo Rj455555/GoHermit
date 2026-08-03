@@ -59,6 +59,7 @@ import { ErrorState } from '../../components/ErrorState'
 import { PageHeader } from '../../components/PageHeader'
 import { useSessionEvents } from '../../hooks/useSessionEvents'
 import { translatedEnum } from '../../i18n/enumLabel'
+import { formatDateTime } from '../../i18n/dateTime'
 import { useUI } from '../../state/UIContext'
 
 const MAX_PROMPT_BYTES = 16 << 10
@@ -108,18 +109,19 @@ async function loadLatestTasks(employees: EmployeeSummary[], signal: AbortSignal
 }
 
 function TaskList({ tasks }: { tasks: EmployeeTask[] }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const screens = Grid.useBreakpoint()
   const columns: TableColumnsType<EmployeeTask> = [
-    { title: t('tasks.prompt'), key: 'prompt', render: (_, task) => <Link className="task-prompt-link" to={`/tasks/${encodeURIComponent(task.id)}`}><Paragraph className="task-prompt-text" ellipsis={{ rows: 3, expandable: true }}>{task.prompt}</Paragraph></Link> },
-    { title: t('tasks.employee'), dataIndex: 'employee_id', key: 'employee' },
-    { title: t('tasks.state'), dataIndex: 'state', key: 'state', render: (state: string) => <Tag color={statusColor(state)}>{translatedEnum(t, 'taskStatus', state)}</Tag> },
-    { title: t('tasks.project'), key: 'project', render: (_, task) => task.project_binding.label },
-    { title: t('tasks.updated'), dataIndex: 'updated_at', key: 'updated' },
-    { title: t('actions.actions'), key: 'action', render: (_, task) => <Button><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{t('actions.open')}</Link></Button> },
+    { title: t('tasks.prompt'), key: 'prompt', width: '36%', render: (_, task) => <Link className="task-prompt-link" to={`/tasks/${encodeURIComponent(task.id)}`}><Paragraph className="task-prompt-text" ellipsis={{ rows: 3, expandable: true }}>{task.prompt}</Paragraph></Link> },
+    { title: t('tasks.employee'), dataIndex: 'employee_id', key: 'employee', width: 150 },
+    { title: t('tasks.state'), dataIndex: 'state', key: 'state', width: 112, render: (state: string) => <Tag color={statusColor(state)}>{translatedEnum(t, 'taskStatus', state)}</Tag> },
+    { title: t('tasks.project'), key: 'project', width: 150, render: (_, task) => task.project_binding.label },
+    { title: t('tasks.sessionRun'), key: 'session', width: 188, render: (_, task) => <Space direction="vertical" size={0} className="task-session-run-cell"><Text className="task-id-value" copyable ellipsis={{ tooltip: task.session_id }}>{task.session_id ?? '—'}</Text><Text className="task-id-value" copyable ellipsis={{ tooltip: task.run_id }}>{task.run_id ?? '—'}</Text></Space> },
+    { title: t('tasks.updated'), dataIndex: 'updated_at', key: 'updated', width: 178, render: (value: string) => <span className="task-updated-cell">{formatDateTime(value, i18n.language)}</span> },
+    { title: t('actions.actions'), key: 'action', width: 104, render: (_, task) => <Button><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{t('actions.open')}</Link></Button> },
   ]
-  if (screens.md) return <Table className="task-list-table" rowKey="id" columns={columns} dataSource={tasks} pagination={{ pageSize: 20, showSizeChanger: false }} />
-  return <List dataSource={tasks} locale={{ emptyText: <Empty /> }} renderItem={(task) => <List.Item><Card className="mobile-resource-card" title={<Link to={`/tasks/${encodeURIComponent(task.id)}`}>{task.prompt}</Link>} extra={<Tag color={statusColor(task.state)}>{translatedEnum(t, 'taskStatus', task.state)}</Tag>}><Descriptions column={1} size="small"><Descriptions.Item label={t('tasks.employee')}>{task.employee_id}</Descriptions.Item><Descriptions.Item label={t('tasks.project')}>{task.project_binding.label}</Descriptions.Item><Descriptions.Item label={t('tasks.updated')}>{task.updated_at}</Descriptions.Item><Descriptions.Item label="Session / Run"><Space direction="vertical" size={0}><Text copyable ellipsis={{ tooltip: task.session_id }}>{task.session_id ?? '—'}</Text><Text copyable ellipsis={{ tooltip: task.run_id }}>{task.run_id ?? '—'}</Text></Space></Descriptions.Item></Descriptions><Button block type="primary"><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{t('actions.open')}</Link></Button></Card></List.Item>} />
+  if (screens.lg) return <Table className="task-list-table" rowKey="id" columns={columns} dataSource={tasks} tableLayout="fixed" pagination={{ pageSize: 20, showSizeChanger: false }} />
+  return <List dataSource={tasks} locale={{ emptyText: <Empty /> }} renderItem={(task) => <List.Item><Card className="mobile-resource-card" title={<Link className="task-prompt-link" to={`/tasks/${encodeURIComponent(task.id)}`}><Paragraph className="task-prompt-text" ellipsis={{ rows: 3, expandable: true }}>{task.prompt}</Paragraph></Link>} extra={<Tag color={statusColor(task.state)}>{translatedEnum(t, 'taskStatus', task.state)}</Tag>}><Descriptions column={1} size="small"><Descriptions.Item label={t('tasks.employee')}>{task.employee_id}</Descriptions.Item><Descriptions.Item label={t('tasks.project')}>{task.project_binding.label}</Descriptions.Item><Descriptions.Item label={t('tasks.updated')}><span className="task-updated-cell">{formatDateTime(task.updated_at, i18n.language)}</span></Descriptions.Item><Descriptions.Item label={t('tasks.sessionRun')}><Space direction="vertical" size={0} className="task-session-run-cell"><Text className="task-id-value" copyable ellipsis={{ tooltip: task.session_id }}>{task.session_id ?? '—'}</Text><Text className="task-id-value" copyable ellipsis={{ tooltip: task.run_id }}>{task.run_id ?? '—'}</Text></Space></Descriptions.Item></Descriptions><Button block type="primary"><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{t('actions.open')}</Link></Button></Card></List.Item>} />
 }
 
 export function TasksWorkbenchPage() {
@@ -258,7 +260,7 @@ export function TasksWorkbenchPage() {
 
 export function TaskWorkbenchDetailPage() {
   const { taskId } = useParams()
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { actions } = useUI()
   const connectivity = useConnectivity()
   const screens = Grid.useBreakpoint()
@@ -353,13 +355,13 @@ export function TaskWorkbenchDetailPage() {
       {events.status === 'fatal' ? <Alert type="error" showIcon message={t('session.reconnectEvents')} action={<Button onClick={events.reconnect}>{t('session.reconnectEvents')}</Button>} /> : null}
       {events.status === 'reconnecting' ? <Alert type="warning" showIcon message={t('session.reconnecting')} /> : null}
       {events.truncated ? <Alert type="warning" showIcon message={t('session.streamingTruncated')} /> : null}
-      <Timeline items={events.events.map((event) => ({ children: <Space direction="vertical" size={0}><Text>{translatedEnum(t, 'runtimeEventType', event.type)}</Text><Text type="secondary">{event.time} · #{event.sequence}</Text></Space> }))} />
+      <Timeline items={events.events.map((event) => ({ children: <Space direction="vertical" size={4}><Text strong>{translatedEnum(t, 'runtimeEventType', event.type)}</Text><Text type="secondary" className="task-event-time">{formatDateTime(event.time, i18n.language)} · #{event.sequence}</Text></Space> }))} />
     </Card>
     <Card title={<Title level={2}>{t('session.plan')}</Title>}>{activeRun?.plan ? <List dataSource={activeRun.plan.steps} renderItem={(step) => <List.Item><Flex gap={12} align="center"><Checkbox checked={step.status === 'completed'} disabled /><Text>{step.title}</Text><Tag color={statusColor(step.status)}>{translatedEnum(t, 'planStatus', step.status)}</Tag></Flex></List.Item>} /> : <Empty />}</Card>
     <Card title={<Title level={2}>{t('tasks.tools')}</Title>}><List dataSource={tools} locale={{ emptyText: <Empty /> }} renderItem={(tool) => <List.Item><Card className="mobile-resource-card" title={tool.name} extra={<Tag color={statusColor(tool.status || 'unknown')}>{translatedEnum(t, 'toolStatus', tool.status || 'unknown')}</Tag>}><Paragraph className="safe-wrap">{tool.summary}</Paragraph></Card></List.Item>} /></Card>
     <Card title={<Title level={2}>{t('session.approvals')}</Title>}><List dataSource={approvals} locale={{ emptyText: <Empty /> }} renderItem={(request) => <List.Item><Card className="mobile-resource-card" title={request.tool} extra={<Tag color={statusColor(request.status)}>{translatedEnum(t, 'approvalStatus', request.status)}</Tag>}><Paragraph>{request.args_summary}</Paragraph><Paragraph type="secondary" className="safe-wrap">{request.resource_paths.join(', ')}</Paragraph>{request.status === 'pending' ? <Space direction={screens.md ? 'horizontal' : 'vertical'}><Button block={!screens.md} type="primary" disabled={!canMutate} onClick={() => confirmApproval(request, 'approve')}>{t('approval.approve')}</Button><Button block={!screens.md} danger disabled={!canMutate} onClick={() => confirmApproval(request, 'deny')}>{t('approval.deny')}</Button></Space> : null}</Card></List.Item>} /></Card>
     <Card title={<Title level={2}>{t('session.verification')}</Title>}><List dataSource={verification} locale={{ emptyText: <Empty /> }} renderItem={(result) => <List.Item><Alert type={result.passed ? 'success' : 'error'} showIcon message={result.command} description={result.summary} /></List.Item>} /></Card>
-    <Card title={<Title level={2}>{t('tasks.artifacts')}</Title>}><List dataSource={task.artifacts} locale={{ emptyText: <Empty /> }} renderItem={(artifact) => <List.Item><Descriptions column={1} size="small"><Descriptions.Item label={t('tasks.project')}><Text copyable className="safe-wrap">{artifact.path}</Text></Descriptions.Item><Descriptions.Item label="Digest"><Text copyable ellipsis={{ tooltip: artifact.digest }}>{artifact.digest}</Text></Descriptions.Item><Descriptions.Item label={t('session.verification')}>{artifact.verified_at}</Descriptions.Item></Descriptions></List.Item>} /></Card>
+    <Card title={<Title level={2}>{t('tasks.artifacts')}</Title>}><List dataSource={task.artifacts} locale={{ emptyText: <Empty /> }} renderItem={(artifact) => <List.Item><Descriptions column={1} size="small"><Descriptions.Item label={t('tasks.project')}><Text copyable className="safe-wrap">{artifact.path}</Text></Descriptions.Item><Descriptions.Item label="Digest"><Text copyable ellipsis={{ tooltip: artifact.digest }}>{artifact.digest}</Text></Descriptions.Item><Descriptions.Item label={t('session.verification')}><span className="task-updated-cell">{formatDateTime(artifact.verified_at, i18n.language)}</span></Descriptions.Item></Descriptions></List.Item>} /></Card>
     {!screens.md ? <div className="antd-mobile-action-bar task-sticky-action-bar">{actionsBar}</div> : null}
   </article>
 }

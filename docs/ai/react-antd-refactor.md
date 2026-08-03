@@ -134,3 +134,14 @@ Foundation、Dashboard、Employees 列表、Agent、Settings、Loops 与 Tasks �
 - `pnpm build` 通过，产物不生成 sourcemap；本轮 UI 修改只更新对应的 content-hashed dist 文件，后续提交前执行两次干净构建与 committed dist drift 检查。
 
 保留的旧 CSS 仅限仍被第一轮 Shell/Agent/Settings 或回滚兼容路径引用的规则；本次已通过引用检查、TypeScript、Vitest 和浏览器几何测试确认未再被 Employee/Task/Dashboard Ant Design 页面使用。未开始下一轮产品功能。
+## Layout Gate 修订（当前提交）
+
+本次只收口展示层布局与可读性，不改变 API、DTO、Store、Session/Run 状态机或 SSE registry。
+
+- Task 表格改为显式列宽与 fixed layout；Session/Run 使用可复制、省略 ID，更新时间统一按当前语言格式化，移动端保留 Card/List。
+- Employee Activity 使用单一全宽 Timeline 内容块；每条事件只显示一次本地化时间，revision 使用紧凑 Tag，引用 ID 支持复制与安全换行。
+- Agent landing 将创建表单与未选择 Session 的 Empty panel 拆成响应式双栏；选中 Session 后 workbench 占满可用内容列，Session sidebar 标题最多两行省略。
+- Loop 列表、Invocation、Mission WorkItem 使用显式列宽、safe-wrap 和 localized timestamps；quick-create 外层 Card 负责唯一边框，advanced 内容复用内层无边框 Card，避免嵌套双边框。
+- 桌面/平板 content gutter 为 32/24px，手机为 16px；360px 起使用单列表单与 Card/List，未使用页面级 overflow mask、负 margin 或 transform 缩放。
+
+本轮 Playwright geometry assertions 覆盖 Task prompt wrapping、Employee Activity 时间唯一性、Agent 空状态与 Session 详情占满内容列、Loop create card 边界；截图继续写入 `/tmp/gohermit-react-antd-round2-screenshots`，不提交到 Git。

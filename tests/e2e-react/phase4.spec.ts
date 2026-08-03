@@ -6,7 +6,7 @@ test.beforeEach(async ({ request }) => {
 
 async function selectEmployeeSection(page: import('@playwright/test').Page, name: RegExp) {
   const selector = page.locator('.employee-mobile-tab-select')
-  if ((page.viewportSize()?.width ?? 1440) < 768) {
+  if ((page.viewportSize()?.width ?? 1440) < 1024) {
     await page.locator('.employee-mobile-tab-select').click()
     await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: name }).click()
     await expect(page.locator('.employee-mobile-tab-select .ant-select-selection-item')).toContainText(name)
@@ -41,7 +41,7 @@ test('archived Employee is direct-loadable, structured, non-empty, and fully rea
 
   await selectEmployeeSection(page, /技能|Skills/u)
   const skillCard = page.getByTestId('skill-card-native-review').filter({ hasText: /Digest 已过期|Stale digest|Digest drift/u }).first()
-  if ((page.viewportSize()?.width ?? 1440) < 768) {
+  if ((page.viewportSize()?.width ?? 1440) < 1024) {
     await expect(skillCard).toContainText('native-review')
     await expect(skillCard).toContainText('1.0.0')
   } else {
@@ -50,7 +50,7 @@ test('archived Employee is direct-loadable, structured, non-empty, and fully rea
   await expect(page.getByText(/Digest 已过期|Digest drift/u).first()).toBeVisible()
 
   await selectEmployeeSection(page, /知识|Knowledge/u)
-  if ((page.viewportSize()?.width ?? 1440) < 768) {
+  if ((page.viewportSize()?.width ?? 1440) < 1024) {
     const knowledgeCard = page.getByTestId('knowledge-source').filter({ hasText: 'Release handbook' })
     await expect(knowledgeCard).toBeVisible()
     await knowledgeCard.getByRole('button', { name: /1/u }).click()

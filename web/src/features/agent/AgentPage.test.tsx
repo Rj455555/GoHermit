@@ -122,6 +122,14 @@ beforeEach(() => {
 })
 
 describe('Agent pages', () => {
+  it('shows a bounded empty selection panel alongside the Session form', async () => {
+    renderAgent()
+
+    await screen.findByRole('button', { name: i18n.t('agent.createSession') })
+    expect(screen.getByText(i18n.t('agent.selectSessionDescription'))).toBeVisible()
+    expect(document.querySelector('.agent-empty-panel button')).toBeVisible()
+  })
+
   it('keeps Agent configuration usable when legacy Session history fails', async () => {
     api.listSessions.mockRejectedValue(new ApiError('invalid_response', 200))
     renderAgent()

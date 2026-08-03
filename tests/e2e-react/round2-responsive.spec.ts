@@ -179,3 +179,60 @@ test('Task prompts wrap instead of forcing a page-level horizontal scroll', asyn
   expect(style.scrollWidth).toBeLessThanOrEqual(style.width + 1)
   await expectNoPageOverflow(page)
 })
+
+test('Employee Activity uses one localized timestamp column and a full-width event body', async ({ page }) => {
+  await page.goto('/employees/employee-ada?tab=activity')
+  const events = page.locator('.employee-activity-event')
+  await expect(events.first()).toBeVisible()
+  const geometry = await page.locator('.employee-activity-card').evaluate((card) => {
+    const first = card.querySelector<HTMLElement>('.employee-activity-event')
+    const content = card.querySelector<HTMLElement>('.ant-timeline-item-content')
+    return {
+      eventWidth: first?.getBoundingClientRect().width ?? 0,
+      contentWidth: content?.getBoundingClientRect().width ?? 0,
+      duplicateTimeNodes: first?.querySelectorAll('.employee-activity-event__time').length ?? 0,
+    }
+  })
+  expect(geometry.eventWidth).toBeGreaterThan(0)
+  expect(geometry.contentWidth).toBeGreaterThan(0)
+  expect(geometry.eventWidth).toBeLessThanOrEqual(geometry.contentWidth + 2)
+  expect(geometry.duplicateTimeNodes).toBe(1)
+  await expectNoPageOverflow(page)
+})
+
+test('Agent landing keeps an empty selection panel and selected Session fills the content column', async ({ page }) => {
+  await page.goto('/agent')
+  await expect(page.locator('.agent-landing-layout')).toBeVisible()
+  await expect(page.locator('.agent-empty-panel')).toBeVisible()
+  const emptyLayout = await page.locator('.agent-landing-layout').evaluate((element) => ({
+    width: element.getBoundingClientRect().width,
+    childWidths: [...element.children].map((child) => Math.round(child.getBoundingClientRect().width)),
+  }))
+  expect(emptyLayout.width).toBeGreaterThan(0)
+  expect(emptyLayout.childWidths.every((width) => width > 0)).toBe(true)
+
+  await page.goto('/agent/sessions/session-1')
+  await expect(page.locator('.session-workbench')).toBeVisible()
+  const workbench = await page.locator('.session-workbench').evaluate((element) => ({
+    width: element.getBoundingClientRect().width,
+    parentWidth: element.parentElement?.getBoundingClientRect().width ?? 0,
+  }))
+  expect(workbench.width).toBeGreaterThan(0)
+  expect(workbench.width).toBeLessThanOrEqual(workbench.parentWidth + 2)
+  await expectNoPageOverflow(page)
+})
+
+test('Loop quick-create keeps one outer surface and bounded advanced content', async ({ page }) => {
+  await page.goto('/loops')
+  const card = page.locator('.loop-quick-create')
+  await expect(card).toBeVisible()
+  const geometry = await card.evaluate((element) => ({
+    borders: [...element.querySelectorAll<HTMLElement>('.ant-card')].map((nested) => getComputedStyle(nested).borderWidth),
+    width: element.getBoundingClientRect().width,
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  }))
+  expect(geometry.width).toBeGreaterThan(0)
+  expect(geometry.overflow).toBeLessThanOrEqual(1)
+  expect(geometry.borders.filter((value) => value !== '0px').length).toBeLessThanOrEqual(1)
+  await expectNoPageOverflow(page)
+})

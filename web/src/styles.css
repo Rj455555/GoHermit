@@ -6752,3 +6752,306 @@ textarea.json-editor {
     width: 100%;
   }
 }
+
+/* Layout Gate: keep wide projections inside the content column without
+   masking overflow at page level. Long values opt into safe wrapping. */
+.app-shell__workspace {
+  min-height: 0;
+  align-items: stretch;
+}
+
+.app-shell,
+.app-shell__background,
+.app-shell__antd-layout,
+.app-shell__antd-layout > .ant-layout {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-shell__content {
+  min-width: 0;
+  min-height: calc(100dvh - 52px);
+  padding-inline: 32px;
+}
+
+.app-shell__content > .feature-page {
+  width: min(100%, 1440px);
+  margin-inline: auto;
+}
+
+.antd-deep-page {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.session-sidebar {
+  min-height: calc(100dvh - 52px);
+  max-height: calc(100dvh - 52px);
+  overflow: auto;
+}
+
+.session-list__item,
+.session-list__item > * {
+  min-width: 0;
+}
+
+.session-list__item strong {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.session-list__item span,
+.session-list__item time {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-landing-layout {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, .75fr);
+  gap: 24px;
+  align-items: stretch;
+}
+
+.agent-create-card,
+.agent-empty-panel {
+  min-width: 0;
+  height: 100%;
+}
+
+.agent-empty-panel .ant-card-body {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+}
+
+.session-workbench {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  gap: 16px;
+}
+
+.session-workbench .projection-card {
+  width: 100%;
+  min-width: 0;
+}
+
+.session-workbench .message p,
+.session-workbench li,
+.session-workbench .approval-card {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.loop-orchestration .ant-steps {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.loop-orchestration {
+  width: 100%;
+  max-width: 100%;
+}
+
+.loop-orchestration .ant-steps-item {
+  flex: 1 1 0;
+  min-width: 128px;
+}
+
+.loop-orchestration .ant-steps-item-container,
+.loop-orchestration .ant-steps-item-content,
+.loop-orchestration .ant-steps-item-title,
+.loop-orchestration .ant-steps-item-description {
+  width: 128px;
+  min-width: 0;
+  max-width: 128px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: normal !important;
+}
+
+.antd-deep-page .ant-table-cell,
+.task-list-table .ant-table-cell,
+.employee-task-table .ant-table-cell,
+.loop-list-table .ant-table-cell,
+.loop-invocation-table .ant-table-cell,
+.mission-work-item-table .ant-table-cell {
+  min-width: 0;
+  word-break: normal;
+  overflow-wrap: normal;
+  vertical-align: middle;
+}
+
+.antd-deep-page .ant-table-cell .safe-wrap,
+.antd-deep-page .ant-table-cell .task-prompt-text,
+.antd-deep-page .ant-table-cell .task-prompt-link {
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: normal;
+}
+
+.antd-deep-page .ant-descriptions-view {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.task-updated-cell {
+  display: inline-block;
+  min-width: 160px;
+  white-space: nowrap;
+}
+
+.task-session-run-cell {
+  min-width: 0;
+  max-width: 100%;
+  align-items: stretch;
+}
+
+.task-session-run-cell .ant-typography,
+.task-id-value {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-activity-page,
+.employee-activity-card,
+.employee-activity-card .ant-timeline {
+  width: 100%;
+  min-width: 0;
+}
+
+.employee-activity-card .ant-card-body {
+  padding: 24px;
+}
+
+.employee-activity-event {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+}
+
+.employee-activity-event__refs,
+.employee-activity-event__refs > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.loop-quick-create {
+  margin-top: 0;
+}
+
+.loop-quick-create .ant-card-body {
+  padding: 24px;
+}
+
+.loop-quick-create .ant-card-head {
+  padding-inline: 24px;
+}
+
+.loop-quick-create .ant-card-head-title {
+  font-size: 1.25rem;
+}
+
+.loop-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.loop-quick-create .loop-advanced-collapse {
+  border: 0;
+  background: transparent;
+}
+
+.loop-quick-create .loop-advanced-collapse > .ant-collapse-item {
+  border-bottom: 0;
+}
+
+.loop-quick-create .loop-advanced-collapse .ant-collapse-content {
+  border-top: 0;
+  background: transparent;
+}
+
+.loop-quick-create .loop-definition-form > .antd-page-stack > .ant-card {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.loop-quick-create .loop-definition-form > .antd-page-stack > .ant-card .ant-card-body {
+  padding-inline: 0;
+}
+
+.loop-quick-create .loop-definition-form > .antd-page-stack > .ant-card .ant-card-head {
+  padding-inline: 0;
+}
+
+.loop-quick-create .loop-definition-form > .antd-page-stack > .ant-card .ant-card-head-title {
+  font-size: 1.1rem;
+}
+
+@media (min-width: 768px) and (max-width: 1439px) {
+  .app-shell__content {
+    padding-inline: 24px;
+  }
+}
+
+@media (min-width: 768px) {
+  .antd-deep-page {
+    padding-inline: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-shell__content {
+    min-height: calc(100dvh - 108px);
+    padding-inline: 16px;
+  }
+
+  .session-sidebar {
+    min-height: 100%;
+    max-height: none;
+  }
+
+  .agent-landing-layout {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .agent-empty-panel {
+    order: -1;
+  }
+
+  .agent-empty-panel .ant-card-body {
+    min-height: 180px;
+  }
+
+  .employee-activity-card .ant-card-body,
+  .loop-quick-create .ant-card-body {
+    padding: 16px;
+  }
+
+  .loop-quick-create .ant-card-head {
+    padding-inline: 16px;
+  }
+
+  .loop-create-actions,
+  .loop-create-actions > .ant-btn {
+    width: 100%;
+  }
+}
