@@ -481,6 +481,108 @@ export type EmployeeTaskState =
   | 'cancelled'
   | 'interrupted'
 
+export type TaskBoardCardKind = 'task' | 'note'
+
+export interface TaskBoardColumn {
+  id: string
+  title: string
+  color: string
+  hidden: boolean
+  wip_limit?: number | undefined
+}
+
+export interface TaskBoardCard {
+  id: string
+  task_id?: string | undefined
+  kind: TaskBoardCardKind
+  title: string
+  body?: string | undefined
+  column_id: string
+  rank: number
+  labels: string[]
+  priority: number
+  due_at?: string | undefined
+  pinned: boolean
+  blocked: boolean
+  blocker_reason?: string | undefined
+  depends_on: string[]
+  source_url?: string | undefined
+  loop_id?: string | undefined
+  employee_id?: string | undefined
+  employee_name?: string | undefined
+  provider?: string | undefined
+  model?: string | undefined
+  state?: EmployeeTaskState | 'note' | undefined
+  state_source?: string | undefined
+  projection_reason: string
+  authoritative_updated_at: string
+  session_id?: string | undefined
+  run_id?: string | undefined
+  session_event_sequence: number
+  session_count: number
+  approval_status: string
+  verification_status: string
+  stale: boolean
+}
+
+export interface TaskBoardDefinition {
+  id: string
+  name: string
+  columns: TaskBoardColumn[]
+}
+
+export interface TaskBoardViewPreferences {
+  view: 'list' | 'board'
+  column_width?: number | undefined
+  wip_enabled: boolean
+}
+
+export interface TaskBoardFilters {
+  employee_id?: string | undefined
+  states: string[]
+  labels: string[]
+  priority?: number | undefined
+  blocked?: boolean | undefined
+  needs_owner?: boolean | undefined
+}
+
+export interface TaskBoardView {
+  schema_version: number
+  definition: TaskBoardDefinition
+  cards: TaskBoardCard[]
+  view: TaskBoardViewPreferences
+  filters: TaskBoardFilters
+  updated_at: string
+  projection_generated_at: string
+}
+
+export interface TaskBoardCardInput {
+  column_id: string
+  rank: number
+  labels: string[]
+  priority: number
+  due_at: string | null
+  pinned: boolean
+  blocked: boolean
+  blocker_reason: string
+  depends_on: string[]
+  source_url: string
+  loop_id: string
+}
+
+export interface TaskBoardNoteInput {
+  title: string
+  body: string
+  column_id: string
+  rank: number
+  labels: string[]
+  priority: number
+  due_at: string | null
+  pinned: boolean
+  source_url: string
+  blocker_reason: string
+}
+
 export interface EmployeeSummary {
   id: string
   revision: number

@@ -57,6 +57,10 @@ import type {
   SessionSummary,
   SkillCatalogItem,
   TeamTemplate,
+  TaskBoardCard,
+  TaskBoardColumn,
+  TaskBoardDefinition,
+  TaskBoardView,
   TestResult,
   ToolRecord,
   WorkItem,
@@ -67,6 +71,7 @@ const MAX_STREAM_CHUNK = 32 << 10
 const MAX_COLLECTION = 500
 const MAX_SMALL_COLLECTION = 100
 const MAX_SESSION_RECORDS = 8_192
+const MAX_TASK_BOARD_CARDS = 10_000
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u
 
 function fail(): never {
@@ -1323,6 +1328,98 @@ export function decodeEmployeeTask(value: unknown): EmployeeTask {
 export function decodeEmployeeTasks(value: unknown): { tasks: EmployeeTask[] } {
   const source = object(value)
   return { tasks: array(source.tasks, decodeEmployeeTask, MAX_SMALL_COLLECTION) }
+}
+
+function decodeTaskBoardColumn(value: unknown): TaskBoardColumn {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    title: string(source.title, 256),
+    color: string(source.color, 32),
+    hidden: boolean(source.hidden),
+    wip_limit: source.wip_limit === undefined ? undefined : integer(source.wip_limit),
+  }
+}
+
+function decodeTaskBoardDefinition(value: unknown): TaskBoardDefinition {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    name: string(source.name, 256),
+    columns: array(source.columns, decodeTaskBoardColumn, 32),
+  }
+}
+
+function decodeTaskBoardCard(value: unknown): TaskBoardCard {
+  const source = object(value)
+  const state = source.state === undefined || source.state === null
+    ? undefined
+    : enumeration(source.state, [
+      'queued', 'prepared', 'waiting_owner', 'running', 'verifying', 'completed',
+      'failed', 'cancelled', 'interrupted', 'note',
+    ] as const)
+  const priority = integer(source.priority)
+  if (priority > 4) fail()
+  return {
+    id: id(source.id),
+    task_id: optionalID(source.task_id),
+    kind: enumeration(source.kind, ['task', 'note'] as const),
+    title: string(source.title, MAX_TEXT),
+    body: optionalString(source.body, 16 << 10),
+    column_id: id(source.column_id),
+    rank: integer(source.rank),
+    labels: array(source.labels, (item) => string(item, 128), 32),
+    priority,
+    due_at: optionalTime(source.due_at),
+    pinned: boolean(source.pinned),
+    blocked: boolean(source.blocked),
+    blocker_reason: optionalString(source.blocker_reason, MAX_TEXT),
+    depends_on: array(source.depends_on, id, 32),
+    source_url: optionalString(source.source_url, 2048),
+    loop_id: optionalID(source.loop_id),
+    employee_id: optionalID(source.employee_id),
+    employee_name: optionalString(source.employee_name, 256),
+    provider: optionalString(source.provider, 256),
+    model: optionalString(source.model, 256),
+    state,
+    state_source: optionalString(source.state_source, 128),
+    projection_reason: string(source.projection_reason, 128),
+    authoritative_updated_at: time(source.authoritative_updated_at),
+    session_id: optionalID(source.session_id),
+    run_id: optionalID(source.run_id),
+    session_event_sequence: optionalInteger(source.session_event_sequence),
+    session_count: integer(source.session_count),
+    approval_status: string(source.approval_status, 64),
+    verification_status: string(source.verification_status, 64),
+    stale: boolean(source.stale),
+  }
+}
+
+export function decodeTaskBoard(value: unknown): TaskBoardView {
+  const source = object(value)
+  const definition = decodeTaskBoardDefinition(source.definition)
+  const view = object(source.view)
+  const filters = object(source.filters)
+  return {
+    schema_version: integer(source.schema_version),
+    definition,
+    cards: array(source.cards, decodeTaskBoardCard, MAX_TASK_BOARD_CARDS),
+    view: {
+      view: enumeration(view.view, ['list', 'board'] as const),
+      column_width: view.column_width === undefined ? undefined : integer(view.column_width),
+      wip_enabled: boolean(view.wip_enabled),
+    },
+    filters: {
+      employee_id: optionalID(filters.employee_id),
+      states: array(filters.states, (item) => string(item, 128), 32),
+      labels: array(filters.labels, (item) => string(item, 128), 32),
+      priority: filters.priority === undefined ? undefined : integer(filters.priority),
+      blocked: filters.blocked === undefined ? undefined : boolean(filters.blocked),
+      needs_owner: filters.needs_owner === undefined ? undefined : boolean(filters.needs_owner),
+    },
+    updated_at: time(source.updated_at),
+    projection_generated_at: time(source.projection_generated_at),
+  }
 }
 
 function decodeBudget(value: unknown) {

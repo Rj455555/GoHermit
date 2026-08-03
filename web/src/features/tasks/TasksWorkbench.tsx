@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
+  Badge,
   Button,
   Card,
   Checkbox,
@@ -14,14 +15,17 @@ import {
   Input,
   InputNumber,
   List,
+  Modal,
   Row,
   Select,
+  Segmented,
   Skeleton,
   Space,
   Switch,
   Table,
   Tag,
   Timeline,
+  Tooltip,
   Typography,
   type TableColumnsType,
 } from 'antd'
@@ -38,11 +42,14 @@ import {
   getEmployeeSkills,
   getEmployeeTask,
   getSession,
+  getTaskBoard,
+  createTaskBoardNote,
   listApprovals,
   listEmployeeTasks,
   listEmployees,
   resumeEmployeeTask,
   startEmployeeTask,
+  updateTaskBoardCard,
 } from '../../api/endpoints'
 import { ApiError } from '../../api/errors'
 import type {
@@ -53,6 +60,8 @@ import type {
   EmployeeTask,
   MemoryFact,
   SessionDetailResponse,
+  TaskBoardCard,
+  TaskBoardView,
 } from '../../api/types'
 import { useConnectivity } from '../../components/ConnectivityProvider'
 import { ErrorState } from '../../components/ErrorState'
@@ -79,6 +88,56 @@ function statusColor(status: string) {
   if (['cancelled', 'interrupted'].includes(status)) return 'warning'
   if (['running', 'verifying', 'prepared', 'waiting_owner'].includes(status)) return 'processing'
   return 'default'
+}
+
+function boardCardInput(card: TaskBoardCard, columnId = card.column_id, rank = card.rank) {
+  return {
+    column_id: columnId,
+    rank,
+    labels: card.labels,
+    priority: card.priority,
+    due_at: card.due_at ?? null,
+    pinned: card.pinned,
+    blocked: card.blocked,
+    blocker_reason: card.blocker_reason ?? '',
+    depends_on: card.depends_on,
+    source_url: card.source_url ?? '',
+    loop_id: card.loop_id ?? '',
+  }
+}
+
+function BoardCardView({ card, onOpen, onDragStart }: { card: TaskBoardCard; onOpen: (card: TaskBoardCard) => void; onDragStart: (card: TaskBoardCard) => void }) {
+  const { t } = useTranslation()
+  const isTask = card.kind === 'task' && Boolean(card.task_id)
+  return <div
+    className={`task-board-card${card.blocked ? ' is-blocked' : ''}${card.pinned ? ' is-pinned' : ''}`}
+    draggable={isTask}
+    onDragStart={() => onDragStart(card)}
+    onClick={() => onOpen(card)}
+    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen(card) } }}
+    role={isTask ? 'link' : 'article'}
+    tabIndex={0}
+  >
+    <Card size="small" title={<Typography.Text ellipsis={{ tooltip: card.title }}>{card.title}</Typography.Text>} extra={card.kind === 'note' ? <Tag color="default">{t('tasks.note')}</Tag> : <Tag color={statusColor(card.state ?? 'queued')}>{translatedEnum(t, 'taskStatus', card.state ?? 'queued')}</Tag>}>
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Space wrap size={[4, 4]}>
+          {card.employee_name ? <Tag>{card.employee_name}</Tag> : null}
+          {card.provider || card.model ? <Tag color="blue">{[card.provider, card.model].filter(Boolean).join(' / ')}</Tag> : null}
+          {card.priority > 0 ? <Tag color="gold">P{card.priority}</Tag> : null}
+          {card.blocked ? <Tag color="error">{t('tasks.blocked')}</Tag> : null}
+          {card.approval_status !== 'none' ? <Tag color="warning">{t('tasks.approval')}: {card.approval_status}</Tag> : null}
+        </Space>
+        {card.kind === 'note' && card.body ? <Typography.Paragraph ellipsis={{ rows: 3 }} className="safe-wrap" style={{ marginBottom: 0 }}>{card.body}</Typography.Paragraph> : null}
+        {card.labels.length > 0 ? <Space wrap size={[4, 4]}>{card.labels.map((label) => <Tag key={label}>{label}</Tag>)}</Space> : null}
+        <Space split="·" size={4} wrap>
+          <Typography.Text type="secondary">{card.kind === 'task' ? card.id : t('tasks.note')}</Typography.Text>
+          {card.session_count > 0 ? <Typography.Text type="secondary">{t('tasks.sessions')}: {card.session_count}</Typography.Text> : null}
+          {card.session_event_sequence > 0 ? <Typography.Text type="secondary">{t('tasks.events')}: {card.session_event_sequence}</Typography.Text> : null}
+          {card.stale ? <Tooltip title={t('tasks.staleProjection')}><Tag color="warning">{t('tasks.stale')}</Tag></Tooltip> : null}
+        </Space>
+      </Space>
+    </Card>
+  </div>
 }
 
 async function loadAllEmployees(signal: AbortSignal) {
@@ -132,8 +191,17 @@ export function TasksWorkbenchPage() {
   const contextEpoch = useRef(0)
   const [employees, setEmployees] = useState<EmployeeSummary[]>([])
   const [tasks, setTasks] = useState<EmployeeTask[]>([])
+  const [board, setBoard] = useState<TaskBoardView | null>(null)
   const [error, setError] = useState(false)
+  const [boardError, setBoardError] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [noteOpen, setNoteOpen] = useState(false)
+  const [noteTitle, setNoteTitle] = useState('')
+  const [noteBody, setNoteBody] = useState('')
+  const [noteCreating, setNoteCreating] = useState(false)
+  const [draggingID, setDraggingID] = useState<string | null>(null)
+  const [startCandidate, setStartCandidate] = useState<{ card: TaskBoardCard; targetColumn: string } | null>(null)
+  const [startBusy, setStartBusy] = useState(false)
   const [employeeId, setEmployeeId] = useState('')
   const [context, setContext] = useState<{ record: EmployeeRecord; knowledge: EmployeeKnowledge; memory: MemoryFact[]; skills: Awaited<ReturnType<typeof getEmployeeSkills>> } | null>(null)
   const [prompt, setPrompt] = useState('')
@@ -149,12 +217,23 @@ export function TasksWorkbenchPage() {
     try {
       const all = await loadAllEmployees(signal)
       const loaded = await loadLatestTasks(all, signal)
+      let projectedBoard: TaskBoardView | null = null
+      try {
+        projectedBoard = await getTaskBoard({ signal })
+      } catch (caught) {
+        if (caught instanceof ApiError && caught.code === 'aborted') throw caught
+      }
       setEmployees(all)
       setTasks(loaded)
+      setBoard(projectedBoard)
+      setBoardError(projectedBoard === null)
       setEmployeeId((current) => { const active = all.filter((item) => item.state === 'active'); return active.some((item) => item.id === current) ? current : active[0]?.id ?? '' })
       setError(false)
     } catch (caught) {
-      if (!(caught instanceof ApiError && caught.code === 'aborted')) setError(true)
+      if (!(caught instanceof ApiError && caught.code === 'aborted')) {
+        setError(true)
+        setBoardError(true)
+      }
     }
   }, [])
 
@@ -180,13 +259,108 @@ export function TasksWorkbenchPage() {
   }, [employeeId])
 
   const filtered = useMemo(() => tasks.filter((task) => {
+    const query = params.get('q')?.trim().toLocaleLowerCase() ?? ''
     const employee = params.get('employee')
     const state = params.get('state')
     const project = params.get('project')
     const time = params.get('time')
     const windowMs = time === '24h' ? 86_400_000 : time === '7d' ? 604_800_000 : time === '30d' ? 2_592_000_000 : 0
-    return (!employee || task.employee_id === employee) && (!state || task.state === state) && (!project || task.project_binding.id === project) && (!windowMs || Date.parse(task.updated_at) >= Date.now() - windowMs)
+    return (!query || task.prompt.toLocaleLowerCase().includes(query) || task.id.toLocaleLowerCase().includes(query)) && (!employee || task.employee_id === employee) && (!state || task.state === state) && (!project || task.project_binding.id === project) && (!windowMs || Date.parse(task.updated_at) >= Date.now() - windowMs)
   }), [params, tasks])
+
+  const taskByID = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks])
+  const viewMode = params.get('view') === 'board' ? 'board' : 'list'
+  const filteredBoardCards = useMemo(() => {
+    if (!board) return []
+    const query = params.get('q')?.trim().toLocaleLowerCase() ?? ''
+    const employee = params.get('employee')
+    const state = params.get('state')
+    const label = params.get('label')
+    const provider = params.get('provider')
+    const model = params.get('model')
+    const loop = params.get('loop')
+    const priority = Number(params.get('priority') ?? 0)
+    const blocked = params.get('blocked')
+    const owner = params.get('owner')
+    const time = params.get('time')
+    const windowMs = time === '24h' ? 86_400_000 : time === '7d' ? 604_800_000 : time === '30d' ? 2_592_000_000 : 0
+    return board.cards.filter((card) => {
+      const task = card.task_id ? taskByID.get(card.task_id) : undefined
+      const matchesQuery = !query || card.title.toLocaleLowerCase().includes(query) || card.id.toLocaleLowerCase().includes(query)
+      const matchesState = !state || card.state === state
+      const matchesProject = !params.get('project') || task?.project_binding.id === params.get('project')
+      return matchesQuery && (!employee || card.employee_id === employee) && matchesState && matchesProject && (!label || card.labels.includes(label)) && (!provider || card.provider === provider) && (!model || card.model === model) && (!loop || card.loop_id === loop) && (!priority || card.priority === priority) && (blocked === null || blocked === '' || card.blocked === (blocked === 'true')) && (owner === null || owner === '' || (owner === 'true' ? card.approval_status === 'pending' : card.approval_status !== 'pending')) && (!windowMs || Date.parse(card.authoritative_updated_at) >= Date.now() - windowMs)
+    })
+  }, [board, params, taskByID])
+
+  const setFilter = (name: string, value: string) => {
+    const next = new URLSearchParams(params)
+    if (value) next.set(name, value)
+    else next.delete(name)
+    setParams(next)
+  }
+
+  async function saveBoardCard(card: TaskBoardCard, columnID: string) {
+    if (!connectivity.canMutate || !board) return
+    try {
+      const next = await updateTaskBoardCard(card.task_id ?? card.id, boardCardInput(card, columnID, Date.now()))
+      setBoard(next)
+    } catch (caught) {
+      actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+    }
+  }
+
+  function dropCard(card: TaskBoardCard, columnID: string) {
+    setDraggingID(null)
+    if (card.kind === 'task' && columnID === 'in_progress' && card.state !== 'running' && card.state !== 'verifying') {
+      setStartCandidate({ card, targetColumn: columnID })
+      return
+    }
+    void saveBoardCard(card, columnID)
+  }
+
+  async function confirmStartCandidate() {
+    if (!startCandidate?.card.task_id || !connectivity.canMutate || startBusy) return
+    const task = taskByID.get(startCandidate.card.task_id)
+    if (!task) return
+    setStartBusy(true)
+    try {
+      const nextTask = task.state === 'interrupted'
+        ? await resumeEmployeeTask(task.id)
+        : await startEmployeeTask(task.id)
+      setTasks((current) => current.map((item) => item.id === nextTask.id ? nextTask : item))
+      const nextBoard = await updateTaskBoardCard(task.id, boardCardInput(startCandidate.card, startCandidate.targetColumn, Date.now()))
+      setBoard(nextBoard)
+      setStartCandidate(null)
+    } catch (caught) {
+      actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+      if (caught instanceof ApiError && caught.status === 409) {
+        const refreshed = await getTaskBoard().catch(() => undefined)
+        if (refreshed) setBoard(refreshed)
+      }
+    } finally {
+      setStartBusy(false)
+    }
+  }
+
+  async function createNote() {
+    if (!noteTitle.trim() || noteCreating || !connectivity.canMutate) return
+    setNoteCreating(true)
+    try {
+      const next = await createTaskBoardNote({
+        title: noteTitle.trim(), body: noteBody, column_id: 'backlog', rank: Date.now(), labels: [], priority: 0,
+        due_at: null, pinned: false, source_url: '', blocker_reason: '',
+      })
+      setBoard(next)
+      setNoteTitle('')
+      setNoteBody('')
+      setNoteOpen(false)
+    } catch (caught) {
+      actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+    } finally {
+      setNoteCreating(false)
+    }
+  }
 
   const promptBytes = utf8Bytes(prompt)
   const availableSkills = context?.skills.bindings.filter((item) => item.status === 'current' && item.binding.enabled) ?? []
@@ -223,7 +397,10 @@ export function TasksWorkbenchPage() {
   if (error && tasks.length === 0) return <ErrorState title={t('tasks.loadError')} description={t('common.retryDescription')} />
   const activeEmployees = employees.filter((item) => item.state === 'active')
   const projectOptions = Array.from(new Map(tasks.map((task) => [task.project_binding.id, { id: task.project_binding.id, label: task.project_binding.label }])).values())
-  const setFilter = (name: 'employee' | 'project' | 'state' | 'time', value: string) => { const next = new URLSearchParams(params); if (value) next.set(name, value); else next.delete(name); setParams(next) }
+  const providerOptions = Array.from(new Set((board?.cards ?? []).map((card) => card.provider).filter((value): value is string => Boolean(value))))
+  const modelOptions = Array.from(new Set((board?.cards ?? []).map((card) => card.model).filter((value): value is string => Boolean(value))))
+  const labelOptions = Array.from(new Set((board?.cards ?? []).flatMap((card) => card.labels)))
+  const boardColumns = (board?.definition.columns ?? []).filter((column) => !column.hidden || params.get('archived') === '1')
   const citations = context?.knowledge.indexes.flatMap((index) => index.documents).flatMap((document) => document.citations) ?? []
   return <article className="feature-page antd-deep-page tasks-workbench-page">
     <PageHeader title={t('pages.tasks.title')} description={t('tasks.description')} />
@@ -244,15 +421,39 @@ export function TasksWorkbenchPage() {
         <Button className="task-create-action" block={!screens.md} type="primary" loading={creating} disabled={!connectivity.canMutate || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || !projectId} onClick={() => void create()}>{t('tasks.createQueued')}</Button>
       </Form>
     </Card>
-    <Card title={t('tasks.filters')}>
+    <Card title={<Space wrap><span>{t('tasks.filters')}</span><Segmented aria-label={t('tasks.view')} value={viewMode} options={[{ label: t('tasks.board'), value: 'board' }, { label: t('tasks.list'), value: 'list' }]} onChange={(value) => setFilter('view', String(value))} /></Space>} extra={<Space wrap><Button onClick={() => setNoteOpen(true)}>{t('tasks.newNote')}</Button><Button onClick={() => setFilter('archived', params.get('archived') === '1' ? '' : '1')}>{params.get('archived') === '1' ? t('tasks.hideArchived') : t('tasks.showArchived')}</Button></Space>}>
       <Row gutter={[16, 0]}>
+        <Col xs={24} sm={12} lg={8}><Form.Item label={t('tasks.search')}><Input.Search aria-label={t('tasks.search')} allowClear defaultValue={params.get('q') ?? ''} onSearch={(value) => setFilter('q', value)} /></Form.Item></Col>
         <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.employeeFilter')}><Select aria-label={t('tasks.employeeFilter')} allowClear value={params.get('employee') || undefined} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} onChange={(value) => setFilter('employee', value ?? '')} /></Form.Item></Col>
         <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.projectFilter')}><Select aria-label={t('tasks.projectFilter')} allowClear value={params.get('project') || undefined} options={projectOptions.map((project) => ({ value: project.id, label: project.label }))} onChange={(value) => setFilter('project', value ?? '')} /></Form.Item></Col>
         <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.stateFilter')}><Select aria-label={t('tasks.stateFilter')} allowClear value={params.get('state') || undefined} options={TASK_STATES.map((state) => ({ value: state, label: translatedEnum(t, 'taskStatus', state) }))} onChange={(value) => setFilter('state', value ?? '')} /></Form.Item></Col>
         <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.timeFilter')}><Select aria-label={t('tasks.timeFilter')} allowClear value={params.get('time') || undefined} options={[{ value: '24h', label: t('tasks.time24h') }, { value: '7d', label: t('tasks.time7d') }, { value: '30d', label: t('tasks.time30d') }]} onChange={(value) => setFilter('time', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.labelFilter')}><Select aria-label={t('tasks.labelFilter')} allowClear value={params.get('label') || undefined} options={labelOptions.map((label) => ({ value: label, label }))} onChange={(value) => setFilter('label', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.providerFilter')}><Select aria-label={t('tasks.providerFilter')} allowClear value={params.get('provider') || undefined} options={providerOptions.map((value) => ({ value, label: value }))} onChange={(value) => setFilter('provider', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.modelFilter')}><Select aria-label={t('tasks.modelFilter')} allowClear value={params.get('model') || undefined} options={modelOptions.map((value) => ({ value, label: value }))} onChange={(value) => setFilter('model', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.priorityFilter')}><Select aria-label={t('tasks.priorityFilter')} allowClear value={params.get('priority') || undefined} options={[1, 2, 3, 4].map((value) => ({ value: String(value), label: `P${value}` }))} onChange={(value) => setFilter('priority', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.blockedFilter')}><Select aria-label={t('tasks.blockedFilter')} allowClear value={params.get('blocked') || undefined} options={[{ value: 'true', label: t('common.yes') }, { value: 'false', label: t('common.no') }]} onChange={(value) => setFilter('blocked', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.ownerFilter')}><Select aria-label={t('tasks.ownerFilter')} allowClear value={params.get('owner') || undefined} options={[{ value: 'true', label: t('tasks.needsOwner') }, { value: 'false', label: t('tasks.noOwner') }]} onChange={(value) => setFilter('owner', value ?? '')} /></Form.Item></Col>
       </Row>
     </Card>
-    <Card><TaskList tasks={filtered} /></Card>
+    {boardError ? <Alert type="warning" showIcon message={t('tasks.boardUnavailable')} description={t('common.retryDescription')} /> : null}
+    {viewMode === 'list' ? <Card><TaskList tasks={filtered} /></Card> : <Card title={<Space><span>{board?.definition.name ?? t('tasks.board')}</span><Badge count={filteredBoardCards.length} showZero /></Space>}>
+      <div className="task-board-scroll" data-testid="task-board">
+        {boardColumns.map((column) => {
+          const cards = filteredBoardCards.filter((card) => card.column_id === column.id).sort((left, right) => left.rank - right.rank || Date.parse(left.authoritative_updated_at) - Date.parse(right.authoritative_updated_at))
+          return <section key={column.id} data-testid={`task-board-column-${column.id}`} className="task-board-column" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const card = filteredBoardCards.find((item) => item.id === draggingID); if (card) dropCard(card, column.id) }}>
+            <header className="task-board-column__header"><Space><span className="task-board-column__swatch" style={{ background: column.color }} /><Typography.Text strong>{column.title}</Typography.Text><Badge count={cards.length} showZero /></Space>{column.wip_limit ? <Typography.Text type="secondary">/{column.wip_limit}</Typography.Text> : null}</header>
+            <div className="task-board-column__cards">{cards.map((card) => <BoardCardView key={card.id} card={card} onOpen={(item) => { if (item.task_id) void navigate(`/tasks/${encodeURIComponent(item.task_id)}`) }} onDragStart={(item) => { setDraggingID(item.id) }} />)}{cards.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.emptyColumn')} /> : null}</div>
+          </section>
+        })}
+      </div>
+    </Card>}
+    <Modal open={Boolean(startCandidate)} title={t('tasks.startConfirmationTitle')} okText={t('tasks.start')} cancelText={t('actions.cancel')} confirmLoading={startBusy} onCancel={() => setStartCandidate(null)} onOk={() => void confirmStartCandidate()}>
+      {startCandidate ? (() => { const task = startCandidate.card.task_id ? taskByID.get(startCandidate.card.task_id) : undefined; return task ? <Space direction="vertical" size={16} style={{ width: '100%' }}><Alert type="warning" showIcon message={t('tasks.startConfirmation')} /><Descriptions bordered column={1} size="small"><Descriptions.Item label={t('tasks.employee')}>{startCandidate.card.employee_name || task.employee_id}</Descriptions.Item><Descriptions.Item label={t('tasks.model')}>{[startCandidate.card.provider, startCandidate.card.model].filter(Boolean).join(' / ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.workspace')}>{task.project_binding.workspace_fingerprint}</Descriptions.Item><Descriptions.Item label={t('tasks.skills')}>{task.skills.map((skill) => `${skill.skill_id}@${skill.version}`).join(', ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.permissions')}>{task.policy.allowed_capabilities.join(', ') || '—'} · {task.policy.network_allowed ? t('tasks.networkAllowed') : t('tasks.networkDisabled')}</Descriptions.Item><Descriptions.Item label={t('tasks.writerLease')}>{task.project_binding.mutation_allowed ? t('tasks.writerLeaseRequired') : t('tasks.readOnlyWorkspace')}</Descriptions.Item></Descriptions></Space> : null })() : null}
+    </Modal>
+    <Modal open={noteOpen} title={t('tasks.newNote')} okText={t('actions.save')} cancelText={t('actions.cancel')} confirmLoading={noteCreating} onCancel={() => setNoteOpen(false)} onOk={() => void createNote()}>
+      <Form layout="vertical"><Form.Item label={t('tasks.noteTitle')} required><Input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} /></Form.Item><Form.Item label={t('tasks.noteBody')}><Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} value={noteBody} onChange={(event) => setNoteBody(event.target.value)} /></Form.Item></Form>
+    </Modal>
   </article>
 }
 

@@ -24,6 +24,9 @@ const api = vi.hoisted(() => ({
   startEmployeeTask: vi.fn(),
   cancelEmployeeTask: vi.fn(),
   resumeEmployeeTask: vi.fn(),
+  getTaskBoard: vi.fn(),
+  updateTaskBoardCard: vi.fn(),
+  createTaskBoardNote: vi.fn(),
 }))
 const eventState = vi.hoisted(() => ({
   events: [] as Array<Record<string, unknown>>,
@@ -97,6 +100,51 @@ const queuedTask = {
   session_id: '',
   run_id: '',
   artifacts: [],
+}
+
+const taskBoard = {
+  schema_version: 1,
+  definition: {
+    id: 'default',
+    name: 'Task workspace',
+    columns: [
+      { id: 'backlog', title: 'Backlog', color: '#64748b', hidden: false },
+      { id: 'todo', title: 'Todo', color: '#2563eb', hidden: false },
+      { id: 'in_progress', title: 'In progress', color: '#0891b2', hidden: false },
+      { id: 'review', title: 'Review', color: '#d97706', hidden: false },
+      { id: 'done', title: 'Done', color: '#16a34a', hidden: false },
+    ],
+  },
+  cards: [{
+    id: queuedTask.id,
+    task_id: queuedTask.id,
+    kind: 'task',
+    title: queuedTask.prompt,
+    column_id: 'todo',
+    rank: 0,
+    labels: [],
+    priority: 0,
+    pinned: false,
+    blocked: false,
+    depends_on: [],
+    employee_id: employee.id,
+    employee_name: employee.name,
+    provider: 'openai',
+    model: 'gpt',
+    state: 'queued',
+    state_source: 'employee_task',
+    projection_reason: 'queued_task',
+    authoritative_updated_at: now,
+    session_event_sequence: 0,
+    session_count: 0,
+    approval_status: 'none',
+    verification_status: 'none',
+    stale: false,
+  }],
+  view: { view: 'board', wip_enabled: false },
+  filters: { states: [], labels: [] },
+  updated_at: now,
+  projection_generated_at: now,
 }
 
 function renderTasks(path = '/tasks') {
@@ -214,6 +262,9 @@ beforeEach(() => {
   api.getEmployeeSkills.mockResolvedValue({ employee_id: employee.id, revision: 3, bindings: [] })
   api.getEmployeeKnowledge.mockResolvedValue({ employee_id: employee.id, sources: [], indexes: [], results: [] })
   api.getEmployeeMemory.mockResolvedValue({ employee_id: employee.id, facts: [] })
+  api.getTaskBoard.mockResolvedValue(taskBoard)
+  api.updateTaskBoardCard.mockResolvedValue({ ...taskBoard, cards: [{ ...taskBoard.cards[0], column_id: 'in_progress', state: 'running', projection_reason: 'run_running', session_id: 'session-1', run_id: 'run-1', session_count: 1 }] })
+  api.createTaskBoardNote.mockResolvedValue(taskBoard)
 })
 
 describe('Employee Tasks Phase 4 pages', () => {
@@ -261,6 +312,27 @@ describe('Employee Tasks Phase 4 pages', () => {
     expect(screen.getByRole('link', { name: 'Prepare release.' })).toHaveAttribute('href', '/tasks/task-queued')
     expect(screen.getByText('Queued')).toBeVisible()
     expect(screen.getByText('Ada')).toBeVisible()
+  })
+
+  it('renders Board cards and requires explicit Start confirmation before an In progress drop', async () => {
+    const user = userEvent.setup()
+    api.startEmployeeTask.mockResolvedValue({ ...queuedTask, state: 'running', session_id: 'session-1', run_id: 'run-1' })
+    renderTasks('/tasks?view=board')
+
+    const card = await screen.findByRole('link', { name: /Prepare release/u })
+    fireEvent.dragStart(card)
+    fireEvent.drop(screen.getByTestId('task-board-column-in_progress'))
+    await waitFor(() => {
+      const startButtons = screen.getAllByRole('button', { name: 'Start' })
+      expect(startButtons[startButtons.length - 1]).toBeVisible()
+    })
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    const startButtons = screen.getAllByRole('button', { name: 'Start' })
+    const startButton = startButtons[startButtons.length - 1]!
+    expect(startButton.closest('.ant-modal')).toHaveTextContent('Employee')
+    await user.click(startButton)
+    await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledWith(queuedTask.id))
+    expect(api.updateTaskBoardCard).toHaveBeenCalledWith(queuedTask.id, expect.objectContaining({ column_id: 'in_progress' }))
   })
 
   it('loads the last 100 Tasks per Employee and exposes the boundary', async () => {

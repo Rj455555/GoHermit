@@ -16,6 +16,7 @@ import {
   decodeEmployeeSkills,
   decodeEmployeeTask,
   decodeEmployeeTasks,
+  decodeTaskBoard,
   decodeDecision,
   decodeHealth,
   decodeInfo,
@@ -46,6 +47,8 @@ import type {
   ProjectBinding,
   SkillBinding,
   TeamTemplate,
+  TaskBoardCardInput,
+  TaskBoardNoteInput,
 } from './types'
 
 type ReadOptions = Pick<ApiRequestOptions, 'signal'>
@@ -274,6 +277,28 @@ export const resumeEmployeeTask = (taskId: string, options: ReadOptions = {}) =>
     ...options,
     method: 'POST',
   })
+
+export const getTaskBoard = (options: ReadOptions = {}) =>
+  apiRequest('/api/task-board', decodeTaskBoard, options)
+
+export const updateTaskBoardCard = (
+  taskId: string,
+  input: TaskBoardCardInput,
+  options: ReadOptions = {},
+) => apiRequest(`/api/task-board/cards/${segment(taskId)}`, decodeTaskBoard, {
+  ...options,
+  method: 'PUT',
+  body: input,
+})
+
+export const createTaskBoardNote = (
+  input: TaskBoardNoteInput,
+  options: ReadOptions = {},
+) => apiRequest('/api/task-board/notes', decodeTaskBoard, {
+  ...options,
+  method: 'POST',
+  body: input,
+})
 
 export const getLoop = (loopId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/loops/${segment(loopId)}`, decodeLoopDefinition, options)
