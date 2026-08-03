@@ -75,6 +75,28 @@ import { useUI } from '../../state/UIContext'
 const MAX_PROMPT_BYTES = 16 << 10
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
 const TASK_STATES = ['queued', 'prepared', 'waiting_owner', 'running', 'verifying', 'interrupted', 'completed', 'failed', 'cancelled'] as const
+const BOARD_TEMPLATES: Record<string, TaskBoardDefinition> = {
+  software: {
+    id: 'software', name: 'Software development', columns: [
+      { id: 'backlog', title: 'Backlog', color: '#64748b', hidden: false },
+      { id: 'todo', title: 'Todo', color: '#2563eb', hidden: false },
+      { id: 'in_progress', title: 'In progress', color: '#0891b2', hidden: false, wip_limit: 4 },
+      { id: 'review', title: 'Review', color: '#d97706', hidden: false, wip_limit: 3 },
+      { id: 'done', title: 'Done', color: '#16a34a', hidden: false },
+      { id: 'archived', title: 'Archived', color: '#94a3b8', hidden: true },
+    ],
+  },
+  research: {
+    id: 'research', name: 'Content and research', columns: [
+      { id: 'ideas', title: 'Ideas', color: '#7c3aed', hidden: false },
+      { id: 'todo', title: 'To research', color: '#2563eb', hidden: false },
+      { id: 'in_progress', title: 'Researching', color: '#0891b2', hidden: false, wip_limit: 5 },
+      { id: 'review', title: 'Owner review', color: '#d97706', hidden: false, wip_limit: 3 },
+      { id: 'done', title: 'Published', color: '#16a34a', hidden: false },
+      { id: 'archived', title: 'Archived', color: '#94a3b8', hidden: true },
+    ],
+  },
+}
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength
 const { Paragraph, Text, Title } = Typography
 
@@ -207,6 +229,7 @@ export function TasksWorkbenchPage() {
   const [noteSourceID, setNoteSourceID] = useState<string | null>(null)
   const [definitionOpen, setDefinitionOpen] = useState(false)
   const [definitionText, setDefinitionText] = useState('')
+  const [definitionTemplate, setDefinitionTemplate] = useState('custom')
   const [definitionSaving, setDefinitionSaving] = useState(false)
   const [draggingID, setDraggingID] = useState<string | null>(null)
   const [startCandidate, setStartCandidate] = useState<{ card: TaskBoardCard; targetColumn: string } | null>(null)
@@ -374,7 +397,14 @@ export function TasksWorkbenchPage() {
   function openDefinitionEditor() {
     if (!board) return
     setDefinitionText(JSON.stringify(board.definition, null, 2))
+    setDefinitionTemplate('custom')
     setDefinitionOpen(true)
+  }
+
+  function selectDefinitionTemplate(value: string) {
+    setDefinitionTemplate(value)
+    const template = BOARD_TEMPLATES[value]
+    if (template) setDefinitionText(JSON.stringify(template, null, 2))
   }
 
   async function saveDefinition() {
@@ -518,7 +548,7 @@ export function TasksWorkbenchPage() {
       <Form layout="vertical"><Form.Item label={t('tasks.noteTitle')} required><Input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} /></Form.Item><Form.Item label={t('tasks.noteBody')}><Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} value={noteBody} onChange={(event) => setNoteBody(event.target.value)} /></Form.Item></Form>
     </Modal>
     <Modal open={definitionOpen} title={t('tasks.boardSettings')} okText={t('actions.save')} cancelText={t('actions.cancel')} confirmLoading={definitionSaving} onCancel={() => setDefinitionOpen(false)} onOk={() => void saveDefinition()}>
-      <Form layout="vertical"><Form.Item label={t('tasks.definitionJSON')} help={t('tasks.definitionHelp')}><Input.TextArea aria-label={t('tasks.definitionJSON')} autoSize={{ minRows: 12, maxRows: 28 }} value={definitionText} onChange={(event) => setDefinitionText(event.target.value)} /></Form.Item></Form>
+      <Form layout="vertical"><Form.Item label={t('tasks.template')}><Select aria-label={t('tasks.template')} value={definitionTemplate} options={[{ value: 'software', label: t('tasks.templateSoftware') }, { value: 'research', label: t('tasks.templateResearch') }, { value: 'custom', label: t('tasks.templateCustom') }]} onChange={selectDefinitionTemplate} /></Form.Item><Form.Item label={t('tasks.definitionJSON')} help={t('tasks.definitionHelp')}><Input.TextArea aria-label={t('tasks.definitionJSON')} autoSize={{ minRows: 12, maxRows: 28 }} value={definitionText} onChange={(event) => { setDefinitionTemplate('custom'); setDefinitionText(event.target.value) }} /></Form.Item></Form>
     </Modal>
   </article>
 }
