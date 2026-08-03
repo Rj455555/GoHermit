@@ -111,3 +111,26 @@ Foundation、Dashboard、Employees 列表、Agent、Settings、Loops 与 Tasks �
 - Ant Design production bundle 的单 chunk 仍较大，是后续性能候选；本轮不引入新依赖或路由级 code splitting，以避免越过授权边界。
 
 下一轮候选仅记录为：按路由拆包、为现有后端补充可持久化的 Employee 最近 Dry Run/Verification 投影、以及在后端先定义 Knowledge update 契约。未在本轮开始。
+
+## Visual Gate 修订（Round 2）
+
+本次 Gate 的阻断点均为展示层契约问题，未改变 API、DTO、Store、Session/Run 状态机或 SSE 协议。
+
+### 根因与修订
+
+- Employee 目录原先把 Ant Design `Row/Col` 与旧 `.employee-grid` grid、`li` 和 link padding 叠加，导致列宽和卡片高度漂移。已删除冲突 selector，改用 `employee-directory-grid`、`employee-card-anchor`；Row/Col 使用 `xs=24, sm=12, lg=8, xl=6`，Card 负责 padding，anchor 只负责导航与焦点。
+- Dashboard 原先把纵向间距分散在兄弟节点、旧 hero 外层和嵌套 Card，并保留固定高度规则。已改为单一 Ant Design `Space` 纵向栈、16px gap、单一 `dashboard-hero-card` surface；Hero 高度由内容决定，摘要/指标/最近区域使用同一 Row/Col 对齐。
+- 旧全局 `table/th/td`、旧 `.hero`、旧 `.employee-grid`/`.employee-task-table` 规则和 `body` 横向 overflow 遮罩已移除或限制到仍在用的语义类；Ant Design Table 现在拥有 header/cell 对齐和 table layout。
+- Skill Search 移除重复 prefix icon；Skill kind、Binding status、Loop revision 增加 zh-CN/en-US 翻译，`skill_md_adapter`、`not bound` 和状态值不再直接暴露内部枚举。
+- Global/Employee Task prompt 使用三行可展开 `Typography.Paragraph`，`white-space: normal`、`overflow-wrap:anywhere` 和固定表格列策略；Session/Run、路径、Digest、Tool/Verification/Artifact 文本均允许安全换行。移动端继续使用 Card/List，不依赖页面级横向滚动。
+
+### 响应式与验收证据
+
+- 目录卡片在桌面最多四列、同一行高度差不超过 2px；平板按 2 列/单列断点收缩，360px–390px 无页面级横向滚动。
+- Dashboard 在 1440/1280/1024/768/390px 均保持单一纵向栈；summary、metrics 和 recent/access 行共享 16px gutter，Hero 不再有空白固定高度或重复白色嵌套面。
+- Task prompt 的 geometry 断言覆盖 desktop/tablet/mobile Chrome/Safari；检查 `white-space`、容器宽度、scrollWidth 和 document width。
+- 新增/更新 Vitest：Dashboard 单 Hero/单栈、CSS 冲突契约、Employee anchor class；当前前端全量为 186/186 passed，zero-warning lint 与 typecheck 通过。
+- `round2-responsive.spec.ts` 的新增 grid、Dashboard 和 Task wrapping 断言已在 desktop-chrome、tablet、mobile-chrome、mobile-safari 通过；专项 8/8 通过。视觉截图继续输出到 `/tmp/gohermit-react-antd-round2-screenshots`，不提交到 Git，覆盖 1440×900、1280×800、1024×768、768×1024、430×932、390×844、375×812、360×800 的 Dashboard、Employee、Tasks、Loops/Mission 和 loading/empty/error 状态。
+- `pnpm build` 通过，产物不生成 sourcemap；本轮 UI 修改只更新对应的 content-hashed dist 文件，后续提交前执行两次干净构建与 committed dist drift 检查。
+
+保留的旧 CSS 仅限仍被第一轮 Shell/Agent/Settings 或回滚兼容路径引用的规则；本次已通过引用检查、TypeScript、Vitest 和浏览器几何测试确认未再被 Employee/Task/Dashboard Ant Design 页面使用。未开始下一轮产品功能。

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Card, Col, Empty, List, Row, Skeleton, Statistic, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Col, Empty, List, Row, Skeleton, Space, Statistic, Tag, Typography } from 'antd'
 import {
   Bot,
   Plus,
@@ -127,33 +127,32 @@ export function DashboardPage() {
           </div>
         )}
       />
-      {error || connectivity.status === 'offline' ? <Alert className="stale-notice" type="warning" showIcon message={t('connectivity.stale')} /> : null}
-      <Row gutter={[16, 16]} className="dashboard-summary" aria-label={t('dashboard.summary')}>
-        <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.active')} value={projection.info.active ? t('dashboard.running') : t('dashboard.idle')} /></Card></Col>
-        <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.readyAccess')} value={availableAccess} /></Card></Col>
-        <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.workspace')} value={projection.info.workspace} valueStyle={{ fontSize: 14 }} /></Card></Col>
-        <Col xs={24} sm={12} xl={6}><Card><Statistic title="Owner" value={ownerName} /></Card></Col>
-      </Row>
-      <section className="hero" aria-label={t('dashboard.summary')}>
-        <Card>
-          <Typography.Text type="secondary">NEXT BEST ACTION</Typography.Text>
+      <Space direction="vertical" size={16} className="dashboard-content-stack" aria-label={t('dashboard.summary')}>
+        {error || connectivity.status === 'offline' ? <Alert className="stale-notice" type="warning" showIcon message={t('connectivity.stale')} /> : null}
+        <Row gutter={[16, 16]} className="dashboard-summary">
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.active')} value={projection.info.active ? t('dashboard.running') : t('dashboard.idle')} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.readyAccess')} value={availableAccess} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.workspace')} value={projection.info.workspace} valueStyle={{ fontSize: 14 }} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title="Owner" value={ownerName} /></Card></Col>
+        </Row>
+        <Card className="dashboard-hero-card" aria-label={t('dashboard.summary')}>
+          <Typography.Text className="dashboard-hero-eyebrow">NEXT BEST ACTION</Typography.Text>
           <Typography.Title level={2}>{recent ? (recentLoop?.name ?? recent.loop_id) : t('dashboard.idle')}</Typography.Title>
           <Typography.Paragraph>{recent ? translatedEnum(t, 'invocationStatus', recent.status) : t('dashboard.noRecent')}</Typography.Paragraph>
-          <div className="actions">
+          <Space className="dashboard-hero-actions" size={8} wrap>
             {recent ? <Button type="primary" href={`/loops/${encodeURIComponent(recent.loop_id)}`}>{t('employees.openEmployee')}</Button> : null}
             <Button href="/agent">{t('agent.newSession')}</Button>
-          </div>
+          </Space>
         </Card>
-      </section>
-      <Row gutter={[16, 16]} className="dashboard-metrics">
-        <Col xs={12} sm={6}><Card><Statistic title={t('dashboard.loopDefinitions')} value={projection.loops.length} /></Card></Col>
-        <Col xs={12} sm={6}><Card><Statistic title={t('dashboard.active')} value={counts.active} formatter={(value) => <span data-testid="invocation-active">{value}</span>} /></Card></Col>
-        <Col xs={12} sm={6}><Card><Statistic title={t('dashboard.completed')} value={counts.completed} formatter={(value) => <span data-testid="invocation-completed">{value}</span>} /></Card></Col>
-        <Col xs={12} sm={6}><Card><Statistic title={t('dashboard.failed')} value={counts.failed + counts.interrupted} formatter={(value) => <span data-testid="invocation-failed">{value}</span>} /></Card></Col>
-      </Row>
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={16}>
-          <Card title={t('dashboard.recent')} extra={<Tag color="blue">{projection.loops.length}</Tag>}>
+        <Row gutter={[16, 16]} className="dashboard-metrics">
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.loopDefinitions')} value={projection.loops.length} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.active')} value={counts.active} formatter={(value) => <span data-testid="invocation-active">{value}</span>} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.completed')} value={counts.completed} formatter={(value) => <span data-testid="invocation-completed">{value}</span>} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.failed')} value={counts.failed + counts.interrupted} formatter={(value) => <span data-testid="invocation-failed">{value}</span>} /></Card></Col>
+        </Row>
+        <Row gutter={[16, 16]} className="dashboard-recent-row">
+          <Col xs={24} xl={16}>
+            <Card title={t('dashboard.recent')} extra={<Tag color="blue">{projection.loops.length}</Tag>}>
             <List
               dataSource={projection.loops.slice(0, 2)}
               locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('common.empty')} /> }}
@@ -172,10 +171,10 @@ export function DashboardPage() {
                 )
               }}
             />
-          </Card>
-        </Col>
-        <Col xs={24} xl={8}>
-          <Card title={t('dashboard.readyAccess')}>
+            </Card>
+          </Col>
+          <Col xs={24} xl={8}>
+            <Card title={t('dashboard.readyAccess')}>
             <List
               dataSource={[
                 { name: 'GoHermit API', detail: `active · v${projection.info.version}`, ok: true },
@@ -185,9 +184,10 @@ export function DashboardPage() {
               ]}
               renderItem={(item) => <List.Item><List.Item.Meta avatar={<Tag color={item.ok ? 'success' : 'error'}>{item.ok ? 'OK' : '!'}</Tag>} title={item.name} description={item.detail} /></List.Item>}
             />
-          </Card>
-        </Col>
-      </Row>
+            </Card>
+          </Col>
+        </Row>
+      </Space>
     </article>
   )
 }

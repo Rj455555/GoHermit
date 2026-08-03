@@ -73,7 +73,7 @@ export function EmployeesPage() {
       />
       {wizard ? <Phase4EmployeeWizard onClose={() => setWizard(false)} onCreated={(record) => { void navigate(`/employees/${encodeURIComponent(record.employee.id)}`) }} /> : null}
       <div className="filter-field">
-        <Typography.Text strong><SlidersHorizontal size={16} aria-hidden="true" />{t('employees.state')}</Typography.Text>
+        <Typography.Text strong className="filter-field__label"><SlidersHorizontal size={16} aria-hidden="true" />{t('employees.state')}</Typography.Text>
         <Select
           aria-label={t('employees.state')}
           value={state || undefined}
@@ -103,10 +103,10 @@ export function EmployeesPage() {
           )}
         />
       ) : (
-        <Row gutter={[16, 16]} className="employee-grid">
+        <Row gutter={[16, 16]} className="employee-directory-grid">
           {items.map((employee) => (
-            <Col key={employee.id} xs={24} sm={12} xl={8} xxl={6}>
-              <Link className="employee-card-link" to={`/employees/${encodeURIComponent(employee.id)}`}>
+            <Col key={employee.id} xs={24} sm={12} lg={8} xl={6}>
+              <Link className="employee-card-anchor" to={`/employees/${encodeURIComponent(employee.id)}`}>
                 <Card hoverable className="employee-card">
                   <Typography.Title level={4} ellipsis={{ tooltip: employee.name }}>{employee.name}</Typography.Title>
                   <Typography.Paragraph type="secondary" ellipsis={{ rows: 2 }}>{employee.job_title || t('employees.jobTitle')}</Typography.Paragraph>

@@ -39,7 +39,6 @@ import {
   MoreHorizontal,
   Pencil,
   RefreshCw,
-  Search,
   ShieldCheck,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -120,6 +119,12 @@ function statusColor(value: string) {
   if (['failed', 'blocked', 'digest_drift', 'interrupted', 'cancelled'].includes(value)) return 'error'
   if (['disabled', 'missing', 'archived'].includes(value)) return 'warning'
   return 'processing'
+}
+
+function skillKindLabel(t: ReturnType<typeof useTranslation>['t'], value: string | undefined) {
+  if (value === 'native') return t('employees.nativeSkill')
+  if (value === 'skill_md_adapter') return t('employees.adapterSkill')
+  return value || t('employees.notFound')
 }
 
 function CopyValue({ value, compact = false }: { value: string; compact?: boolean }) {
@@ -550,9 +555,9 @@ export function EmployeeDetailPage() {
         </Space>
       ),
     },
-    { title: t('employees.skillKind'), key: 'kind', render: (_, row) => <Tag>{row.catalog?.kind ?? row.status?.kind ?? 'missing'}</Tag> },
+    { title: t('employees.skillKind'), key: 'kind', render: (_, row) => <Tag>{skillKindLabel(t, row.catalog?.kind ?? row.status?.kind)}</Tag> },
     { title: 'Digest', key: 'digest', render: (_, row) => <CopyValue compact value={row.binding?.digest ?? row.catalog?.digest ?? ''} /> },
-    { title: t('employees.bindingStatus'), key: 'status', render: (_, row) => <Tag color={statusColor(row.status?.status ?? (row.binding ? 'current' : 'disabled'))}>{row.status?.status ?? (row.binding ? 'current' : 'not bound')}</Tag> },
+    { title: t('employees.bindingStatus'), key: 'status', render: (_, row) => { const value = row.status?.status ?? (row.binding ? 'current' : 'missing'); return <Tag color={statusColor(value)}>{row.binding ? translatedEnum(t, 'skillStatus', value) : t('employees.notBound')}</Tag> } },
     {
       title: t('actions.actions'),
       key: 'actions',
@@ -574,7 +579,7 @@ export function EmployeeDetailPage() {
   ]
 
   const taskColumns: TableColumnsType<EmployeeTask> = [
-    { title: t('tasks.prompt'), dataIndex: 'prompt', key: 'prompt', render: (value: string, task) => <Link to={`/tasks/${encodeURIComponent(task.id)}`}><Text ellipsis={{ tooltip: value }}>{value}</Text></Link> },
+    { title: t('tasks.prompt'), dataIndex: 'prompt', key: 'prompt', render: (value: string, task) => <Link className="task-prompt-link" to={`/tasks/${encodeURIComponent(task.id)}`}><Typography.Paragraph className="task-prompt-text" ellipsis={{ rows: 3, expandable: true }}>{value}</Typography.Paragraph></Link> },
     { title: t('tasks.state'), dataIndex: 'state', key: 'state', render: (value: string) => <Tag color={statusColor(value)}>{translatedEnum(t, 'taskStatus', value)}</Tag> },
     { title: t('tasks.project'), key: 'project', render: (_, task) => <Text>{task.project_binding.label}</Text> },
     { title: 'Session / Run', key: 'session', render: (_, task) => <Space direction="vertical" size={0}><CopyValue compact value={task.session_id ?? ''} /><CopyValue compact value={task.run_id ?? ''} /></Space> },
@@ -751,19 +756,19 @@ export function EmployeeDetailPage() {
         <Space direction="vertical" size={16} className="antd-page-stack employee-skills-page">
           <Alert type="info" showIcon message={copy.exactIdentity} description={copy.capabilityHint} />
           <Flex gap={12} wrap>
-            <Input.Search allowClear prefix={<Search size={16} />} aria-label={t('employees.searchSkills')} placeholder={t('employees.searchSkills')} value={skillQuery} onChange={(event) => setSkillQuery(event.target.value)} />
+            <Input.Search allowClear aria-label={t('employees.searchSkills')} placeholder={t('employees.searchSkills')} value={skillQuery} onChange={(event) => setSkillQuery(event.target.value)} />
             <Select aria-label={t('employees.skillKind')} value={skillKindFilter} onChange={setSkillKindFilter} options={[{ value: 'all', label: t('employees.all') }, { value: 'native', label: 'Native' }, { value: 'skill_md_adapter', label: 'SKILL.md Adapter' }]} />
           </Flex>
           {skills === null ? <Skeleton active /> : isMobile ? (
             <List dataSource={filteredSkills} locale={{ emptyText: <Empty /> }} renderItem={(row) => (
               <List.Item>
-                <Card data-testid={`skill-card-${row.binding?.skill_id ?? row.catalog?.skill_id}`} className="mobile-resource-card" title={row.catalog?.title ?? row.binding?.skill_id} extra={<Tag color={statusColor(row.status?.status ?? 'disabled')}>{row.status?.status ?? (row.binding ? 'current' : 'not bound')}</Tag>}>
-                  <Descriptions column={1} size="small"><Descriptions.Item label="ID">{row.binding?.skill_id ?? row.catalog?.skill_id}</Descriptions.Item><Descriptions.Item label={t('employees.version')}>{row.binding?.version ?? row.catalog?.version}</Descriptions.Item><Descriptions.Item label="Digest"><CopyValue value={row.binding?.digest ?? row.catalog?.digest ?? ''} /></Descriptions.Item><Descriptions.Item label={t('employees.skillKind')}>{row.catalog?.kind ?? row.status?.kind ?? 'missing'}</Descriptions.Item></Descriptions>
+                <Card data-testid={`skill-card-${row.binding?.skill_id ?? row.catalog?.skill_id}`} className="mobile-resource-card" title={row.catalog?.title ?? row.binding?.skill_id} extra={(() => { const value = row.status?.status ?? (row.binding ? 'current' : 'missing'); return <Tag color={statusColor(value)}>{row.binding ? translatedEnum(t, 'skillStatus', value) : t('employees.notBound')}</Tag> })()}>
+                  <Descriptions column={1} size="small"><Descriptions.Item label="ID">{row.binding?.skill_id ?? row.catalog?.skill_id}</Descriptions.Item><Descriptions.Item label={t('employees.version')}>{row.binding?.version ?? row.catalog?.version}</Descriptions.Item><Descriptions.Item label="Digest"><CopyValue value={row.binding?.digest ?? row.catalog?.digest ?? ''} /></Descriptions.Item><Descriptions.Item label={t('employees.skillKind')}>{skillKindLabel(t, row.catalog?.kind ?? row.status?.kind)}</Descriptions.Item></Descriptions>
                   <Space direction="vertical" className="mobile-card-actions"><Button block onClick={() => setSelectedSkillKey(row.key)}>{copy.inspect}</Button>{row.binding ? <Button aria-label={`Remove Skill ${row.binding.skill_id}@${row.binding.version}`} block disabled={!canMutate} onClick={() => setSkillDraft((value) => value.filter((item) => skillIdentity(item) !== row.key))}>{t('employees.removeSkill')}</Button> : row.catalog ? <Button block type="primary" disabled={!canMutate} onClick={() => { setSkillDraft((value) => [...value, { skill_id: row.catalog!.skill_id, version: row.catalog!.version, digest: row.catalog!.digest, configuration: {}, enabled: true }]); setSkillConfiguration((value) => ({ ...value, [row.key]: '{}' })); setSelectedSkillKey(row.key) }}>{t('employees.bindSkill')}</Button> : null}</Space>
                 </Card>
               </List.Item>
             )} />
-          ) : <Table rowKey="key" columns={skillColumns} dataSource={filteredSkills} pagination={false} scroll={{ x: 900 }} />}
+          ) : <Table className="skill-table" rowKey="key" columns={skillColumns} dataSource={filteredSkills} pagination={false} />}
           {skills?.bindings.filter((item) => item.status === 'digest_drift').map((item) => {
             const current = catalog.find((candidate) => skillVersion(candidate) === skillVersion(item.binding))
             return current ? <Alert key={skillIdentity(item.binding)} type="warning" showIcon message={t('employees.staleDigest')} description={<Space wrap><CopyValue value={item.binding.digest} /><Button aria-label={`Upgrade to current digest ${item.binding.skill_id}@${item.binding.version}`} disabled={!canMutate} onClick={() => setSkillDraft((value) => value.map((binding) => skillIdentity(binding) === skillIdentity(item.binding) ? { ...binding, digest: current.digest } : binding))}>{t('employees.upgradeSkill')}</Button></Space>} /> : null
@@ -771,7 +776,7 @@ export function EmployeeDetailPage() {
           <Drawer title={copy.inspect} open={selectedSkillRow !== null} width={isMobile ? '100%' : 560} onClose={() => setSelectedSkillKey(null)} destroyOnClose={false}>
             {selectedSkillRow ? (
               <Space direction="vertical" size={16} className="antd-page-stack">
-                <Descriptions column={1} bordered size="small"><Descriptions.Item label="Skill">{selectedSkillRow.catalog?.title ?? selectedSkillRow.binding?.skill_id}</Descriptions.Item><Descriptions.Item label="Identity"><CopyValue value={selectedSkillRow.key} /></Descriptions.Item><Descriptions.Item label={t('employees.bindingStatus')}><Tag color={statusColor(selectedSkillRow.status?.status ?? 'disabled')}>{selectedSkillRow.status?.status ?? (selectedSkillRow.binding ? 'current' : 'not bound')}</Tag></Descriptions.Item></Descriptions>
+                <Descriptions column={1} bordered size="small"><Descriptions.Item label="Skill">{selectedSkillRow.catalog?.title ?? selectedSkillRow.binding?.skill_id}</Descriptions.Item><Descriptions.Item label="Identity"><CopyValue value={selectedSkillRow.key} /></Descriptions.Item><Descriptions.Item label={t('employees.bindingStatus')}>{(() => { const value = selectedSkillRow.status?.status ?? (selectedSkillRow.binding ? 'current' : 'missing'); return <Tag color={statusColor(value)}>{selectedSkillRow.binding ? translatedEnum(t, 'skillStatus', value) : t('employees.notBound')}</Tag> })()}</Descriptions.Item></Descriptions>
                 {selectedSkillRow.catalog ? <Card size="small" title={copy.capabilities}><List size="small" dataSource={selectedSkillRow.catalog.requested_capabilities} renderItem={(capability) => <List.Item><Space><Checkbox checked={employee.permission_policy.allowed_capabilities.includes(capability)} disabled /><Text>{capability}</Text></Space></List.Item>} /><Paragraph type="secondary">{copy.capabilityHint}</Paragraph></Card> : null}
                 {selectedSkillRow.binding ? <Switch aria-label={`Enabled ${selectedSkillRow.catalog?.title ?? selectedSkillRow.binding.skill_id}`} checked={selectedSkillRow.binding.enabled} disabled={!canMutate} checkedChildren={t('bindingStatus.enabled')} unCheckedChildren={t('bindingStatus.disabled')} onChange={(enabled) => setSkillDraft((value) => value.map((binding) => skillIdentity(binding) === selectedSkillRow.key ? { ...binding, enabled } : binding))} /> : null}
                 {selectedSkillRow.binding && selectedSkillRow.catalog?.kind === 'native' ? <Form layout="vertical"><Form.Item label={t('employees.configurationJSON')} {...(skillErrors[selectedSkillRow.key] ? { validateStatus: 'error' as const, help: skillErrors[selectedSkillRow.key] } : {})}><Input.TextArea aria-label={`Configuration JSON ${selectedSkillRow.catalog.title}`} className="json-editor" autoSize={{ minRows: 10, maxRows: 24 }} value={skillConfiguration[selectedSkillRow.key] ?? JSON.stringify(selectedSkillRow.binding.configuration, null, 2)} onChange={(event) => { setSkillConfiguration((value) => ({ ...value, [selectedSkillRow.key]: event.target.value })); setSkillErrors((value) => ({ ...value, [selectedSkillRow.key]: '' })) }} /></Form.Item></Form> : null}
@@ -861,7 +866,7 @@ export function EmployeeDetailPage() {
       ) : null}
 
       {tab === 'tasks' ? (
-        <Space direction="vertical" size={16} className="antd-page-stack employee-tasks-page"><Flex justify="space-between" wrap gap={12}><Title level={3}>{t('employees.tabs.tasks')}</Title>{!archived ? <Button type="primary"><Link to="/tasks">{t('tasks.create')}</Link></Button> : null}</Flex>{tasks === null ? <Skeleton active /> : isMobile ? <List dataSource={tasks} locale={{ emptyText: <Empty description={t('employees.noTasks')} /> }} renderItem={(task) => <List.Item><Card className="mobile-resource-card" title={<Link to={`/tasks/${encodeURIComponent(task.id)}`}>{task.prompt}</Link>} extra={<Tag color={statusColor(task.state)}>{translatedEnum(t, 'taskStatus', task.state)}</Tag>}><Descriptions column={1} size="small"><Descriptions.Item label={t('tasks.employee')}>{task.employee_id} · rev {task.employee_revision}</Descriptions.Item><Descriptions.Item label={t('tasks.project')}>{task.project_binding.label}</Descriptions.Item><Descriptions.Item label="Session"><CopyValue value={task.session_id ?? ''} /></Descriptions.Item><Descriptions.Item label="Run"><CopyValue value={task.run_id ?? ''} /></Descriptions.Item><Descriptions.Item label={t('tasks.updated')}>{task.updated_at}</Descriptions.Item></Descriptions><Button block><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{copy.openTask}</Link></Button></Card></List.Item>} /> : <Table rowKey="id" dataSource={tasks} columns={taskColumns} pagination={false} scroll={{ x: 1000 }} />}</Space>
+        <Space direction="vertical" size={16} className="antd-page-stack employee-tasks-page"><Flex justify="space-between" wrap gap={12}><Title level={3}>{t('employees.tabs.tasks')}</Title>{!archived ? <Button type="primary"><Link to="/tasks">{t('tasks.create')}</Link></Button> : null}</Flex>{tasks === null ? <Skeleton active /> : isMobile ? <List dataSource={tasks} locale={{ emptyText: <Empty description={t('employees.noTasks')} /> }} renderItem={(task) => <List.Item><Card className="mobile-resource-card" title={<Link className="task-prompt-link" to={`/tasks/${encodeURIComponent(task.id)}`}><Typography.Paragraph className="task-prompt-text" ellipsis={{ rows: 3, expandable: true }}>{task.prompt}</Typography.Paragraph></Link>} extra={<Tag color={statusColor(task.state)}>{translatedEnum(t, 'taskStatus', task.state)}</Tag>}><Descriptions column={1} size="small"><Descriptions.Item label={t('tasks.employee')}>{task.employee_id} · rev {task.employee_revision}</Descriptions.Item><Descriptions.Item label={t('tasks.project')}>{task.project_binding.label}</Descriptions.Item><Descriptions.Item label="Session"><CopyValue value={task.session_id ?? ''} /></Descriptions.Item><Descriptions.Item label="Run"><CopyValue value={task.run_id ?? ''} /></Descriptions.Item><Descriptions.Item label={t('tasks.updated')}>{task.updated_at}</Descriptions.Item></Descriptions><Button block><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{copy.openTask}</Link></Button></Card></List.Item>} /> : <Table className="employee-task-table" rowKey="id" dataSource={tasks} columns={taskColumns} pagination={false} />}</Space>
       ) : null}
 
       {tab === 'activity' ? (

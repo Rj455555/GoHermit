@@ -120,3 +120,62 @@ test('mobile navigation uses a modal Drawer and closes after route selection', a
   await expectNoPageOverflow(page)
   expect(consoleFailures).toEqual([])
 })
+
+test('Employee directory keeps Ant Design grid ownership and equal-height cards', async ({ page }) => {
+  await page.goto('/employees')
+  const grid = page.locator('.employee-directory-grid')
+  await expect(grid).toBeVisible()
+  const geometry = await grid.evaluate((element) => {
+    const cards = [...element.querySelectorAll<HTMLElement>('.employee-card')]
+    const links = [...element.querySelectorAll<HTMLElement>('.employee-card-anchor')]
+    const rows = new Map<number, number[]>()
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect()
+      const key = Math.round(rect.top)
+      rows.set(key, [...(rows.get(key) ?? []), Math.round(rect.height)])
+    }
+    return {
+      display: getComputedStyle(element).display,
+      maxColumns: Math.max(...[...rows.values()].map((heights) => heights.length), 0),
+      equalRows: [...rows.values()].every((heights) => Math.max(...heights) - Math.min(...heights) <= 2),
+      linkPadding: links.map((link) => getComputedStyle(link).padding).filter((value) => value !== '0px'),
+    }
+  })
+  expect(geometry.display).toBe('flex')
+  expect(geometry.maxColumns).toBeLessThanOrEqual(4)
+  expect(geometry.equalRows).toBe(true)
+  expect(geometry.linkPadding).toEqual([])
+  await expectNoPageOverflow(page)
+})
+
+test('Dashboard has one unified vertical stack and responsive hero surface', async ({ page }) => {
+  await page.goto('/dashboard')
+  await expect(page.locator('.dashboard-content-stack')).toBeVisible()
+  await expect(page.locator('.dashboard-hero-card')).toHaveCount(1)
+  await expect(page.locator('.dashboard-page > .hero')).toHaveCount(0)
+  const layout = await page.locator('.dashboard-content-stack').evaluate((element) => ({
+    display: getComputedStyle(element).display,
+    gap: getComputedStyle(element).gap,
+    width: Math.round(element.getBoundingClientRect().width),
+  }))
+  expect(layout.display).toBe('flex')
+  expect(layout.gap).toBe('16px')
+  expect(layout.width).toBeGreaterThan(0)
+  await expectNoPageOverflow(page)
+})
+
+test('Task prompts wrap instead of forcing a page-level horizontal scroll', async ({ page }) => {
+  await page.goto('/employees/employee-ada?tab=tasks')
+  const prompt = page.locator('.task-prompt-text').first()
+  await expect(prompt).toBeVisible()
+  const style = await prompt.evaluate((element) => ({
+    whiteSpace: getComputedStyle(element).whiteSpace,
+    width: element.getBoundingClientRect().width,
+    scrollWidth: element.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }))
+  expect(style.whiteSpace).toBe('normal')
+  expect(style.width).toBeLessThanOrEqual(style.clientWidth)
+  expect(style.scrollWidth).toBeLessThanOrEqual(style.width + 1)
+  await expectNoPageOverflow(page)
+})

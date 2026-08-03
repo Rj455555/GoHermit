@@ -14,7 +14,9 @@ describe('responsive shell CSS contract', () => {
     expect(styles).toContain('--color-accent: #c45a3a')
     expect(styles).toContain('.dashboard-hero')
     expect(styles).toContain('.wizard-progress')
-    expect(styles).toContain('.employee-grid')
+    expect(styles).toContain('.employee-directory-grid')
+    expect(styles).toContain('.dashboard-content-stack')
+    expect(styles).toContain('.task-prompt-text')
     expect(styles).toContain('.guided-employee-card')
   })
 
@@ -30,9 +32,10 @@ describe('responsive shell CSS contract', () => {
     expect(styles).toContain('--shell-transition-duration: 0ms')
   })
 
-  it('contains a mobile breakpoint that prevents horizontal overflow', () => {
+  it('contains a mobile breakpoint without masking page overflow', () => {
     expect(styles).toMatch(/max-width:\s*900px/)
-    expect(styles).toMatch(/overflow-x:\s*hidden/)
+    expect(styles).toContain('overflow-wrap: anywhere')
+    expect(styles).not.toMatch(/body\s*\{[^}]*overflow-x:\s*(hidden|clip)/s)
   })
 
   it('uses explicit mobile section controls and safe-area surfaces', () => {

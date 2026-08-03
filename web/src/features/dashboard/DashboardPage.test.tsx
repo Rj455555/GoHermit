@@ -61,10 +61,10 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('heading', { name: 'Nightly' })).toBeVisible()
     expect(screen.getByTestId('invocation-completed')).toHaveTextContent('1')
     expect(screen.getByTestId('invocation-failed')).toHaveTextContent('1')
-    expect(screen.getByRole('heading', { name: 'Nightly' }).closest('section')).toHaveTextContent(/Nightly.*失败/u)
+    expect(screen.getByRole('heading', { name: 'Nightly' }).closest('.dashboard-hero-card')).toHaveTextContent(/Nightly.*失败/u)
     await act(() => i18n.changeLanguage('en-US'))
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Nightly' }).closest('section')).toHaveTextContent(/Nightly.*Failed/u),
+      expect(screen.getByRole('heading', { name: 'Nightly' }).closest('.dashboard-hero-card')).toHaveTextContent(/Nightly.*Failed/u),
     )
     expect(screen.getByText('Keep this title')).toBeVisible()
     expect(api.listLoopInvocations).toHaveBeenCalledTimes(1)
@@ -87,7 +87,7 @@ describe('DashboardPage', () => {
     renderDashboard()
 
     await screen.findByRole('heading', { name: 'Literal Loop' })
-    expect(screen.getByRole('heading', { name: 'Literal Loop' }).closest('section')).toHaveTextContent(
+    expect(screen.getByRole('heading', { name: 'Literal Loop' }).closest('.dashboard-hero-card')).toHaveTextContent(
       /Literal Loop.*未知状态/u,
     )
     expect(screen.queryByText(/invocationStatus|future_state/u)).not.toBeInTheDocument()
@@ -123,5 +123,19 @@ describe('DashboardPage', () => {
     view.unmount()
 
     await waitFor(() => expect(capturedSignal?.aborted).toBe(true))
+  })
+
+  it('keeps one vertical stack and one hero surface', async () => {
+    api.getInfo.mockResolvedValue({ workspace: '/workspace/gohermit', available_companies: [], auth_status: {} })
+    api.listLoops.mockResolvedValue({ loops: [] })
+    api.listSessions.mockResolvedValue({ sessions: [] })
+    api.listLoopInvocations.mockResolvedValue({ invocations: [] })
+
+    renderDashboard()
+
+    await screen.findByRole('heading', { name: /仪表盘|Dashboard/u })
+    expect(document.querySelectorAll('.dashboard-hero-card')).toHaveLength(1)
+    expect(document.querySelectorAll('.dashboard-content-stack')).toHaveLength(1)
+    expect(document.querySelectorAll('.dashboard-page > .hero')).toHaveLength(0)
   })
 })

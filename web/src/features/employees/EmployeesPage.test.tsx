@@ -498,7 +498,7 @@ describe('Employees Phase 4 pages', () => {
     renderEmployees()
 
     const cardLink = await screen.findByRole('link', { name: /Ada/u })
-    expect(cardLink).toHaveClass('employee-card-link')
+    expect(cardLink).toHaveClass('employee-card-anchor')
     expect(cardLink).toHaveAttribute('href', '/employees/employee-ada')
     await user.click(cardLink)
     await openEmployeeTab(user, 'Settings')

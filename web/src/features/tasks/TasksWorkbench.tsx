@@ -111,14 +111,14 @@ function TaskList({ tasks }: { tasks: EmployeeTask[] }) {
   const { t } = useTranslation()
   const screens = Grid.useBreakpoint()
   const columns: TableColumnsType<EmployeeTask> = [
-    { title: t('tasks.prompt'), key: 'prompt', render: (_, task) => <Link to={`/tasks/${encodeURIComponent(task.id)}`}><Text ellipsis={{ tooltip: task.prompt }}>{task.prompt}</Text></Link> },
+    { title: t('tasks.prompt'), key: 'prompt', render: (_, task) => <Link className="task-prompt-link" to={`/tasks/${encodeURIComponent(task.id)}`}><Paragraph className="task-prompt-text" ellipsis={{ rows: 3, expandable: true }}>{task.prompt}</Paragraph></Link> },
     { title: t('tasks.employee'), dataIndex: 'employee_id', key: 'employee' },
     { title: t('tasks.state'), dataIndex: 'state', key: 'state', render: (state: string) => <Tag color={statusColor(state)}>{translatedEnum(t, 'taskStatus', state)}</Tag> },
     { title: t('tasks.project'), key: 'project', render: (_, task) => task.project_binding.label },
     { title: t('tasks.updated'), dataIndex: 'updated_at', key: 'updated' },
     { title: t('actions.actions'), key: 'action', render: (_, task) => <Button><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{t('actions.open')}</Link></Button> },
   ]
-  if (screens.md) return <Table rowKey="id" columns={columns} dataSource={tasks} pagination={{ pageSize: 20, showSizeChanger: false }} scroll={{ x: 940 }} />
+  if (screens.md) return <Table className="task-list-table" rowKey="id" columns={columns} dataSource={tasks} pagination={{ pageSize: 20, showSizeChanger: false }} />
   return <List dataSource={tasks} locale={{ emptyText: <Empty /> }} renderItem={(task) => <List.Item><Card className="mobile-resource-card" title={<Link to={`/tasks/${encodeURIComponent(task.id)}`}>{task.prompt}</Link>} extra={<Tag color={statusColor(task.state)}>{translatedEnum(t, 'taskStatus', task.state)}</Tag>}><Descriptions column={1} size="small"><Descriptions.Item label={t('tasks.employee')}>{task.employee_id}</Descriptions.Item><Descriptions.Item label={t('tasks.project')}>{task.project_binding.label}</Descriptions.Item><Descriptions.Item label={t('tasks.updated')}>{task.updated_at}</Descriptions.Item><Descriptions.Item label="Session / Run"><Space direction="vertical" size={0}><Text copyable ellipsis={{ tooltip: task.session_id }}>{task.session_id ?? '—'}</Text><Text copyable ellipsis={{ tooltip: task.run_id }}>{task.run_id ?? '—'}</Text></Space></Descriptions.Item></Descriptions><Button block type="primary"><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{t('actions.open')}</Link></Button></Card></List.Item>} />
 }
 

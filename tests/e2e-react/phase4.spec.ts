@@ -40,7 +40,7 @@ test('archived Employee is direct-loadable, structured, non-empty, and fully rea
   await expect(page.getByRole('button', { name: /保存|Save|停用|Disable|启用|Enable|归档|Archive/u })).toHaveCount(0)
 
   await selectEmployeeSection(page, /技能|Skills/u)
-  const skillCard = page.getByTestId('skill-card-native-review').filter({ hasText: 'digest_drift' }).first()
+  const skillCard = page.getByTestId('skill-card-native-review').filter({ hasText: /Digest 已过期|Stale digest|Digest drift/u }).first()
   if ((page.viewportSize()?.width ?? 1440) < 768) {
     await expect(skillCard).toContainText('native-review')
     await expect(skillCard).toContainText('1.0.0')

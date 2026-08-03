@@ -626,7 +626,6 @@ body,
 
 body {
   min-height: 100vh;
-  overflow-x: hidden;
   background: var(--color-canvas);
 }
 
@@ -2131,42 +2130,6 @@ textarea {
   gap: 7px;
 }
 
-.employee-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
-  margin-top: 0;
-}
-
-.employee-grid li {
-  display: grid;
-  gap: 8px;
-  padding: 18px;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  background: var(--color-surface);
-  box-shadow: 0 1px 1px rgb(37 35 31 / 3%);
-  transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
-}
-
-.employee-grid li:hover {
-  border-color: #b9b4aa;
-  box-shadow: var(--shadow-panel);
-  transform: translateY(-1px);
-}
-
-.employee-grid a {
-  color: var(--color-text);
-  font-size: 1rem;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.employee-grid span {
-  color: var(--color-text-muted);
-  font-size: 0.84rem;
-}
-
 .employee-wizard {
   padding: clamp(22px, 3vw, 34px);
   border-top: 4px solid var(--color-accent);
@@ -2512,10 +2475,6 @@ textarea {
 }
 
 @media (max-width: 900px) {
-  body {
-    overflow-x: hidden;
-  }
-
   .navigation-rail,
   .navigation-rail[data-collapsed="false"] {
     width: var(--navigation-rail-collapsed);
@@ -4087,7 +4046,6 @@ fieldset > legend {
   box-shadow: 0 0 0 1px #7d9df1;
 }
 
-.employee-grid,
 .entity-list {
   display: grid;
   gap: 10px;
@@ -4096,7 +4054,6 @@ fieldset > legend {
   list-style: none;
 }
 
-.employee-grid li,
 .entity-list li {
   display: grid;
   gap: 7px;
@@ -4108,18 +4065,15 @@ fieldset > legend {
   box-shadow: var(--shadow-panel);
 }
 
-.employee-grid li:hover,
 .entity-list li:hover {
   border-color: #7d9df1;
   box-shadow: 0 4px 14px rgb(11 31 51 / 8%);
 }
 
-.employee-grid li a,
 .entity-list li a {
   color: var(--color-text);
 }
 
-.employee-grid li span,
 .entity-list li span {
   color: var(--color-text-muted);
 }
@@ -4311,11 +4265,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .status-item { display: grid; min-width: 0; gap: 4px; padding: 13px 15px; background: var(--color-surface); }
 .status-item span { color: var(--color-text-muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
 .status-item strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.hero { position: relative; overflow: hidden; padding: 26px; border-radius: 18px; background: var(--color-navigation); color: #fff; box-shadow: 0 12px 32px rgb(11 31 51 / 10%); }
-.hero::after { position: absolute; right: -50px; bottom: -80px; width: 220px; height: 220px; border: 1px solid rgb(255 255 255 / 12%); border-radius: 50%; content: ""; }
-.hero .eyebrow { color: #9fb9ff; }
-.hero p { color: #c9d4df; }
-.hero .button--secondary { background: #fff; }
 .prototype-metric-grid { margin-top: 18px; }
 .split-8-4 { display: grid; min-width: 0; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 18px; }
 .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
@@ -4325,10 +4274,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .panel-head p { margin: 4px 0 0; color: var(--color-text-muted); font-size: 13px; }
 .table-wrap { min-width: 0; overflow: hidden; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-th, td { padding: 12px 14px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
-th { background: var(--color-surface-subtle); color: var(--color-text-muted); font-size: 12px; font-weight: 800; }
-tr:last-child td { border-bottom: 0; }
 .row-title { display: block; color: var(--color-text); font-weight: 750; text-decoration: none; }
 .row-sub { display: block; margin-top: 4px; color: var(--color-text-muted); font-size: 12px; line-height: 1.45; }
 .readiness-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
@@ -4436,7 +4381,6 @@ body,
 
 body {
   margin: 0;
-  overflow-x: hidden;
   background: var(--color-canvas);
   color: var(--color-text);
   font-family: "Fira Sans", "Noto Sans SC", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
@@ -4634,67 +4578,93 @@ button {
   margin-top: 16px;
 }
 
-.dashboard-page > .hero {
-  display: block;
-  min-height: 0;
-  margin: 0;
-  padding: 26px;
+.dashboard-content-stack {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+
+.dashboard-content-stack > .ant-space-item {
+  min-width: 0;
+}
+
+.dashboard-summary,
+.dashboard-metrics,
+.dashboard-recent-row {
+  width: 100%;
+  align-items: stretch;
+}
+
+.dashboard-summary > .ant-col,
+.dashboard-metrics > .ant-col,
+.dashboard-recent-row > .ant-col {
+  display: flex;
+  min-width: 0;
+}
+
+.dashboard-summary .ant-card,
+.dashboard-metrics .ant-card,
+.dashboard-recent-row .ant-card {
+  width: 100%;
+  height: 100%;
+}
+
+.dashboard-hero-card.ant-card {
+  overflow: hidden;
   border: 0;
   border-radius: 18px;
   background: var(--color-navigation);
   box-shadow: 0 12px 32px rgb(11 31 51 / 10%);
 }
 
-.dashboard-page > .hero .eyebrow {
-  margin: 0 0 6px;
+.dashboard-hero-card .ant-card-body {
+  position: relative;
+  padding: 24px;
+  color: #fff;
+}
+
+.dashboard-hero-card .ant-card-body::after {
+  position: absolute;
+  right: -50px;
+  bottom: -80px;
+  width: 220px;
+  height: 220px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 50%;
+  content: "";
+  pointer-events: none;
+}
+
+.dashboard-hero-card .ant-typography {
+  position: relative;
+  z-index: 1;
+  color: inherit;
+}
+
+.dashboard-hero-card .dashboard-hero-eyebrow {
+  display: block;
+  margin-bottom: 8px;
+  color: #9fb9ff;
   font-size: 11px;
   font-weight: 800;
-  line-height: normal;
   letter-spacing: .12em;
 }
 
-.dashboard-page > .hero h2 {
-  margin: 0;
+.dashboard-hero-card h2.ant-typography {
+  margin: 0 0 8px;
   font-size: 20px;
   line-height: 1.35;
 }
 
-.dashboard-page > .hero p:not(.eyebrow) {
-  margin: 16px 0;
-  font-size: 16px;
-  line-height: normal;
+.dashboard-hero-card p.ant-typography {
+  margin: 0 0 16px;
+  color: #c9d4df;
+  line-height: 1.5;
 }
 
-.dashboard-page > .hero .actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.dashboard-page > .prototype-metric-grid,
-.dashboard-page > .split-8-4 {
-  margin-top: 18px;
-}
-
-.dashboard-page > .prototype-metric-grid {
-  height: 157px;
-}
-
-.dashboard-page > .split-8-4 {
-  height: 385px;
-}
-
-.dashboard-page > .prototype-metric-grid > .panel,
-.dashboard-page > .split-8-4 > .panel {
-  overflow: hidden;
-}
-
-.dashboard-page .readiness-item .tiny {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.dashboard-hero-actions {
+  position: relative;
+  z-index: 1;
 }
 
 .grid-2,
@@ -5603,42 +5573,6 @@ button {
 }
 
 /* Employee loops */
-/* Employee tasks */
-.employee-task-table table {
-  table-layout: fixed;
-}
-
-.employee-task-table th:nth-child(1) { width: 36%; }
-.employee-task-table th:nth-child(2) { width: 16%; }
-.employee-task-table th:nth-child(3) { width: 14%; }
-.employee-task-table th:nth-child(4) { width: 20%; }
-.employee-task-table th:nth-child(5) { width: 14%; }
-
-.employee-task-table td {
-  vertical-align: middle;
-}
-
-.employee-task-title {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-height: 1.45;
-}
-
-.employee-task-cell-value {
-  display: block;
-  overflow: hidden;
-  max-width: 100%;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.employee-task-table time,
-.employee-task-table .mono {
-  font-size: 12px;
-}
-
 /* Activity */
 .employee-audit-panel {
   padding: 20px;
@@ -5765,57 +5699,6 @@ button {
   .employee-projects-tab .project-binding-card__path {
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
-  }
-
-  .employee-task-table {
-    overflow: visible;
-    border: 0;
-    background: transparent;
-  }
-
-  .employee-task-table table,
-  .employee-task-table tbody,
-  .employee-task-table tr,
-  .employee-task-table td {
-    display: block;
-    width: 100%;
-  }
-
-  .employee-task-table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-  }
-
-  .employee-task-table tr {
-    margin-bottom: 12px;
-    padding: 12px 14px;
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    background: var(--color-surface);
-    box-shadow: var(--shadow-panel);
-  }
-
-  .employee-task-table td {
-    display: grid;
-    grid-template-columns: 104px minmax(0, 1fr);
-    gap: 10px;
-    padding: 9px 0;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .employee-task-table td::before {
-    color: var(--color-text-muted);
-    font-size: 11px;
-    font-weight: 800;
-    text-transform: uppercase;
-    content: attr(data-label);
-  }
-
-  .employee-task-table td:last-child {
-    border-bottom: 0;
   }
 
   .employee-audit-timeline > li {
@@ -6392,32 +6275,44 @@ button {
   }
 }
 
-/* Employee directory cards are complete, keyboard-focusable navigation targets. */
-.employee-grid li {
-  padding: 0;
-  overflow: hidden;
+/* Ant Design owns Employee directory grid/card spacing; the anchor is only a navigation target. */
+.employee-directory-grid {
+  align-items: stretch;
 }
 
-.employee-grid .employee-card-link {
-  display: grid;
+.employee-directory-grid > .ant-col {
+  display: flex;
+  min-width: 0;
+}
+
+.employee-card-anchor {
+  display: flex;
   width: 100%;
-  min-height: 100%;
-  gap: 7px;
-  padding: 15px 16px;
-  border-radius: inherit;
+  min-width: 0;
   color: inherit;
   text-decoration: none;
 }
 
-.employee-grid .employee-card-link strong {
-  color: var(--color-text);
-  font-size: 1rem;
-  font-weight: 750;
+.employee-card-anchor:focus-visible {
+  border-radius: var(--radius-card);
+  outline: 3px solid rgb(37 99 235 / 24%);
+  outline-offset: 2px;
 }
 
-.employee-grid .employee-card-link:focus-visible {
-  outline: 3px solid rgb(37 99 235 / 24%);
-  outline-offset: -3px;
+.employee-card-anchor .employee-card {
+  width: 100%;
+  height: 100%;
+}
+
+.employee-card-anchor .ant-card-body {
+  display: flex;
+  min-height: 150px;
+  flex-direction: column;
+}
+
+.employee-card-anchor .ant-tag {
+  align-self: flex-start;
+  margin-top: auto;
 }
 
 /* Round 2: one Ant Design deep-page system for Employee, Task, and Loop workbenches. */
@@ -6428,10 +6323,6 @@ button {
 .antd-impact-actions {
   width: 100%;
   min-width: 0;
-}
-
-.antd-deep-page {
-  overflow-x: clip;
 }
 
 .employee-identity-card .ant-card-body {
@@ -6466,6 +6357,101 @@ button {
   max-width: 100%;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.antd-deep-page .ant-typography,
+.antd-deep-page .ant-descriptions-item-content,
+.antd-deep-page .ant-list-item,
+.antd-deep-page .ant-table-cell {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.antd-deep-page .ant-table-thead > tr > th,
+.antd-deep-page .ant-table-tbody > tr > td {
+  vertical-align: middle;
+}
+
+.antd-deep-page .ant-input,
+.antd-deep-page .ant-input-search,
+.antd-deep-page .ant-select-selector {
+  min-height: 40px;
+}
+
+.antd-deep-page .ant-input-search .ant-input {
+  min-height: 38px;
+}
+
+.antd-deep-page .ant-tag {
+  display: inline-flex;
+  align-items: center;
+  line-height: 22px;
+}
+
+.task-prompt-link,
+.task-prompt-text,
+.task-prompt-text.ant-typography,
+.task-detail-page .page-header h1 {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.task-prompt-text.ant-typography {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.task-list-table .ant-table,
+.employee-task-table .ant-table {
+  table-layout: fixed;
+}
+
+.task-list-table .ant-table-cell,
+.employee-task-table .ant-table-cell {
+  vertical-align: middle;
+}
+
+.task-list-table .ant-table-thead > tr > th:first-child,
+.employee-task-table .ant-table-thead > tr > th:first-child {
+  width: 36%;
+}
+
+.task-list-table .ant-table-thead > tr > th:nth-child(2),
+.task-list-table .ant-table-thead > tr > th:nth-child(3),
+.employee-task-table .ant-table-thead > tr > th:nth-child(2),
+.employee-task-table .ant-table-thead > tr > th:nth-child(3) {
+  width: 14%;
+}
+
+.task-list-table .ant-table-thead > tr > th:nth-child(4),
+.employee-task-table .ant-table-thead > tr > th:nth-child(4) {
+  width: 18%;
+}
+
+.task-list-table .ant-table-thead > tr > th:last-child,
+.employee-task-table .ant-table-thead > tr > th:last-child {
+  width: 14%;
+}
+
+.task-detail-page .task-summary-card .ant-descriptions-item-content,
+.task-detail-page .ant-alert-description,
+.task-detail-page .ant-list-item,
+.task-detail-page .ant-timeline-item-content {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.filter-field__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.4;
 }
 
 .mobile-resource-card .ant-card-head-title,
