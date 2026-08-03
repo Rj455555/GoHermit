@@ -512,8 +512,17 @@ func TestStaticIndexHasSecurityHeaders(t *testing.T) {
 	if response.Code != http.StatusTemporaryRedirect || response.Header().Get("Location") != "/dashboard" {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
-	if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("X-Frame-Options") != "DENY" {
+	csp := response.Header().Get("Content-Security-Policy")
+	if csp == "" || response.Header().Get("X-Frame-Options") != "DENY" {
 		t.Fatal("security headers missing")
+	}
+	if !strings.Contains(csp, "script-src 'self'") ||
+		strings.Contains(csp, "script-src 'self' 'unsafe-inline'") ||
+		strings.Contains(csp, "'unsafe-eval'") {
+		t.Fatalf("script policy was weakened: %q", csp)
+	}
+	if !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
+		t.Fatalf("Ant Design runtime styles are not permitted: %q", csp)
 	}
 }
 

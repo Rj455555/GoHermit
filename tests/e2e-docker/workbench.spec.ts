@@ -27,6 +27,24 @@ test('container serves the localized React workbench on every declared route', a
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
 })
 
+test('container CSP permits Ant Design styles without weakening scripts', async ({ page }) => {
+  const violations: string[] = []
+  page.on('console', (message) => {
+    if (message.type() === 'error' && message.text().includes('Content Security Policy')) {
+      violations.push(message.text())
+    }
+  })
+
+  const response = await page.goto('/dashboard')
+  await expect(page.locator('main > *').first()).toBeAttached()
+  const csp = response?.headers()['content-security-policy'] ?? ''
+  expect(csp).toContain("script-src 'self'")
+  expect(csp).not.toContain("script-src 'self' 'unsafe-inline'")
+  expect(csp).not.toContain("'unsafe-eval'")
+  expect(csp).toContain("style-src 'self' 'unsafe-inline'")
+  expect(violations).toEqual([])
+})
+
 test('container navigation restores URL state through browser history', async ({ page }) => {
   await page.goto('/dashboard')
   await page.locator('a[href="/employees"]').click()

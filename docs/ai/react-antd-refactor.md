@@ -91,7 +91,8 @@ Foundation、Dashboard、Employees 列表、Agent、Settings、Loops 与 Tasks �
 
 ### API 与 SSE 边界证据
 
-- Go 源码、API route、DTO、Store Schema、Session/Run/Team 状态机均未修改。
+- Mac mini 容器现场验收补充证明：Go Web CSP 仅为 Ant Design 运行时样式放开 `style-src 'unsafe-inline'`；`script-src` 继续严格限定为 `'self'`，且不允许 `unsafe-inline` 或 `unsafe-eval`。Docker Playwright 会监听并拒绝 CSP Console violation。
+- 业务 API route、DTO、Store Schema、Session/Run/Team 状态机均未修改；唯一 Go 调整是上述静态 Web CSP 样式边界及其测试。
 - 新增的 `employee_assignments` 解码只是消费 Go 已返回的 bounded public metadata；严格长度、数量、ID 和 WorkItem 关联校验，不扩大响应面。
 - Task、Loop Invocation 时间线继续调用现有 `useSessionEvents(sessionId, runId)`；registry/high-water 仍按 Session，Run 只作 subscriber filter。
 - Hidden Worker Session 从不传给 `useSessionEvents`，也不作为 React route/link 输出。
