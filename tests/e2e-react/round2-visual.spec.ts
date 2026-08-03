@@ -40,6 +40,22 @@ test('captures Round 2 responsive acceptance surfaces', async ({ page }) => {
     await page.screenshot({ path: join(output, `dashboard-${width}x${height}.png`), fullPage: true })
   }
 
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const captureDesktop = async (name: string) => page.screenshot({ path: join(output, `${name}-1440x900.png`), fullPage: true })
+  for (const [name, route] of [
+    ['employee-tasks', '/employees/employee-ada?tab=tasks'],
+    ['employee-activity', '/employees/employee-ada?tab=activity'],
+    ['global-tasks', '/tasks'],
+    ['agent-empty', '/agent'],
+    ['agent-selected', '/agent/sessions/session-1'],
+    ['loop-create', '/loops'],
+  ] as const) {
+    await page.goto(route)
+    await expect(page.locator('article.feature-page').first()).toBeVisible()
+    await expectNoPageOverflow(page)
+    await captureDesktop(name)
+  }
+
   await page.setViewportSize({ width: 390, height: 844 })
   const capture = async (name: string) => page.screenshot({ path: join(output, `${name}-390x844.png`), fullPage: true })
   await page.goto('/dashboard')
