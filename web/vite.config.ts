@@ -20,6 +20,14 @@ export default defineConfig({
         return `export default ${JSON.stringify(readFileSync(CSS_SOURCE_PATH, 'utf8'))}`
       },
     },
+    {
+      name: 'gohermit-normalize-generated-whitespace',
+      apply: 'build',
+      renderChunk(code) {
+        const normalized = code.replace(/[ \t]+$/gm, '')
+        return normalized === code ? null : { code: normalized, map: null }
+      },
+    },
     react(),
   ],
   build: {
