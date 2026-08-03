@@ -94,7 +94,8 @@ export function EmployeeWizard({ onClose, onCreated }: {
   const [selectedProject, setSelectedProject] = useState('')
   const [companies, setCompanies] = useState<Array<{
     id: string
-    access: Array<{ id: string; models: Array<{ id: string }> }>
+    label: string
+    access: Array<{ id: string; label: string; models: Array<{ id: string; label: string }> }>
   }>>([])
   const [agents, setAgents] = useState<Array<{ id: string }>>([])
   const [skillConfiguration, setSkillConfiguration] = useState<Record<string, string>>({})
@@ -447,6 +448,40 @@ export function EmployeeWizard({ onClose, onCreated }: {
           </label>
           <p className="quick-employee__defaults">{t('employees.quick.defaults')}</p>
         </div>
+        <section className="quick-employee__model-picker" aria-labelledby="quick-employee-model-title">
+          <div className="quick-employee__model-heading">
+            <div>
+              <span className="section-kicker">{t('employees.defaultModel')}</span>
+              <h3 id="quick-employee-model-title">{t('employees.quick.modelTitle')}</h3>
+              <p>{t('employees.quick.modelHint')}</p>
+            </div>
+            <span className="status-badge status-badge--success">{access?.models.find((item) => item.id === employee.default_selection.model)?.label ?? employee.default_selection.model}</span>
+          </div>
+          <div className="form-grid">
+            <label>{t('employees.company')}
+              <select aria-label={t('employees.company')} value={employee.default_selection.company} onChange={(event) => {
+                const selected = companies.find((item) => item.id === event.target.value)
+                const selectedAccess = selected?.access[0]
+                patch({ default_selection: { company: event.target.value, access: selectedAccess?.id ?? '', model: selectedAccess?.models[0]?.id ?? '' } })
+              }}>
+                {companies.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+            </label>
+            <label>{t('employees.access')}
+              <select aria-label={t('employees.access')} value={employee.default_selection.access} onChange={(event) => {
+                const selected = company?.access.find((item) => item.id === event.target.value)
+                patch({ default_selection: { ...employee.default_selection, access: event.target.value, model: selected?.models[0]?.id ?? '' } })
+              }}>
+                {company?.access.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+            </label>
+            <label>{t('employees.model')}
+              <select aria-label={t('employees.model')} value={employee.default_selection.model} onChange={(event) => patch({ default_selection: { ...employee.default_selection, model: event.target.value } })}>
+                {access?.models.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+            </label>
+          </div>
+        </section>
         <div className="button-row quick-employee__actions">
           <button type="button" className="button button--secondary" onClick={onClose}>
             {t('actions.cancel')}

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Flex, Typography } from 'antd'
 
 export function PageHeader({
   title,
@@ -10,12 +11,12 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <header className="page-header">
+    <Flex className="page-header" align="start" justify="space-between" gap={24} wrap>
       <div>
-        <h1>{title}</h1>
-        {description ? <p>{description}</p> : null}
+        <Typography.Title level={1}>{title}</Typography.Title>
+        {description ? <Typography.Paragraph type="secondary">{description}</Typography.Paragraph> : null}
       </div>
       {actions ? <div className="page-header__actions">{actions}</div> : null}
-    </header>
+    </Flex>
   )
 }

@@ -21,6 +21,7 @@ import {
   decodeLoopInvocation,
   decodeLoopInvocationList,
   decodeLoopRuntimeState,
+  decodeNotificationStatus,
   decodeLoops,
   decodeOwnerProfile,
   decodeRunReference,
@@ -67,6 +68,23 @@ describe('endpoint decoders', () => {
       active: false,
     })
     expect(() => decodeHealth({ status: 'maybe', version: '0.3', active: false })).toThrow()
+  })
+
+  it('decodes the bounded notification readiness projection without credentials', () => {
+    expect(decodeNotificationStatus({
+      configured: true,
+      recipient: '1143130628@qq.com',
+      from: 'sender@qq.com',
+      host: 'smtp.qq.com',
+      last_sent_at: now,
+    })).toEqual({
+      configured: true,
+      recipient: '1143130628@qq.com',
+      from: 'sender@qq.com',
+      host: 'smtp.qq.com',
+      last_sent_at: now,
+    })
+    expect(() => decodeNotificationStatus({ configured: false, recipient: 123 })).toThrow()
   })
 
   it('strictly decodes the complete bounded Phase 4 projections', () => {
@@ -230,7 +248,7 @@ describe('endpoint decoders', () => {
 
     expect(decodeEmployeeList({ employees: [summary], next_cursor: 'next' }).employees).toHaveLength(1)
     expect(decodeEmployeeRecord({ employee, project_bindings: [project] }).employee.name).toBe('Literal Employee')
-    expect(decodeSkillCatalog({ skills: [{
+    const decodedCatalog = decodeSkillCatalog({ skills: [{
       skill_id: 'review',
       version: '1.0.0',
       digest: 'digest',
@@ -239,7 +257,18 @@ describe('endpoint decoders', () => {
       description: 'Literal',
       requested_capabilities: ['read'],
       configuration_schema: {},
-    }] }).skills).toHaveLength(1)
+    }, {
+      skill_id: 'adapter',
+      version: 'synthetic-1',
+      digest: 'adapter-digest',
+      kind: 'skill_md_adapter',
+      title: 'Adapter',
+      description: 'Zero-capability adapter',
+      requested_capabilities: null,
+      configuration_schema: {},
+    }] }).skills
+    expect(decodedCatalog).toHaveLength(2)
+    expect(decodedCatalog[1]?.requested_capabilities).toEqual([])
     expect(decodeEmployeeSkills({
       employee_id: 'employee-1',
       revision: 2,
@@ -313,6 +342,20 @@ describe('endpoint decoders', () => {
       ready: true,
       reasons: [],
     }).ready).toBe(true)
+    expect(decodeDryRun({
+      loop_id: 'loop-1',
+      definition_revision: 3,
+      definition_valid: true,
+      workspace_identity: '/literal/path',
+      workspace_matches: true,
+      git_clean: true,
+      task_prompt: 'Literal mission',
+      agent: definition.agent_selection,
+      write_scope: 'read-only',
+      budget: definition.budget,
+      requires_approval: false,
+      ready: true,
+    })).toMatchObject({ roles: [], checks: [], reasons: [] })
     expect(decodeTeamTemplate({
       schema_version: 2,
       name: 'default',

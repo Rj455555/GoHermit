@@ -48,7 +48,8 @@ func (s *Service) StartLoopInvocation(ctx context.Context, loopID string) (loop.
 	return s.startLoopInvocation(ctx, loopID, loop.TriggerManual)
 }
 
-func (s *Service) startLoopInvocation(ctx context.Context, loopID, trigger string) (loop.Invocation, error) {
+func (s *Service) startLoopInvocation(ctx context.Context, loopID, trigger string) (out loop.Invocation, err error) {
+	defer func() { s.notifyLoopCompletion(ctx, out) }()
 	if err := s.loopStoreAvailable(); err != nil {
 		return loop.Invocation{}, err
 	}
@@ -190,6 +191,7 @@ func (s *Service) ListInvocations(ctx context.Context, loopID string) ([]loop.In
 // stays resumable. Anything that cannot be reconciled is returned unchanged.
 func (s *Service) reconcileInvocation(ctx context.Context, invocation loop.Invocation) loop.Invocation {
 	if invocation.Status != loop.Dispatched && invocation.Status != loop.Attached {
+		s.notifyLoopCompletion(ctx, invocation)
 		return invocation
 	}
 	if invocation.SessionID == "" || invocation.RunID == "" {
@@ -254,6 +256,7 @@ func (s *Service) reconcileInvocation(ctx context.Context, invocation loop.Invoc
 	if err := s.loopStore.SaveInvocation(invocation); err != nil {
 		return invocation
 	}
+	s.notifyLoopCompletion(ctx, invocation)
 	return invocation
 }
 
@@ -279,6 +282,7 @@ func (s *Service) CancelLoopInvocation(ctx context.Context, id string) (loop.Inv
 		if err = s.loopStore.SaveInvocation(invocation); err != nil {
 			return invocation, classified(KindInternal, err)
 		}
+		s.notifyLoopCompletion(ctx, invocation)
 		return invocation, nil
 	}
 	if invocation.SessionID != "" && invocation.RunID != "" {
@@ -299,6 +303,7 @@ func (s *Service) CancelLoopInvocation(ctx context.Context, id string) (loop.Inv
 	if err = s.loopStore.SaveInvocation(invocation); err != nil {
 		return invocation, classified(KindInternal, err)
 	}
+	s.notifyLoopCompletion(ctx, invocation)
 	return invocation, nil
 }
 

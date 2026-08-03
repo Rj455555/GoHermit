@@ -9,6 +9,7 @@ import (
 
 	"github.com/Rj455555/GoHermit/internal/app"
 	"github.com/Rj455555/GoHermit/internal/config"
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/runcontrol"
 	"github.com/Rj455555/GoHermit/internal/session"
@@ -378,6 +379,11 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 		if employeeLaunch != nil {
 			if finalizeErr := s.finalizeEmployeeTaskOutcome(employeeLaunch.TaskID); finalizeErr != nil {
 				sess.LastError = finalizeErr.Error()
+			}
+			if task, taskErr := s.employees.GetTask(employeeLaunch.TaskID); taskErr == nil {
+				if finishedRun := findRun(sess, runID); finishedRun != nil && finishedRun.Status != session.RunInterrupted {
+					s.notifyEmployeeTaskCompletion(runCtx, task, employee.TaskState(finishedRun.Status), finishedRun.CompletedAt, finishedRun.Error)
+				}
 			}
 		}
 	}()

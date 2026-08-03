@@ -7,6 +7,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
+import { Button, Card, Input } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useParams } from 'react-router-dom'
 
@@ -117,7 +118,8 @@ export function AgentLandingPage() {
   return (
     <article className="feature-page agent-page">
       <PageHeader title={t('agent.newSession')} description={t('agent.newSessionDescription')} />
-      <form className="projection-card form-grid" onSubmit={(event) => void submit(event)}>
+      <Card className="projection-card" variant="borderless">
+      <form className="form-grid" onSubmit={(event) => void submit(event)}>
         <label>
           {t('agent.company')}
           <select
@@ -169,12 +171,13 @@ export function AgentLandingPage() {
         </label>
         <label>
           {t('agent.title')}
-          <input maxLength={4096} value={selection.title} onChange={(event) => setSelection((current) => ({ ...current, title: event.target.value }))} />
+          <Input aria-label={t('agent.title')} maxLength={4096} value={selection.title} onChange={(event) => setSelection((current) => ({ ...current, title: event.target.value }))} />
         </label>
-        <button type="submit" className="button button--primary" disabled={submitting || !connectivity.canMutate || companies.length === 0}>
+        <Button type="primary" htmlType="submit" loading={submitting} disabled={!connectivity.canMutate || companies.length === 0}>
           {t('agent.createSession')}
-        </button>
+        </Button>
       </form>
+      </Card>
     </article>
   )
 }

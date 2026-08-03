@@ -33,6 +33,7 @@ import {
   getInfo,
   getLoop,
   getLoopInvocation,
+  getNotificationStatus,
   getOwner,
   getSession,
   getTeamTemplate,
@@ -82,6 +83,7 @@ describe('Phase 3 endpoint map', () => {
     await Promise.all([
       getHealth(),
       getInfo(),
+      getNotificationStatus(),
       listLoops(),
       listLoopInvocations('loop one'),
       getOwner(),
@@ -111,7 +113,7 @@ describe('Phase 3 endpoint map', () => {
     ])
 
     const paths = client.apiRequest.mock.calls.map(([path]) => path as string)
-    expect(paths).toHaveLength(21)
+    expect(paths).toHaveLength(22)
     expect(paths.every((path) => path.startsWith('/api/'))).toBe(true)
     expect(paths).not.toContain('/api/run')
     expect(paths).toContain('/api/sessions?limit=100')

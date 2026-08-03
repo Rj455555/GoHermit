@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Alert, Button, Card, Col, Empty, List, Row, Skeleton, Space, Statistic, Tag, Typography } from 'antd'
 import {
-  Activity,
   Bot,
-  CheckCircle2,
-  FolderGit2,
   Plus,
-  Workflow,
-  XCircle,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import { listLoopInvocations, getInfo, listLoops, listSessions } from '../../api/endpoints'
 import type { Info, InvocationSummary, LoopSummary, SessionSummary } from '../../api/types'
@@ -47,6 +43,7 @@ async function loadInvocations(
 
 export function DashboardPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const connectivity = useConnectivity()
   const [projection, setProjection] = useState<DashboardProjection | null>(null)
   const [error, setError] = useState(false)
@@ -108,88 +105,89 @@ export function DashboardPage() {
     return <ErrorState title={t('dashboard.errorTitle')} description={t('dashboard.errorDescription')} />
   }
   if (projection === null) {
-    return <p role="status">{t('common.loading')}</p>
+    return <Card className="feature-page dashboard-page" loading={false}>
+      <span role="status" className="sr-only">{t('common.loading')}</span>
+      <Skeleton active paragraph={{ rows: 5 }} />
+    </Card>
   }
   const activeSession = projection.sessions.find((session) => session.active_run_id !== undefined)
   const recent = [...projection.invocations].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0]
+  const availableAccess = projection.info.available_companies.reduce((total, company) => total + company.access.length, 0)
+  const recentLoop = recent ? projection.loops.find((loop) => loop.id === recent.loop_id) : undefined
+  const ownerName = projection.info.owner?.display_name ?? 'Owner'
   return (
-    <article className="feature-page dashboard-page">
+    <article className="feature-page dashboard-page prototype-page">
       <PageHeader
         title={t('pages.dashboard.title')}
         description={t('dashboard.description')}
         actions={(
           <div className="button-row">
-            <Link className="button button--secondary" to="/employees">
-              <Bot size={16} aria-hidden="true" />
-              {t('pages.employees.title')}
-            </Link>
-            <Link className="button button--primary" to="/agent">
-              <Plus size={16} aria-hidden="true" />
-              {t('agent.newSession')}
-            </Link>
+            <Button type="primary" onClick={() => { void navigate('/employees') }} icon={<Plus size={16} aria-hidden="true" />}>{t('pages.employees.title')}</Button>
+            <Button href="/agent" icon={<Bot size={16} aria-hidden="true" />}>{t('agent.newSession')}</Button>
           </div>
         )}
       />
-      {error || connectivity.status === 'offline' ? (
-        <p className="stale-notice">{t('connectivity.stale')}</p>
-      ) : null}
-      <section className="dashboard-hero" aria-label={t('dashboard.summary')}>
-        <div className="dashboard-hero__workspace">
-          <span className="section-kicker">{t('dashboard.workspace')}</span>
-          <strong>{projection.info.workspace}</strong>
-          <p>
-            <span className={`live-dot${projection.info.active ? ' live-dot--busy' : ''}`} />
-            {projection.info.active ? t('dashboard.running') : t('dashboard.idle')}
-          </p>
-        </div>
-        <div className="dashboard-hero__facts">
-          <div><Bot size={18} aria-hidden="true" /><span>{t('dashboard.readyAccess')}</span><strong>{projection.info.available_companies.reduce((total, company) => total + company.access.length, 0)}</strong></div>
-          <div><Workflow size={18} aria-hidden="true" /><span>{t('dashboard.loops')}</span><strong>{projection.loops.length}</strong></div>
-          <div><Activity size={18} aria-hidden="true" /><span>{t('dashboard.active')}</span><strong data-testid="invocation-active">{counts.active}</strong></div>
-        </div>
-      </section>
-
-      <section className="dashboard-status-strip" aria-label={t('dashboard.summary')}>
-        <div><CheckCircle2 size={17} aria-hidden="true" /><span>{t('dashboard.completed')}</span><strong data-testid="invocation-completed">{counts.completed}</strong></div>
-        <div><XCircle size={17} aria-hidden="true" /><span>{t('dashboard.failed')}</span><strong data-testid="invocation-failed">{counts.failed}</strong></div>
-        <div><Activity size={17} aria-hidden="true" /><span>{t('dashboard.interrupted')}</span><strong data-testid="invocation-interrupted">{counts.interrupted}</strong></div>
-      </section>
-
-      <section className="dashboard-columns">
-        <section className="projection-card dashboard-primary-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="section-kicker">{t('dashboard.recent')}</span>
-              <h2>{recent ? projection.loops.find((loop) => loop.id === recent.loop_id)?.name ?? recent.loop_id : t('common.empty')}</h2>
-            </div>
-            {recent ? <span className="status-badge">{translatedEnum(t, 'invocationStatus', recent.status)}</span> : null}
-          </div>
-          {recent ? <p>{translatedEnum(t, 'invocationStatus', recent.status)}</p> : <p>{t('dashboard.noRecent')}</p>}
-        </section>
-        <div className="dashboard-stack">
-          <section className="projection-card">
-            <div className="panel-heading">
-              <div>
-                <span className="section-kicker">{t('dashboard.activeSession')}</span>
-                <h2>{activeSession?.title ?? t('common.empty')}</h2>
-              </div>
-              <Bot size={19} aria-hidden="true" />
-            </div>
-          </section>
-          <section className="projection-card">
-            <div className="panel-heading">
-              <div>
-                <span className="section-kicker">{t('dashboard.loopDefinitions')}</span>
-                <h2>{projection.loops.length}</h2>
-              </div>
-              <FolderGit2 size={19} aria-hidden="true" />
-            </div>
-            {projection.loops.length === 0 ? <p>{t('common.empty')}</p> : (
-              <ul className="compact-list">{projection.loops.map((loop) => <li key={loop.id}>{loop.name}</li>)}</ul>
-            )}
-          </section>
-        </div>
-      </section>
+      <Space direction="vertical" size={16} className="dashboard-content-stack" aria-label={t('dashboard.summary')}>
+        {error || connectivity.status === 'offline' ? <Alert className="stale-notice" type="warning" showIcon message={t('connectivity.stale')} /> : null}
+        <Row gutter={[16, 16]} className="dashboard-summary">
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.active')} value={projection.info.active ? t('dashboard.running') : t('dashboard.idle')} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.readyAccess')} value={availableAccess} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.workspace')} value={projection.info.workspace} valueStyle={{ fontSize: 14 }} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title="Owner" value={ownerName} /></Card></Col>
+        </Row>
+        <Card className="dashboard-hero-card" aria-label={t('dashboard.summary')}>
+          <Typography.Text className="dashboard-hero-eyebrow">NEXT BEST ACTION</Typography.Text>
+          <Typography.Title level={2}>{recent ? (recentLoop?.name ?? recent.loop_id) : t('dashboard.idle')}</Typography.Title>
+          <Typography.Paragraph>{recent ? translatedEnum(t, 'invocationStatus', recent.status) : t('dashboard.noRecent')}</Typography.Paragraph>
+          <Space className="dashboard-hero-actions" size={8} wrap>
+            {recent ? <Button type="primary" href={`/loops/${encodeURIComponent(recent.loop_id)}`}>{t('employees.openEmployee')}</Button> : null}
+            <Button href="/agent">{t('agent.newSession')}</Button>
+          </Space>
+        </Card>
+        <Row gutter={[16, 16]} className="dashboard-metrics">
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.loopDefinitions')} value={projection.loops.length} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.active')} value={counts.active} formatter={(value) => <span data-testid="invocation-active">{value}</span>} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.completed')} value={counts.completed} formatter={(value) => <span data-testid="invocation-completed">{value}</span>} /></Card></Col>
+          <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.failed')} value={counts.failed + counts.interrupted} formatter={(value) => <span data-testid="invocation-failed">{value}</span>} /></Card></Col>
+        </Row>
+        <Row gutter={[16, 16]} className="dashboard-recent-row">
+          <Col xs={24} xl={16}>
+            <Card title={t('dashboard.recent')} extra={<Tag color="blue">{projection.loops.length}</Tag>}>
+            <List
+              dataSource={projection.loops.slice(0, 2)}
+              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('common.empty')} /> }}
+              renderItem={(loop: LoopSummary) => {
+                const invocation = projection.invocations.find((item) => item.loop_id === loop.id)
+                return (
+                  <List.Item
+                    actions={[<Button key="open" href={`/loops/${encodeURIComponent(loop.id)}`}>{t('employees.openEmployee')}</Button>]}
+                  >
+                    <div className="row-title-group">
+                      <Typography.Text strong><Link className="row-title" to={`/loops/${encodeURIComponent(loop.id)}`}>{loop.name}</Link></Typography.Text>
+                      <Typography.Text type="secondary" ellipsis>{loop.id}</Typography.Text>
+                    </div>
+                    <Tag color={invocation?.status === 'failed' ? 'error' : 'processing'}>{invocation ? translatedEnum(t, 'invocationStatus', invocation.status) : t('common.empty')}</Tag>
+                  </List.Item>
+                )
+              }}
+            />
+            </Card>
+          </Col>
+          <Col xs={24} xl={8}>
+            <Card title={t('dashboard.readyAccess')}>
+            <List
+              dataSource={[
+                { name: 'GoHermit API', detail: `active · v${projection.info.version}`, ok: true },
+                { name: projection.info.model?.provider ?? 'Provider', detail: projection.info.model?.api_key_configured ? t('common.yes') : t('common.no'), ok: Boolean(projection.info.model?.api_key_configured) },
+                { name: 'Owner', detail: ownerName, ok: true },
+                { name: t('dashboard.activeSession'), detail: activeSession?.title ?? t('common.empty'), ok: true },
+              ]}
+              renderItem={(item) => <List.Item><List.Item.Meta avatar={<Tag color={item.ok ? 'success' : 'error'}>{item.ok ? 'OK' : '!'}</Tag>} title={item.name} description={item.detail} /></List.Item>}
+            />
+            </Card>
+          </Col>
+        </Row>
+      </Space>
     </article>
   )
 }

@@ -20,6 +20,14 @@ export default defineConfig({
         return `export default ${JSON.stringify(readFileSync(CSS_SOURCE_PATH, 'utf8'))}`
       },
     },
+    {
+      name: 'gohermit-normalize-generated-whitespace',
+      apply: 'build',
+      renderChunk(code) {
+        const normalized = code.replace(/[ \t]+$/gm, '')
+        return normalized === code ? null : { code: normalized, map: null }
+      },
+    },
     react(),
   ],
   build: {
@@ -31,6 +39,12 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
+    // GitHub's shared runner can starve the three Ant Design-heavy suites when
+    // Vitest executes files concurrently, causing actionability waits to hit
+    // their timeout despite passing assertions. Keep local feedback parallel,
+    // but make CI scheduling deterministic without weakening test semantics.
+    fileParallelism: !process.env.CI,
+    testTimeout: process.env.CI ? 30_000 : 5_000,
     coverage: {
       provider: 'v8',
       reporter: ['text'],

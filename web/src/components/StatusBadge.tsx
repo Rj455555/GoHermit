@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Tag } from 'antd'
 
 import type { FeedbackTone } from '../state/UIContext'
 
@@ -9,5 +10,6 @@ export function StatusBadge({
   children: ReactNode
   tone?: FeedbackTone
 }) {
-  return <span className={`status-badge status-badge--${tone}`}>{children}</span>
+  const color = tone === 'success' ? 'success' : tone === 'error' ? 'error' : tone === 'warning' ? 'warning' : 'processing'
+  return <Tag color={color} className={`status-badge status-badge--${tone}`}>{children}</Tag>
 }

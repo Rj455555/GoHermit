@@ -5,6 +5,7 @@ import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { EmployeeDetailPage, EmployeesPage } from '../features/employees/EmployeesPage'
 import { LoopDetailPage, LoopInvocationPage, LoopsPage } from '../features/loops/LoopsPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
+import { ReportsPage } from '../features/reports/ReportsPage'
 import { TaskDetailPage, TasksPage } from '../features/tasks/TasksPage'
 import { NotFoundPage } from './NotFoundPage'
 
@@ -26,6 +27,7 @@ export function AppRoutes() {
         element={<LoopInvocationPage />}
       />
       <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/reports" element={<ReportsPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )

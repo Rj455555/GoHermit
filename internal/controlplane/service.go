@@ -10,6 +10,8 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -26,7 +28,9 @@ import (
 	"github.com/Rj455555/GoHermit/internal/employeestore"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/knowledge"
+	"github.com/Rj455555/GoHermit/internal/loop"
 	"github.com/Rj455555/GoHermit/internal/loopstore"
+	"github.com/Rj455555/GoHermit/internal/notify"
 	"github.com/Rj455555/GoHermit/internal/owner"
 	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/skill"
@@ -114,7 +118,12 @@ type Service struct {
 	// team session fails closed instead of the service failing to start.
 	teamTemplatesErr error
 	// loopStoreErr defers loop store resolution failure the same way.
-	loopStoreErr error
+	loopStoreErr           error
+	notificationConfig     notify.Config
+	notificationMu         sync.Mutex
+	notificationDeliveryMu sync.Mutex
+	notificationLastError  string
+	notificationLastSent   *time.Time
 }
 
 // New builds the service over the workspace, recovering every persisted
@@ -158,6 +167,7 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		}
 	}
 	broker := newApprovalBroker()
+	notificationConfig := notify.ConfigFromEnv()
 	return &Service{
 		Workspace: workspace, ConfigPath: configPath,
 		publish:       publish,
@@ -167,10 +177,11 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		logins:        modelauth.NewLoginManager(credentials),
 		teamTemplates: teamTemplates, teamTemplatesErr: teamTemplatesErr,
 		loopStore: loopStore, loopStoreErr: loopStoreErr,
-		employees: employeeStore,
-		skills:    skillCatalog,
-		knowledge: knowledgeCatalog,
-		approvals: broker,
+		notificationConfig: notificationConfig,
+		employees:          employeeStore,
+		skills:             skillCatalog,
+		knowledge:          knowledgeCatalog,
+		approvals:          broker,
 		build: func(ctx context.Context, workspace, configPath string, selection config.RuntimeSelection, apiKey string, models []config.ModelOption) (*app.Runtime, error) {
 			return app.BuildRuntimeWithOptions(ctx, workspace, configPath, app.RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: broker}, nil)
 		},
@@ -181,6 +192,194 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 			}, nil)
 		},
 	}, nil
+}
+
+// EmailNotificationStatus is the safe Settings projection for completion
+// notifications. It never contains the SMTP password or provider tokens.
+type EmailNotificationStatus struct {
+	Configured         bool       `json:"configured"`
+	EmailConfigured    bool       `json:"email_configured"`
+	OpenClawConfigured bool       `json:"openclaw_configured"`
+	Recipient          string     `json:"recipient"`
+	From               string     `json:"from,omitempty"`
+	Host               string     `json:"host,omitempty"`
+	OpenClawChannel    string     `json:"openclaw_channel,omitempty"`
+	OpenClawTarget     string     `json:"openclaw_target,omitempty"`
+	LastError          string     `json:"last_error,omitempty"`
+	LastSentAt         *time.Time `json:"last_sent_at,omitempty"`
+}
+
+func (s *Service) EmailNotificationStatus() EmailNotificationStatus {
+	s.notificationMu.Lock()
+	defer s.notificationMu.Unlock()
+	return EmailNotificationStatus{
+		Configured:         s.notificationConfig.AnyConfigured(),
+		EmailConfigured:    s.notificationConfig.Configured(),
+		OpenClawConfigured: s.notificationConfig.OpenClaw.Configured(),
+		Recipient:          s.notificationConfig.To,
+		From:               s.notificationConfig.From,
+		Host:               s.notificationConfig.Host,
+		OpenClawChannel:    s.notificationConfig.OpenClaw.Channel,
+		OpenClawTarget:     s.notificationConfig.OpenClaw.Target,
+		LastError:          s.notificationLastError,
+		LastSentAt:         cloneTime(s.notificationLastSent),
+	}
+}
+
+func cloneTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+// notifyLoopCompletion delivers one bounded terminal outcome. The marker is
+// persisted only after delivery succeeds, so a restart can retry a failed
+// notification without creating a second execution state machine.
+func (s *Service) notifyLoopCompletion(ctx context.Context, invocation loop.Invocation) {
+	s.notifyTerminalCompletion(ctx, invocation.ID, invocation.ID, invocation.DefinitionSnapshot.Name, "loop", invocation.Status, invocation.FinishedAt, invocation.FailureCode, invocation.FailureSummary)
+}
+
+// notifyEmployeeTaskCompletion uses the same bounded delivery path as Loop
+// Invocations. The prefixed key keeps Task markers separate from Invocation
+// markers while preserving one idempotent notification ledger.
+func (s *Service) notifyEmployeeTaskCompletion(ctx context.Context, task employee.EmployeeTask, status employee.TaskState, finishedAt *time.Time, summary string) {
+	sum := sha256.Sum256([]byte("employee-task-notification\x00" + task.ID))
+	key := "task-" + hex.EncodeToString(sum[:16])
+	s.notifyTerminalCompletion(ctx, key, task.ID, task.EmployeeSnapshot.Employee.Name, "employee_task", loop.Status(status), finishedAt, "", summary)
+}
+
+func (s *Service) notifyTerminalCompletion(ctx context.Context, key, displayID, name, sourceType string, status loop.Status, finishedAt *time.Time, failureCode, summary string) {
+	if !status.Terminal() || s.loopStore == nil {
+		return
+	}
+	if ctx == nil || ctx.Err() != nil {
+		ctx = context.Background()
+	}
+	deliveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	s.notificationDeliveryMu.Lock()
+	defer s.notificationDeliveryMu.Unlock()
+	summary = clipNotificationText(summary)
+	err := s.loopStore.SaveReport(loopstore.ReportRecord{
+		ID: key, SourceType: sourceType, SourceID: displayID, Title: clipNotificationText(name),
+		Status: status, FailureCode: clipNotificationText(failureCode), Summary: summary,
+		FinishedAt: finishedAt, DeliveryStatus: "pending",
+	})
+	if err != nil {
+		s.notificationMu.Lock()
+		s.notificationLastError = "保存汇报记录失败"
+		s.notificationMu.Unlock()
+		return
+	}
+	report, err := s.loopStore.GetReport(key)
+	if err == nil && report.DeliveryStatus == "sent" {
+		return
+	}
+	sent, err := s.loopStore.NotificationSent(key, status)
+	if err != nil {
+		s.notificationMu.Lock()
+		s.notificationLastError = "读取通知状态失败"
+		s.notificationMu.Unlock()
+		return
+	}
+	if sent {
+		now := time.Now().UTC()
+		report.DeliveryStatus, report.DeliveryChannel, report.DeliveredAt, report.LastError = "sent", "legacy", &now, ""
+		_ = s.loopStore.SaveReport(report)
+		return
+	}
+	subject := fmt.Sprintf("GoHermit 任务状态：%s", name)
+	body := fmt.Sprintf("Target: %s\nID: %s\nStatus: %s\nFinished: %s\n",
+		name, displayID, status, formatTime(finishedAt))
+	if failureCode != "" {
+		body += fmt.Sprintf("Failure: %s\n", failureCode)
+	}
+	if summary != "" {
+		body += "Summary: " + summary + "\n"
+	}
+	var channel string
+	if s.notificationConfig.OpenClaw.Configured() {
+		err = s.notificationConfig.OpenClaw.Send(deliveryCtx, key, name, body)
+		channel = "openclaw-weixin"
+	}
+	if err != nil && s.notificationConfig.Configured() {
+		err = s.notificationConfig.SendTLS(deliveryCtx, subject, body)
+		channel = "email"
+	}
+	if !s.notificationConfig.AnyConfigured() {
+		err = errors.New("汇报通道未配置")
+	}
+	if err != nil {
+		report.DeliveryStatus, report.DeliveryChannel, report.LastError = "failed", channel, clipNotificationText(err.Error())
+		_ = s.loopStore.SaveReport(report)
+		s.notificationMu.Lock()
+		s.notificationLastError = report.LastError
+		s.notificationMu.Unlock()
+		return
+	}
+	now := time.Now().UTC()
+	if err = s.loopStore.MarkNotificationSent(key, status, now); err != nil {
+		s.notificationMu.Lock()
+		s.notificationLastError = "保存通知状态失败"
+		s.notificationMu.Unlock()
+		return
+	}
+	report.DeliveryStatus, report.DeliveryChannel, report.DeliveredAt, report.LastError = "sent", channel, &now, ""
+	_ = s.loopStore.SaveReport(report)
+	s.notificationMu.Lock()
+	s.notificationLastError = ""
+	s.notificationLastSent = &now
+	s.notificationMu.Unlock()
+}
+
+// ListReports returns the bounded report-center projection.
+func (s *Service) ListReports(_ context.Context, limit int) ([]loopstore.ReportRecord, error) {
+	if s.loopStore == nil {
+		return nil, classified(KindInternal, errors.New("loop store unavailable"))
+	}
+	reports, err := s.loopStore.ListReports(limit)
+	if err != nil {
+		return nil, classified(KindInternal, err)
+	}
+	return reports, nil
+}
+
+// RetryReport reuses the immutable report snapshot and never starts a new
+// Loop/Task execution.
+func (s *Service) RetryReport(ctx context.Context, id string) (loopstore.ReportRecord, error) {
+	if s.loopStore == nil {
+		return loopstore.ReportRecord{}, classified(KindInternal, errors.New("loop store unavailable"))
+	}
+	report, err := s.loopStore.GetReport(id)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return loopstore.ReportRecord{}, classified(KindNotFound, err)
+		}
+		return loopstore.ReportRecord{}, classified(KindInternal, err)
+	}
+	s.notifyTerminalCompletion(ctx, report.ID, report.SourceID, report.Title, report.SourceType, report.Status, report.FinishedAt, report.FailureCode, report.Summary)
+	updated, err := s.loopStore.GetReport(id)
+	if err != nil {
+		return loopstore.ReportRecord{}, classified(KindInternal, err)
+	}
+	return updated, nil
+}
+
+func formatTime(value *time.Time) string {
+	if value == nil {
+		return "未结束"
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func clipNotificationText(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\r", " "), "\n", " "))
+	if len(value) > 512 {
+		return value[:512] + "…"
+	}
+	return value
 }
 
 // Active reports whether a run currently occupies the workspace.

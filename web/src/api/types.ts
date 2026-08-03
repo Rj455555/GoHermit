@@ -308,6 +308,24 @@ export interface Handoff {
   created_at: string
 }
 
+export interface TeamEmployeeAssignment {
+  schema_version: number
+  work_item_id: string
+  role: string
+  employee_id: string
+  employee_revision: number
+  employee_snapshot_digest: string
+  project_binding_id: string
+  workspace_fingerprint: string
+  company: string
+  access: string
+  model: string
+  agent_profile: string
+  effective_policy_digest: string
+  context_digest: string
+  digest: string
+}
+
 export interface Mission {
   id: string
   run_id: string
@@ -319,6 +337,7 @@ export interface Mission {
   usage_by_role: Record<string, MissionUsage>
   work_items: WorkItem[]
   handoffs: Handoff[]
+  employee_assignments: Record<string, TeamEmployeeAssignment>
   created_at: string
   updated_at: string
   error?: string | undefined
@@ -768,6 +787,39 @@ export interface LoopRuntimeState {
 
 export interface LoopInvocation extends InvocationSummary {
   definition_snapshot: LoopDefinition
+}
+
+export interface NotificationStatus {
+  configured: boolean
+  email_configured?: boolean
+  openclaw_configured?: boolean
+  recipient: string
+  from?: string | undefined
+  host?: string | undefined
+  openclaw_channel?: string | undefined
+  openclaw_target?: string | undefined
+  last_error?: string | undefined
+  last_sent_at?: string | undefined
+}
+
+export type ReportDeliveryStatus = 'pending' | 'sent' | 'failed'
+
+export interface ReportRecord {
+  schema_version: number
+  id: string
+  source_type: 'loop' | 'employee_task'
+  source_id: string
+  title: string
+  status: InvocationStatus
+  failure_code?: string | undefined
+  summary?: string | undefined
+  finished_at?: string | undefined
+  created_at: string
+  updated_at: string
+  delivery_status: ReportDeliveryStatus
+  delivery_channel?: string | undefined
+  delivered_at?: string | undefined
+  last_error?: string | undefined
 }
 
 export interface DryRunReport {

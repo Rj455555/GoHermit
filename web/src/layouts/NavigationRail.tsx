@@ -1,10 +1,10 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { Button } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { NavLink } from 'react-router-dom'
 
 import { navigationItems } from '../routes/routeMeta'
 import { useUI } from '../state/UIContext'
-import { LanguageSwitcher } from './LanguageSwitcher'
 
 export function NavigationRail() {
   const { t } = useTranslation()
@@ -20,9 +20,15 @@ export function NavigationRail() {
     >
       <div className="navigation-rail__brand" title={t('brand.label')}>
         <span className="navigation-rail__mark" aria-hidden="true">
-          G
+          GH
         </span>
-        {collapsed ? null : <strong>{t('brand.label')}</strong>}
+        {collapsed ? null : (
+          <span className="navigation-rail__brand-copy">
+            <strong className="navigation-rail__brand-name" aria-label="GoHermit" />
+            <span className="sr-only">{t('brand.label')}</span>
+            <small>{t('brand.subtitle')}</small>
+          </span>
+        )}
       </div>
       <ul className="navigation-rail__links">
         {navigationItems.map(({ to, labelKey, icon: Icon }) => (
@@ -43,9 +49,8 @@ export function NavigationRail() {
         ))}
       </ul>
       <div className="navigation-rail__footer">
-        <LanguageSwitcher compact={collapsed} />
-        <button
-          type="button"
+        <Button
+          type="text"
           className="navigation-rail__toggle"
           aria-label={toggleLabel}
           title={toggleLabel}
@@ -60,7 +65,7 @@ export function NavigationRail() {
               <span>{toggleLabel}</span>
             </>
           )}
-        </button>
+        </Button>
       </div>
     </nav>
   )

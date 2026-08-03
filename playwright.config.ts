@@ -15,7 +15,12 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },
-  projects: [{ name: 'react-chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'desktop-chrome', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
+    { name: 'tablet', use: { ...devices['iPad Mini'] } },
+    { name: 'mobile-chrome', use: { ...devices['Pixel 7'] } },
+    { name: 'mobile-safari', use: { ...devices['iPhone 13'] } },
+  ],
   webServer: {
     command: 'pnpm build && node tests/e2e-react/static-server.mjs',
     url: 'http://127.0.0.1:4174/dashboard',

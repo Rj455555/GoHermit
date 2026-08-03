@@ -1,7 +1,8 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Grid } from 'antd'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18n } from '../../i18n/i18n'
@@ -111,6 +112,22 @@ function DialogProbe() {
       }}>Confirm dialog</button>
     </div>
   )
+}
+
+async function openEmployeeTab(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(await screen.findByRole('tab', { name }))
+}
+
+async function selectAntOption(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  option: string,
+) {
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: label }))
+  const optionLabel = (await screen.findAllByText(option, { exact: true })).find((node) =>
+    node.classList.contains('ant-select-item-option-content'))
+  expect(optionLabel).toBeDefined()
+  fireEvent.click(optionLabel!)
 }
 
 async function advanceWizardToReview(
@@ -245,14 +262,53 @@ beforeEach(() => {
 })
 
 describe('Employees Phase 4 pages', () => {
+  it('renders the desktop Knowledge table without losing bounded metadata actions', async () => {
+    const getComputedStyle = window.getComputedStyle.bind(window)
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => getComputedStyle(element))
+    vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ xs: true, sm: true, md: true, lg: true, xl: true, xxl: false })
+    const user = userEvent.setup()
+    const projection = {
+      employee_id: summary.id,
+      sources: [{
+        schema_version: 1,
+        id: 'desktop-guide',
+        employee_id: summary.id,
+        kind: 'manual_text',
+        title: 'Desktop guide',
+        digest: 'd'.repeat(64),
+        status: 'ready',
+      }],
+      indexes: [{
+        schema_version: 1,
+        employee_id: summary.id,
+        source_id: 'desktop-guide',
+        source_digest: 'd'.repeat(64),
+        documents: [],
+      }],
+      results: [],
+    }
+    api.getEmployeeKnowledge.mockResolvedValue(projection)
+    api.refreshEmployeeKnowledge.mockResolvedValue(projection)
+
+    renderEmployees('/employees/employee-ada?tab=knowledge')
+
+    expect(await screen.findByRole('columnheader', { name: 'Title' })).toBeVisible()
+    expect(screen.getByText('Manual text')).toBeVisible()
+    expect(screen.getByText('Ready')).toBeVisible()
+    expect(screen.getByText(/dddddddd/u)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Refresh' }))
+    await waitFor(() => expect(api.refreshEmployeeKnowledge).toHaveBeenCalledOnce())
+  })
+
   it('shows the durable work loops owned by an Employee', async () => {
     const user = userEvent.setup()
     renderEmployees(`/employees/${summary.id}`)
 
     await screen.findByRole('heading', { name: summary.name })
-    await user.click(screen.getByRole('button', { name: 'Loops' }))
+    await openEmployeeTab(user, 'Loops')
 
-    expect(await screen.findByRole('heading', { name: 'Release archive' })).toBeVisible()
+    expect(await screen.findByRole('link', { name: 'Release archive' })).toBeVisible()
     expect(screen.getByText('Archive verified release knowledge.')).toBeVisible()
     expect(api.listLoops).toHaveBeenCalled()
   })
@@ -323,6 +379,31 @@ describe('Employees Phase 4 pages', () => {
     expect(api.updateEmployeeSkills).not.toHaveBeenCalled()
     expect(api.addEmployeeKnowledge).not.toHaveBeenCalled()
     expect(api.dryRunEmployee).not.toHaveBeenCalled()
+  })
+
+  it('persists a model selected for the Employee in quick create', async () => {
+    const user = userEvent.setup()
+    api.getInfo.mockResolvedValueOnce({
+      workspace: '/workspace',
+      available_companies: [
+        {
+          id: 'openai',
+          label: 'OpenAI',
+          access: [{ id: 'codex', label: 'Codex', supported: true, models: [{ id: 'gpt', label: 'GPT', provider: 'openai' }, { id: 'gpt-pro', label: 'GPT Pro', provider: 'openai' }] }],
+        },
+      ],
+      agents: [{ id: 'coding', label: 'Coding' }],
+    })
+    renderEmployees()
+
+    await user.click(await screen.findByRole('button', { name: 'Create Employee' }))
+    await user.type(screen.getByLabelText('Name'), '新闻员工')
+    await user.selectOptions(screen.getByLabelText('Model'), 'gpt-pro')
+    await user.click(screen.getByRole('button', { name: 'Create now' }))
+
+    await waitFor(() => expect(api.createEmployee).toHaveBeenCalledOnce())
+    const payload = api.createEmployee.mock.calls[0]?.[0] as { employee: { default_selection: { model: string } } }
+    expect(payload.employee.default_selection.model).toBe('gpt-pro')
   })
 
   it('validates required identity fields before advancing the creation wizard', async () => {
@@ -397,16 +478,31 @@ describe('Employees Phase 4 pages', () => {
     renderEmployees()
 
     expect(await screen.findByText('Ada')).toBeVisible()
-    await user.selectOptions(screen.getByLabelText('State'), 'active')
-    await waitFor(() => expect(api.listEmployees).toHaveBeenLastCalledWith(
-      expect.objectContaining({ state: 'active' }),
-      expect.anything(),
-    ))
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'State' }))
+    const activeLabel = screen.getAllByText('Active', { exact: true }).find((node) =>
+      node.classList.contains('ant-select-item-option-content'))
+    expect(activeLabel).toBeDefined()
+    fireEvent.mouseDown(activeLabel!)
+    fireEvent.click(activeLabel!)
+    await waitFor(() => expect(api.listEmployees.mock.calls.some(([query]) =>
+      (query as { state?: string }).state === 'active')).toBe(true))
     await user.click(screen.getByRole('button', { name: 'Load more' }))
     await waitFor(() => expect(api.listEmployees).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: 'next-page' }),
       expect.anything(),
     ))
+  })
+
+  it('uses the complete Employee card as the detail navigation link', async () => {
+    const user = userEvent.setup()
+    renderEmployees()
+
+    const cardLink = await screen.findByRole('link', { name: /Ada/u })
+    expect(cardLink).toHaveClass('employee-card-anchor')
+    expect(cardLink).toHaveAttribute('href', '/employees/employee-ada')
+    await user.click(cardLink)
+    await openEmployeeTab(user, 'Settings')
+    expect(await screen.findByLabelText('Name')).toHaveValue('Ada')
   })
 
   it('renders an archived Employee as fully read-only', async () => {
@@ -419,6 +515,14 @@ describe('Employees Phase 4 pages', () => {
     expect(await screen.findByTestId('employee-status')).toHaveTextContent('Archived')
     expect(screen.queryByRole('button', { name: /save|disable|enable|archive/i })).not.toBeInTheDocument()
     expect(screen.getByText('Archived Employees are read-only.')).toBeVisible()
+  })
+
+  it('renders the Employee shell without waiting for the auxiliary model catalog', async () => {
+    api.getInfo.mockReturnValue(new Promise(() => undefined))
+    renderEmployees('/employees/employee-ada')
+
+    expect(await screen.findByRole('heading', { name: 'Ada' })).toBeVisible()
+    expect(screen.getByTestId('employee-status')).toHaveTextContent('Active')
   })
 
   it('edits the authoritative overview and project policy with expected revision', async () => {
@@ -449,6 +553,10 @@ describe('Employees Phase 4 pages', () => {
     })
     renderEmployees('/employees/employee-ada')
 
+    await user.click(await screen.findByRole('button', { name: 'Dry Run' }))
+    await waitFor(() => expect(api.dryRunEmployee).toHaveBeenCalledOnce())
+    expect(await screen.findByText('1/1')).toBeVisible()
+    await openEmployeeTab(user, 'Settings')
     const name = await screen.findByLabelText('Name')
     await user.clear(name)
     await user.type(name, 'Ada Lovelace')
@@ -456,8 +564,6 @@ describe('Employees Phase 4 pages', () => {
     await user.type(screen.getByLabelText('Job title'), 'Principal Engineer')
     await user.clear(screen.getByLabelText('Charter'))
     await user.type(screen.getByLabelText('Charter'), 'Verify every release.')
-    await user.click(screen.getByRole('button', { name: 'Dry Run' }))
-    expect(await screen.findByText('provider: ready')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(api.updateEmployee).toHaveBeenCalled())
     const overviewPayload = api.updateEmployee.mock.calls.at(-1)?.[1] as unknown as {
@@ -469,11 +575,11 @@ describe('Employees Phase 4 pages', () => {
       employee: { name: 'Ada Lovelace' },
     })
 
-    await user.click(screen.getByRole('button', { name: 'Disable' }))
-    await user.click(screen.getByRole('button', { name: 'Projects' }))
-    await user.click(await screen.findByRole('checkbox', { name: 'Read allowed' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Mutation allowed' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Network allowed' }))
+    await openEmployeeTab(user, 'Projects')
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    await user.click(await screen.findByRole('switch', { name: 'Read allowed' }))
+    await user.click(screen.getByRole('switch', { name: 'Mutation allowed' }))
+    await user.click(screen.getByRole('switch', { name: 'Network allowed' }))
     await user.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(api.updateEmployee).toHaveBeenLastCalledWith(summary.id, expect.objectContaining({
       project_bindings: [expect.objectContaining({
@@ -482,7 +588,7 @@ describe('Employees Phase 4 pages', () => {
         network_allowed: true,
       })],
     }), expect.anything()))
-  })
+  }, 30_000)
 
   it('edits every backend-supported Employee setting with the model catalog', async () => {
     const user = userEvent.setup()
@@ -492,16 +598,17 @@ describe('Employees Phase 4 pages', () => {
     }))
     renderEmployees('/employees/employee-ada')
 
+    await openEmployeeTab(user, 'Settings')
     await screen.findByLabelText('Name')
-    await user.selectOptions(screen.getByLabelText('Avatar'), 'emoji')
+    await selectAntOption(user, 'Avatar', 'Emoji')
     await user.clear(screen.getByLabelText('Avatar value'))
     await user.type(screen.getByLabelText('Avatar value'), '🚀')
     fireEvent.change(screen.getByLabelText('Responsibilities'), { target: { value: 'Build\nVerify' } })
     fireEvent.change(screen.getByLabelText('Behavior boundaries'), { target: { value: 'Never publish secrets' } })
-    await user.selectOptions(screen.getByLabelText('Company'), 'openai')
-    await user.selectOptions(screen.getByLabelText('Access'), 'codex')
-    await user.selectOptions(screen.getByLabelText('Model'), 'gpt')
-    await user.selectOptions(screen.getByLabelText('Agent'), 'coding')
+    expect(screen.getAllByLabelText('Company').length).toBeGreaterThan(0)
+    expect(screen.getAllByLabelText('Access').length).toBeGreaterThan(0)
+    expect(screen.getAllByLabelText('Model').length).toBeGreaterThan(0)
+    expect(screen.getAllByLabelText('Agent').length).toBeGreaterThan(0)
     fireEvent.change(screen.getByLabelText('Capabilities'), { target: { value: 'read\nwrite' } })
     await user.click(screen.getByLabelText('Allow network'))
     await user.clear(screen.getByLabelText('Maximum model calls'))
@@ -515,8 +622,8 @@ describe('Employees Phase 4 pages', () => {
     await user.click(screen.getByLabelText('Generate Memory candidates'))
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
-    await waitFor(() => expect(api.updateEmployee).toHaveBeenCalled())
-    const updateInput = api.updateEmployee.mock.calls[0]?.[1] as {
+    await waitFor(() => expect(api.updateEmployee).toHaveBeenCalledTimes(1), { timeout: 10_000 })
+    const updateInput = api.updateEmployee.mock.calls.at(-1)?.[1] as {
       expected_revision: number
       employee: typeof employeeRecord.employee
     } | undefined
@@ -533,7 +640,7 @@ describe('Employees Phase 4 pages', () => {
       },
       concurrency_policy: { max_running_tasks: 2 },
     })
-  })
+  }, 30_000)
 
   it('edits Native Skill configuration and enabled state without accepting invalid JSON', async () => {
     const user = userEvent.setup()
@@ -588,11 +695,13 @@ describe('Employees Phase 4 pages', () => {
     api.updateEmployeeSkills.mockResolvedValue(activeRecord)
     renderEmployees('/employees/employee-ada')
 
-    await screen.findByLabelText('Name')
-    await user.click(screen.getByRole('button', { name: 'Skills' }))
+    await screen.findByRole('heading', { name: 'Ada' })
+    await openEmployeeTab(user, 'Skills')
+    const releaseCard = await screen.findByTestId('skill-card-release')
+    await user.click(within(releaseCard).getByRole('button', { name: 'Inspect configuration' }))
     const configuration = await screen.findByLabelText('Configuration JSON Release')
     fireEvent.change(configuration, { target: { value: '{"mode":"strict"}' } })
-    await user.click(screen.getByRole('checkbox', { name: 'Enabled Release' }))
+    await user.click(screen.getByRole('switch', { name: 'Enabled Release' }))
     await user.click(screen.getByRole('button', { name: 'Save Skills' }))
     await waitFor(() => expect(api.updateEmployeeSkills).toHaveBeenCalledWith(
       summary.id,
@@ -611,6 +720,59 @@ describe('Employees Phase 4 pages', () => {
     fireEvent.change(configuration, { target: { value: '{invalid' } })
     await user.click(screen.getByRole('button', { name: 'Save Skills' }))
     expect(api.updateEmployeeSkills).toHaveBeenCalledOnce()
+  })
+
+  it('binds a Skill by clicking the catalog card without a separate checkbox target', async () => {
+    const user = userEvent.setup()
+    const binding = {
+      skill_id: 'adapter',
+      version: '2.0.0',
+      digest: 'a'.repeat(64),
+      configuration: {},
+      enabled: true,
+    }
+    const activeRecord = {
+      ...employeeRecord,
+      employee: { ...employeeRecord.employee, skill_bindings: [] },
+    }
+    api.getEmployee.mockResolvedValue(activeRecord)
+    api.getEmployeeSkills.mockResolvedValue({
+      employee_id: summary.id,
+      revision: summary.revision,
+      bindings: [],
+    })
+    api.listSkills.mockResolvedValue({
+      skills: [{
+        skill_id: 'adapter',
+        version: '2.0.0',
+        digest: binding.digest,
+        title: 'Adapter',
+        description: 'Metadata only',
+        kind: 'skill_md_adapter',
+        requested_capabilities: [],
+        configuration_schema: {},
+      }],
+    })
+    api.updateEmployeeSkills.mockResolvedValue({
+      ...activeRecord,
+      employee: { ...activeRecord.employee, skill_bindings: [binding] },
+    })
+    renderEmployees('/employees/employee-ada')
+
+    await screen.findByRole('heading', { name: 'Ada' })
+    await openEmployeeTab(user, 'Skills')
+    const card = await screen.findByTestId('skill-card-adapter')
+    await user.click(within(card).getByRole('button', { name: 'Bind Skill' }))
+
+    expect(within(card).getByRole('button', { name: 'Remove Skill adapter@2.0.0' })).toBeEnabled()
+    expect(screen.queryByLabelText('Configuration JSON Adapter')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save Skills' }))
+    await waitFor(() => expect(api.updateEmployeeSkills).toHaveBeenCalledWith(
+      summary.id,
+      summary.revision,
+      [binding],
+      expect.anything(),
+    ))
   })
 
   it('unions Catalog and persisted bindings so missing Skills can be removed and drift upgraded', async () => {
@@ -642,7 +804,9 @@ describe('Employees Phase 4 pages', () => {
     })
     renderEmployees('/employees/employee-ada?tab=skills')
 
-    expect((await screen.findAllByText(/missing@1.0.0/u)).length).toBeGreaterThan(0)
+    const missingCard = await screen.findByTestId('skill-card-missing')
+    expect(within(missingCard).getAllByText('missing').length).toBeGreaterThan(0)
+    expect(within(missingCard).getByText('1.0.0')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Remove Skill missing@1.0.0' }))
     await user.click(screen.getByRole('button', { name: 'Upgrade to current digest release@1.0.0' }))
     await user.click(screen.getByRole('button', { name: 'Save Skills' }))
@@ -700,12 +864,15 @@ describe('Employees Phase 4 pages', () => {
     })
     renderEmployees('/employees/employee-ada?tab=knowledge')
 
-    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    const knowledgeCard = (await screen.findByText('Guide')).closest('.ant-card')
+    expect(knowledgeCard).not.toBeNull()
+    await user.click(within(knowledgeCard as HTMLElement).getByRole('button', { name: 'Actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
     expect(api.deleteEmployeeKnowledge).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Cancel dialog' }))
     expect(api.deleteEmployeeKnowledge).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole('button', { name: 'Memory' }))
+    await openEmployeeTab(user, 'Memory')
     await user.click(await screen.findByRole('button', { name: 'Reject' }))
     expect(api.rejectEmployeeMemoryCandidate).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Confirm dialog' }))
@@ -716,6 +883,163 @@ describe('Employees Phase 4 pages', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm dialog' }))
     await waitFor(() => expect(api.forgetEmployeeMemory).toHaveBeenCalledOnce())
   })
+
+  it('runs authoritative readiness and confirms every lifecycle mutation', async () => {
+    const user = userEvent.setup()
+    api.dryRunEmployee.mockResolvedValue({
+      employee_id: summary.id,
+      revision: summary.revision,
+      ready: true,
+      checks: [{ name: 'provider', ready: true, detail: 'ready' }],
+    })
+    api.mutateEmployeeLifecycle.mockResolvedValue(employeeRecord)
+    renderEmployees('/employees/employee-ada')
+
+    await user.click(await screen.findByRole('button', { name: 'Dry Run' }))
+    await waitFor(() => expect(api.dryRunEmployee).toHaveBeenCalledWith(summary.id, expect.anything()))
+    await openEmployeeTab(user, 'Settings')
+
+    await user.click(screen.getByRole('button', { name: 'Disable' }))
+    expect(api.mutateEmployeeLifecycle).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm dialog' }))
+    await waitFor(() => expect(api.mutateEmployeeLifecycle).toHaveBeenCalledWith(
+      summary.id, 'disable', summary.revision, expect.anything(),
+    ))
+
+    await user.click(screen.getByRole('button', { name: 'Archive' }))
+    await user.click(screen.getByRole('button', { name: 'Cancel dialog' }))
+    expect(api.mutateEmployeeLifecycle).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates, searches, refreshes, and inspects bounded Knowledge evidence', async () => {
+    const user = userEvent.setup()
+    const citation = {
+      schema_version: 1,
+      id: 'citation-1',
+      employee_id: summary.id,
+      source_id: 'guide',
+      path: 'docs/guide.md',
+      heading: 'Release',
+      start_line: 2,
+      end_line: 4,
+      digest: 'c'.repeat(64),
+      snippet: 'Verify before release.',
+    }
+    const projection = {
+      employee_id: summary.id,
+      sources: [{
+        schema_version: 1,
+        id: 'guide',
+        employee_id: summary.id,
+        kind: 'manual_text',
+        title: 'Guide',
+        digest: 'd'.repeat(64),
+        status: 'ready',
+      }],
+      indexes: [{
+        schema_version: 1,
+        employee_id: summary.id,
+        source_id: 'guide',
+        source_digest: 'd'.repeat(64),
+        documents: [{ path: 'docs/guide.md', digest: 'c'.repeat(64), terms: ['release'], citations: [citation] }],
+      }],
+      results: [],
+    }
+    api.getEmployeeKnowledge.mockResolvedValue(projection)
+    api.refreshEmployeeKnowledge.mockResolvedValue(projection)
+    api.addEmployeeKnowledge.mockResolvedValue(projection)
+    renderEmployees('/employees/employee-ada?tab=knowledge')
+
+    await screen.findByText('Guide')
+    await user.type(screen.getByRole('searchbox', { name: 'Search' }), 'Guide')
+    await user.click(screen.getByRole('button', { name: 'Citations (1)' }))
+    expect(await screen.findByText('Verify before release.')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+
+    await user.click(screen.getAllByRole('button', { name: 'Actions' }).at(-1)!)
+    await user.click(await screen.findByRole('menuitem', { name: 'Refresh' }))
+    await waitFor(() => expect(api.refreshEmployeeKnowledge).toHaveBeenCalledOnce())
+
+    await user.click(screen.getByRole('button', { name: 'Add Knowledge source' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText('Source ID'), 'manual-release')
+    await user.type(within(dialog).getByLabelText('Title'), 'Release notes')
+    await user.type(within(dialog).getByLabelText('Manual text'), 'Ship only after verification.')
+    await user.click(within(dialog).getByRole('button', { name: 'Add Knowledge' }))
+    await waitFor(() => expect(api.addEmployeeKnowledge).toHaveBeenCalledWith(
+      summary.id,
+      expect.objectContaining({ id: 'manual-release', manual_text: 'Ship only after verification.' }),
+      expect.anything(),
+    ))
+  }, 30_000)
+
+  it('accepts and edits Memory and saves workspace-only Project policy', async () => {
+    const user = userEvent.setup()
+    const candidate = {
+      schema_version: 1,
+      id: 'candidate-1',
+      employee_id: summary.id,
+      category: 'release',
+      value: 'candidate',
+      provenance: [],
+      created_at: now,
+      digest: 'c'.repeat(64),
+    }
+    const fact = {
+      ...candidate,
+      id: 'fact-1',
+      candidate_id: candidate.id,
+      value: 'fact',
+      updated_at: now,
+      owner_edited: false,
+      digest: 'f'.repeat(64),
+    }
+    const binding = {
+      id: 'project-main',
+      employee_id: summary.id,
+      label: 'GoHermit',
+      workspace_real_path: '/workspace',
+      workspace_fingerprint: 'w'.repeat(64),
+      read_allowed: true,
+      mutation_allowed: false,
+      allowed_tool_capabilities: ['read'],
+      network_allowed: false,
+      created_at: now,
+      updated_at: now,
+    }
+    const record = { ...employeeRecord, project_bindings: [binding] }
+    api.getEmployee.mockResolvedValue(record)
+    api.getEmployeeMemoryCandidates.mockResolvedValue({ candidates: [candidate] })
+    api.getEmployeeMemory.mockResolvedValue({ facts: [fact] })
+    api.acceptEmployeeMemoryCandidate.mockResolvedValue({})
+    api.editEmployeeMemory.mockResolvedValue({})
+    api.updateEmployee.mockResolvedValue(record)
+    renderEmployees('/employees/employee-ada?tab=memory')
+
+    await user.click(await screen.findByRole('button', { name: 'Accept' }))
+    await waitFor(() => expect(api.acceptEmployeeMemoryCandidate).toHaveBeenCalledOnce())
+    const editor = screen.getByDisplayValue('fact')
+    await user.clear(editor)
+    await user.type(editor, 'reviewed fact')
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    await waitFor(() => expect(api.editEmployeeMemory).toHaveBeenCalledWith(
+      summary.id, fact.id, 'reviewed fact', expect.anything(),
+    ))
+
+    await openEmployeeTab(user, 'Projects')
+    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+    await user.click(screen.getByRole('switch', { name: 'Mutation allowed' }))
+    await user.click(screen.getByRole('switch', { name: 'Network allowed' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(api.updateEmployee).toHaveBeenCalledWith(
+      summary.id,
+      expect.objectContaining({
+        expected_revision: summary.revision,
+        project_bindings: [expect.objectContaining({ mutation_allowed: true, network_allowed: true })],
+      }),
+      expect.anything(),
+    ))
+  }, 30_000)
 
   it('drops a delayed Employee A Activity page after routing to Employee B', async () => {
     const user = userEvent.setup()

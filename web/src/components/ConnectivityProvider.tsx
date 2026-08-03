@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Button } from 'antd'
 
 import { getHealth } from '../api/endpoints'
 
@@ -76,9 +77,9 @@ export function ConnectivityBanner() {
   return (
     <div className="connectivity-banner" role="alert">
       <span>{t('connectivity.offline')}</span>
-      <button type="button" className="button button--secondary" onClick={reconnect}>
+      <Button type="default" className="button button--secondary" onClick={reconnect}>
         {t('connectivity.reconnect')}
-      </button>
+      </Button>
     </div>
   )
 }

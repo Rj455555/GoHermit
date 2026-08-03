@@ -1,5 +1,15 @@
 import { expect, test } from '@playwright/test'
 
+async function followPrimaryNavigation(page: import('@playwright/test').Page, href: string) {
+  const mobileTrigger = page.getByRole('button', { name: /主导航|Main navigation/u })
+  if ((page.viewportSize()?.width ?? 1440) <= 900) {
+    await mobileTrigger.click()
+    await page.getByRole('dialog', { name: /主导航|Main navigation/u }).locator(`a[href="${href}"]`).click()
+    return
+  }
+  await page.locator(`a[href="${href}"]`).first().click()
+}
+
 const declaredRoutes = [
   '/dashboard',
   '/employees',
@@ -31,8 +41,8 @@ test('all declared React routes support direct access and refresh', async ({ pag
 test('root redirect and browser back/forward follow the URL', async ({ page }) => {
   await page.goto('/')
   await expect(page).toHaveURL(/\/dashboard$/)
-  await page.locator('a[href="/employees"]').click()
-  await page.locator('a[href="/tasks"]').click()
+  await followPrimaryNavigation(page, '/employees')
+  await followPrimaryNavigation(page, '/tasks')
   await page.goBack()
   await expect(page).toHaveURL(/\/employees$/)
   await expect(page.locator('a[href="/employees"]')).toHaveAttribute('aria-current', 'page')

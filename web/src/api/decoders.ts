@@ -25,6 +25,7 @@ import type {
   LoopInvocation,
   LoopRuntimeState,
   LoopSummary,
+  NotificationStatus,
   MemoryCandidate,
   MemoryFact,
   Message,
@@ -42,6 +43,8 @@ import type {
   PlanStepStatus,
   ProviderReadiness,
   ProjectCatalogItem,
+  ReportRecord,
+  ReportDeliveryStatus,
   Run,
   RunStatus,
   RuntimeEvent,
@@ -537,6 +540,36 @@ function decodeRoleUsage(value: unknown) {
   return result
 }
 
+function decodeEmployeeAssignments(value: unknown) {
+  if (value === undefined || value === null) return {}
+  const source = object(value)
+  if (Object.keys(source).length > MAX_SESSION_RECORDS) fail()
+  const result: Mission['employee_assignments'] = {}
+  for (const [workItemID, candidate] of Object.entries(source)) {
+    const assignment = object(candidate)
+    const decoded = {
+      schema_version: integer(assignment.schema_version),
+      work_item_id: id(assignment.work_item_id),
+      role: enumeration(assignment.role, TEAM_ROLES),
+      employee_id: id(assignment.employee_id),
+      employee_revision: integer(assignment.employee_revision),
+      employee_snapshot_digest: string(assignment.employee_snapshot_digest, 256),
+      project_binding_id: id(assignment.project_binding_id),
+      workspace_fingerprint: string(assignment.workspace_fingerprint, 256),
+      company: id(assignment.company),
+      access: id(assignment.access),
+      model: id(assignment.model),
+      agent_profile: id(assignment.agent_profile),
+      effective_policy_digest: string(assignment.effective_policy_digest, 256),
+      context_digest: string(assignment.context_digest, 256),
+      digest: string(assignment.digest, 256),
+    }
+    if (workItemID !== decoded.work_item_id) fail()
+    result[workItemID] = decoded
+  }
+  return result
+}
+
 function decodeHandoff(value: unknown): Handoff {
   const source = object(value)
   return {
@@ -601,6 +634,7 @@ function decodeMission(value: unknown): Mission {
     usage_by_role: decodeRoleUsage(source.usage_by_role),
     work_items: array(source.work_items, decodeWorkItem, MAX_SESSION_RECORDS),
     handoffs: array(source.handoffs, decodeHandoff, MAX_SESSION_RECORDS),
+    employee_assignments: decodeEmployeeAssignments(source.employee_assignments),
     created_at: time(source.created_at),
     updated_at: time(source.updated_at),
     error: optionalString(source.error, 4096),
@@ -946,7 +980,7 @@ export function decodeSkillCatalog(value: unknown): { skills: SkillCatalogItem[]
         kind: enumeration(skill.kind, ['native', 'skill_md_adapter'] as const),
         title: string(skill.title, 8192),
         description: string(skill.description),
-        requested_capabilities: array(
+        requested_capabilities: optionalArray(
           skill.requested_capabilities,
           (item) => string(item, 256),
           MAX_SMALL_COLLECTION,
@@ -1425,6 +1459,51 @@ export function decodeLoopInvocationList(value: unknown): {
   }
 }
 
+export function decodeNotificationStatus(value: unknown): NotificationStatus {
+  const source = object(value)
+  const result: NotificationStatus = {
+    configured: boolean(source.configured),
+    recipient: string(source.recipient, 320),
+    from: optionalString(source.from, 320),
+    host: optionalString(source.host, 256),
+    last_error: optionalString(source.last_error, 512),
+    last_sent_at: optionalTime(source.last_sent_at),
+  }
+  if (source.email_configured !== undefined) result.email_configured = boolean(source.email_configured)
+  if (source.openclaw_configured !== undefined) result.openclaw_configured = boolean(source.openclaw_configured)
+  if (source.openclaw_channel !== undefined) result.openclaw_channel = string(source.openclaw_channel, 128)
+  if (source.openclaw_target !== undefined) result.openclaw_target = string(source.openclaw_target, 512)
+  return result
+}
+
+const REPORT_DELIVERY_STATUSES = ['pending', 'sent', 'failed'] as const
+
+export function decodeReport(value: unknown): ReportRecord {
+  const source = object(value)
+  return {
+    schema_version: integer(source.schema_version),
+    id: id(source.id),
+    source_type: enumeration(source.source_type, ['loop', 'employee_task'] as const),
+    source_id: id(source.source_id),
+    title: string(source.title, 512),
+    status: enumeration(source.status, ['completed', 'skipped', 'blocked', 'failed', 'cancelled'] as const),
+    failure_code: optionalString(source.failure_code, 256),
+    summary: optionalString(source.summary, 12 << 10),
+    finished_at: optionalTime(source.finished_at),
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
+    delivery_status: enumeration<ReportDeliveryStatus>(source.delivery_status, REPORT_DELIVERY_STATUSES),
+    delivery_channel: optionalString(source.delivery_channel, 128),
+    delivered_at: optionalTime(source.delivered_at),
+    last_error: optionalString(source.last_error, 512),
+  }
+}
+
+export function decodeReports(value: unknown): { reports: ReportRecord[]; limit: number } {
+  const source = object(value)
+  return { reports: array(source.reports, decodeReport, MAX_SMALL_COLLECTION), limit: integer(source.limit) }
+}
+
 export function decodeDryRun(value: unknown): DryRunReport {
   const source = object(value)
   return {
@@ -1436,12 +1515,16 @@ export function decodeDryRun(value: unknown): DryRunReport {
     git_clean: boolean(source.git_clean),
     task_prompt: string(source.task_prompt),
     agent: decodeSelection(source.agent),
-    roles: array(source.roles, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
+    // Go omits empty slices because the wire contract uses `omitempty`.
+    // Treat an omitted collection exactly like an explicit empty collection;
+    // a successful Dry Run with no verification checks/reasons must still be
+    // renderable by the workbench.
+    roles: optionalArray(source.roles, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
     write_scope: string(source.write_scope, 256),
-    checks: array(source.checks, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
+    checks: optionalArray(source.checks, (entry) => boundedRecord(entry), MAX_SMALL_COLLECTION),
     budget: decodeBudget(source.budget),
     requires_approval: boolean(source.requires_approval),
     ready: boolean(source.ready),
-    reasons: array(source.reasons, (item) => string(item, 4096), MAX_SMALL_COLLECTION),
+    reasons: optionalArray(source.reasons, (item) => string(item, 4096), MAX_SMALL_COLLECTION),
   }
 }
