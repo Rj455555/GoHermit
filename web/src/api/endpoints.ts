@@ -49,6 +49,7 @@ import type {
   TeamTemplate,
   TaskBoardCardInput,
   TaskBoardNoteInput,
+  TaskBoardSettingsInput,
 } from './types'
 
 type ReadOptions = Pick<ApiRequestOptions, 'signal'>
@@ -280,6 +281,15 @@ export const resumeEmployeeTask = (taskId: string, options: ReadOptions = {}) =>
 
 export const getTaskBoard = (options: ReadOptions = {}) =>
   apiRequest('/api/task-board', decodeTaskBoard, options)
+
+export const updateTaskBoardSettings = (
+  input: TaskBoardSettingsInput,
+  options: ReadOptions = {},
+) => apiRequest('/api/task-board', decodeTaskBoard, {
+  ...options,
+  method: 'PUT',
+  body: input,
+})
 
 export const updateTaskBoardCard = (
   taskId: string,

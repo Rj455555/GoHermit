@@ -50,6 +50,7 @@ import {
   resumeEmployeeTask,
   startEmployeeTask,
   updateTaskBoardCard,
+  updateTaskBoardSettings,
 } from '../../api/endpoints'
 import { ApiError } from '../../api/errors'
 import type {
@@ -61,6 +62,7 @@ import type {
   MemoryFact,
   SessionDetailResponse,
   TaskBoardCard,
+  TaskBoardDefinition,
   TaskBoardView,
 } from '../../api/types'
 import { useConnectivity } from '../../components/ConnectivityProvider'
@@ -106,7 +108,7 @@ function boardCardInput(card: TaskBoardCard, columnId = card.column_id, rank = c
   }
 }
 
-function BoardCardView({ card, onOpen, onDragStart }: { card: TaskBoardCard; onOpen: (card: TaskBoardCard) => void; onDragStart: (card: TaskBoardCard) => void }) {
+function BoardCardView({ card, onOpen, onDragStart, onConvert }: { card: TaskBoardCard; onOpen: (card: TaskBoardCard) => void; onDragStart: (card: TaskBoardCard) => void; onConvert: (card: TaskBoardCard) => void }) {
   const { t } = useTranslation()
   const isTask = card.kind === 'task' && Boolean(card.task_id)
   return <div
@@ -128,7 +130,9 @@ function BoardCardView({ card, onOpen, onDragStart }: { card: TaskBoardCard; onO
           {card.approval_status !== 'none' ? <Tag color="warning">{t('tasks.approval')}: {card.approval_status}</Tag> : null}
         </Space>
         {card.kind === 'note' && card.body ? <Typography.Paragraph ellipsis={{ rows: 3 }} className="safe-wrap" style={{ marginBottom: 0 }}>{card.body}</Typography.Paragraph> : null}
+        {card.kind === 'note' ? <Button type="link" size="small" onClick={(event) => { event.stopPropagation(); onConvert(card) }}>{t('tasks.useAsTask')}</Button> : null}
         {card.labels.length > 0 ? <Space wrap size={[4, 4]}>{card.labels.map((label) => <Tag key={label}>{label}</Tag>)}</Space> : null}
+        {card.loop_id ? <Link to={`/loops/${encodeURIComponent(card.loop_id)}`} onClick={(event) => event.stopPropagation()}>{t('tasks.loop')}: {card.loop_id}</Link> : null}
         <Space split="·" size={4} wrap>
           <Typography.Text type="secondary">{card.kind === 'task' ? card.id : t('tasks.note')}</Typography.Text>
           {card.session_count > 0 ? <Typography.Text type="secondary">{t('tasks.sessions')}: {card.session_count}</Typography.Text> : null}
@@ -199,6 +203,9 @@ export function TasksWorkbenchPage() {
   const [noteTitle, setNoteTitle] = useState('')
   const [noteBody, setNoteBody] = useState('')
   const [noteCreating, setNoteCreating] = useState(false)
+  const [definitionOpen, setDefinitionOpen] = useState(false)
+  const [definitionText, setDefinitionText] = useState('')
+  const [definitionSaving, setDefinitionSaving] = useState(false)
   const [draggingID, setDraggingID] = useState<string | null>(null)
   const [startCandidate, setStartCandidate] = useState<{ card: TaskBoardCard; targetColumn: string } | null>(null)
   const [startBusy, setStartBusy] = useState(false)
@@ -362,6 +369,33 @@ export function TasksWorkbenchPage() {
     }
   }
 
+  function openDefinitionEditor() {
+    if (!board) return
+    setDefinitionText(JSON.stringify(board.definition, null, 2))
+    setDefinitionOpen(true)
+  }
+
+  async function saveDefinition() {
+    if (!board || definitionSaving || !connectivity.canMutate) return
+    let definition: TaskBoardDefinition
+    try {
+      definition = JSON.parse(definitionText) as TaskBoardDefinition
+    } catch {
+      actions.showToast({ messageKey: 'tasks.invalidDefinition', tone: 'error' })
+      return
+    }
+    setDefinitionSaving(true)
+    try {
+      const next = await updateTaskBoardSettings({ definition, view: board.view, filters: board.filters })
+      setBoard(next)
+      setDefinitionOpen(false)
+    } catch (caught) {
+      actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+    } finally {
+      setDefinitionSaving(false)
+    }
+  }
+
   const promptBytes = utf8Bytes(prompt)
   const availableSkills = context?.skills.bindings.filter((item) => item.status === 'current' && item.binding.enabled) ?? []
   const selectedSkills = availableSkills.map((item) => item.binding).filter((binding) => skillKeys.includes(`${binding.skill_id}\0${binding.version}\0${binding.digest}`))
@@ -394,6 +428,18 @@ export function TasksWorkbenchPage() {
     }
   }
 
+  function useNoteAsTask(card: TaskBoardCard) {
+    if (card.kind !== 'note') return
+    setPrompt([card.title, card.body].filter(Boolean).join('\n\n'))
+    const targetEmployee = card.employee_id && activeEmployees.some((employee) => employee.id === card.employee_id)
+      ? card.employee_id
+      : activeEmployees[0]?.id ?? ''
+    setEmployeeId(targetEmployee)
+    setProjectId('')
+    setFilter('view', 'list')
+    actions.showToast({ messageKey: 'tasks.notePrefilled', tone: 'info' })
+  }
+
   if (error && tasks.length === 0) return <ErrorState title={t('tasks.loadError')} description={t('common.retryDescription')} />
   const activeEmployees = employees.filter((item) => item.state === 'active')
   const projectOptions = Array.from(new Map(tasks.map((task) => [task.project_binding.id, { id: task.project_binding.id, label: task.project_binding.label }])).values())
@@ -421,7 +467,7 @@ export function TasksWorkbenchPage() {
         <Button className="task-create-action" block={!screens.md} type="primary" loading={creating} disabled={!connectivity.canMutate || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || !projectId} onClick={() => void create()}>{t('tasks.createQueued')}</Button>
       </Form>
     </Card>
-    <Card title={<Space wrap><span>{t('tasks.filters')}</span><Segmented aria-label={t('tasks.view')} value={viewMode} options={[{ label: t('tasks.board'), value: 'board' }, { label: t('tasks.list'), value: 'list' }]} onChange={(value) => setFilter('view', String(value))} /></Space>} extra={<Space wrap><Button onClick={() => setNoteOpen(true)}>{t('tasks.newNote')}</Button><Button onClick={() => setFilter('archived', params.get('archived') === '1' ? '' : '1')}>{params.get('archived') === '1' ? t('tasks.hideArchived') : t('tasks.showArchived')}</Button></Space>}>
+    <Card title={<Space wrap><span>{t('tasks.filters')}</span><Segmented aria-label={t('tasks.view')} value={viewMode} options={[{ label: t('tasks.board'), value: 'board' }, { label: t('tasks.list'), value: 'list' }]} onChange={(value) => setFilter('view', String(value))} /></Space>} extra={<Space wrap><Button disabled={!board} onClick={openDefinitionEditor}>{t('tasks.boardSettings')}</Button><Button onClick={() => setNoteOpen(true)}>{t('tasks.newNote')}</Button><Button onClick={() => setFilter('archived', params.get('archived') === '1' ? '' : '1')}>{params.get('archived') === '1' ? t('tasks.hideArchived') : t('tasks.showArchived')}</Button></Space>}>
       <Row gutter={[16, 0]}>
         <Col xs={24} sm={12} lg={8}><Form.Item label={t('tasks.search')}><Input.Search aria-label={t('tasks.search')} allowClear defaultValue={params.get('q') ?? ''} onSearch={(value) => setFilter('q', value)} /></Form.Item></Col>
         <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.employeeFilter')}><Select aria-label={t('tasks.employeeFilter')} allowClear value={params.get('employee') || undefined} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} onChange={(value) => setFilter('employee', value ?? '')} /></Form.Item></Col>
@@ -443,7 +489,7 @@ export function TasksWorkbenchPage() {
           const cards = filteredBoardCards.filter((card) => card.column_id === column.id).sort((left, right) => left.rank - right.rank || Date.parse(left.authoritative_updated_at) - Date.parse(right.authoritative_updated_at))
           return <section key={column.id} data-testid={`task-board-column-${column.id}`} className="task-board-column" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const card = filteredBoardCards.find((item) => item.id === draggingID); if (card) dropCard(card, column.id) }}>
             <header className="task-board-column__header"><Space><span className="task-board-column__swatch" style={{ background: column.color }} /><Typography.Text strong>{column.title}</Typography.Text><Badge count={cards.length} showZero /></Space>{column.wip_limit ? <Typography.Text type="secondary">/{column.wip_limit}</Typography.Text> : null}</header>
-            <div className="task-board-column__cards">{cards.map((card) => <BoardCardView key={card.id} card={card} onOpen={(item) => { if (item.task_id) void navigate(`/tasks/${encodeURIComponent(item.task_id)}`) }} onDragStart={(item) => { setDraggingID(item.id) }} />)}{cards.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.emptyColumn')} /> : null}</div>
+          <div className="task-board-column__cards">{cards.map((card) => <BoardCardView key={card.id} card={card} onOpen={(item) => { if (item.task_id) void navigate(`/tasks/${encodeURIComponent(item.task_id)}`) }} onDragStart={(item) => { setDraggingID(item.id) }} onConvert={useNoteAsTask} />)}{cards.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.emptyColumn')} /> : null}</div>
           </section>
         })}
       </div>
@@ -453,6 +499,9 @@ export function TasksWorkbenchPage() {
     </Modal>
     <Modal open={noteOpen} title={t('tasks.newNote')} okText={t('actions.save')} cancelText={t('actions.cancel')} confirmLoading={noteCreating} onCancel={() => setNoteOpen(false)} onOk={() => void createNote()}>
       <Form layout="vertical"><Form.Item label={t('tasks.noteTitle')} required><Input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} /></Form.Item><Form.Item label={t('tasks.noteBody')}><Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} value={noteBody} onChange={(event) => setNoteBody(event.target.value)} /></Form.Item></Form>
+    </Modal>
+    <Modal open={definitionOpen} title={t('tasks.boardSettings')} okText={t('actions.save')} cancelText={t('actions.cancel')} confirmLoading={definitionSaving} onCancel={() => setDefinitionOpen(false)} onOk={() => void saveDefinition()}>
+      <Form layout="vertical"><Form.Item label={t('tasks.definitionJSON')} help={t('tasks.definitionHelp')}><Input.TextArea aria-label={t('tasks.definitionJSON')} autoSize={{ minRows: 12, maxRows: 28 }} value={definitionText} onChange={(event) => setDefinitionText(event.target.value)} /></Form.Item></Form>
     </Modal>
   </article>
 }

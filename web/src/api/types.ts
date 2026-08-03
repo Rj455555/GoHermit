@@ -556,6 +556,8 @@ export interface TaskBoardView {
   projection_generated_at: string
 }
 
+export type TaskBoardSettingsInput = Pick<TaskBoardView, 'definition' | 'view' | 'filters'>
+
 export interface TaskBoardCardInput {
   column_id: string
   rank: number

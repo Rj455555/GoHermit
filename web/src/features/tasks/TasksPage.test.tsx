@@ -25,6 +25,7 @@ const api = vi.hoisted(() => ({
   cancelEmployeeTask: vi.fn(),
   resumeEmployeeTask: vi.fn(),
   getTaskBoard: vi.fn(),
+  updateTaskBoardSettings: vi.fn(),
   updateTaskBoardCard: vi.fn(),
   createTaskBoardNote: vi.fn(),
 }))
@@ -134,6 +135,26 @@ const taskBoard = {
     state: 'queued',
     state_source: 'employee_task',
     projection_reason: 'queued_task',
+    authoritative_updated_at: now,
+    session_event_sequence: 0,
+    session_count: 0,
+    approval_status: 'none',
+    verification_status: 'none',
+    stale: false,
+  }, {
+    id: 'note-1',
+    kind: 'note',
+    title: 'Capture rollout',
+    body: 'Record the release evidence before shipping.',
+    column_id: 'backlog',
+    rank: 1,
+    labels: ['release'],
+    priority: 1,
+    pinned: false,
+    blocked: false,
+    depends_on: [],
+    employee_id: employee.id,
+    projection_reason: 'note',
     authoritative_updated_at: now,
     session_event_sequence: 0,
     session_count: 0,
@@ -263,6 +284,7 @@ beforeEach(() => {
   api.getEmployeeKnowledge.mockResolvedValue({ employee_id: employee.id, sources: [], indexes: [], results: [] })
   api.getEmployeeMemory.mockResolvedValue({ employee_id: employee.id, facts: [] })
   api.getTaskBoard.mockResolvedValue(taskBoard)
+  api.updateTaskBoardSettings.mockResolvedValue(taskBoard)
   api.updateTaskBoardCard.mockResolvedValue({ ...taskBoard, cards: [{ ...taskBoard.cards[0], column_id: 'in_progress', state: 'running', projection_reason: 'run_running', session_id: 'session-1', run_id: 'run-1', session_count: 1 }] })
   api.createTaskBoardNote.mockResolvedValue(taskBoard)
 })
@@ -333,6 +355,35 @@ describe('Employee Tasks Phase 4 pages', () => {
     await user.click(startButton)
     await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledWith(queuedTask.id))
     expect(api.updateTaskBoardCard).toHaveBeenCalledWith(queuedTask.id, expect.objectContaining({ column_id: 'in_progress' }))
+  })
+
+  it('uses a Note card as a queued Task draft without starting it', async () => {
+    const user = userEvent.setup()
+    renderTasks('/tasks?view=board')
+
+    expect(await screen.findByText('Capture rollout')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Use as Task draft' }))
+
+    expect(screen.getByRole('textbox', { name: 'Task prompt' })).toHaveValue('Capture rollout\n\nRecord the release evidence before shipping.')
+    expect(screen.getByRole('button', { name: 'Create as queued' })).toBeDisabled()
+    expect(api.createEmployeeTask).not.toHaveBeenCalled()
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+  })
+
+  it('opens and saves a custom Board definition without touching Task execution', async () => {
+    const user = userEvent.setup()
+    renderTasks('/tasks?view=board')
+
+    await screen.findByTestId('task-board')
+    await user.click(screen.getByRole('button', { name: 'Board settings' }))
+    const definition = { ...taskBoard.definition, name: 'Release workspace' }
+    const editor = screen.getByRole('textbox', { name: 'Board Definition JSON' })
+    fireEvent.change(editor, { target: { value: JSON.stringify(definition) } })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.updateTaskBoardSettings).toHaveBeenCalledWith(expect.objectContaining({ definition })))
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    expect(api.createEmployeeTask).not.toHaveBeenCalled()
   })
 
   it('loads the last 100 Tasks per Employee and exposes the boundary', async () => {
