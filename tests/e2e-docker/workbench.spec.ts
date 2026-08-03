@@ -15,10 +15,10 @@ test('container serves the localized React workbench on every declared route', a
   for (const route of declaredRoutes) {
     await page.goto(route)
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
-    await expect(page.locator('main')).not.toBeEmpty()
+    await expect(page.locator('main > *').first(), route).toBeAttached()
     await expect(page.getByTestId('placeholder-page')).toHaveCount(0)
     await page.reload()
-    await expect(page.locator('main')).not.toBeEmpty()
+    await expect(page.locator('main > *').first(), `${route} after refresh`).toBeAttached()
   }
 
   await page.getByRole('button', { name: /English/u }).click()
