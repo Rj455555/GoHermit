@@ -59,6 +59,11 @@ import type {
   TeamTemplate,
   TestResult,
   ToolRecord,
+  WeixinAccount,
+  WeixinAccountState,
+  WeixinBinding,
+  WeixinInboxItem,
+  WeixinLoginAttempt,
   WorkItem,
 } from './types'
 
@@ -1474,6 +1479,80 @@ export function decodeNotificationStatus(value: unknown): NotificationStatus {
   if (source.openclaw_channel !== undefined) result.openclaw_channel = string(source.openclaw_channel, 128)
   if (source.openclaw_target !== undefined) result.openclaw_target = string(source.openclaw_target, 512)
   return result
+}
+
+const WEIXIN_STATES = ['disconnected', 'qr_pending', 'scanned', 'confirmed', 'connected', 'expired', 'reconnecting', 'logged_out', 'failed'] as const
+
+function decodeWeixinAccount(value: unknown): WeixinAccount {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    label: optionalString(source.label, 512) ?? '',
+    state: enumeration<WeixinAccountState>(source.state, WEIXIN_STATES),
+    weixin_user_id: optionalString(source.weixin_user_id, 512),
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
+    last_error: optionalString(source.last_error, 4096),
+  }
+}
+
+export function decodeWeixinAccounts(value: unknown): { accounts: WeixinAccount[] } {
+  const source = object(value)
+  return { accounts: array(source.accounts, decodeWeixinAccount, 32) }
+}
+
+export function decodeWeixinLoginAttempt(value: unknown): WeixinLoginAttempt {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    account_id: id(source.account_id),
+    state: enumeration<WeixinAccountState>(source.state, WEIXIN_STATES),
+    expires_at: time(source.expires_at),
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
+    qr_available: boolean(source.qr_available),
+  }
+}
+
+function decodeWeixinBinding(value: unknown): WeixinBinding {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    account_id: id(source.account_id),
+    peer_id: optionalString(source.peer_id, 512),
+    group_id: optionalString(source.group_id, 512),
+    employee_id: id(source.employee_id),
+    enabled: boolean(source.enabled),
+    mention_required: boolean(source.mention_required),
+    created_at: time(source.created_at),
+    updated_at: time(source.updated_at),
+  }
+}
+
+export function decodeWeixinBindings(value: unknown): { bindings: WeixinBinding[] } {
+  const source = object(value)
+  return { bindings: array(source.bindings, decodeWeixinBinding, 512) }
+}
+
+function decodeWeixinInboxItem(value: unknown): WeixinInboxItem {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    account_id: id(source.account_id),
+    peer_id: string(source.peer_id, 512),
+    group_id: optionalString(source.group_id, 512),
+    message_id: string(source.message_id, 512),
+    sequence: integer(source.sequence),
+    text: optionalString(source.text, MAX_TEXT),
+    state: string(source.state, 64),
+    task_id: optionalID(source.task_id),
+    received_at: time(source.received_at),
+  }
+}
+
+export function decodeWeixinInbox(value: unknown): { items: WeixinInboxItem[] } {
+  const source = object(value)
+  return { items: array(source.items, decodeWeixinInboxItem, 200) }
 }
 
 const REPORT_DELIVERY_STATUSES = ['pending', 'sent', 'failed'] as const

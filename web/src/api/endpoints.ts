@@ -26,6 +26,10 @@ import {
   decodeLoopRuntimeState,
   decodeLoopDefinitions,
   decodeNotificationStatus,
+  decodeWeixinAccounts,
+  decodeWeixinBindings,
+  decodeWeixinInbox,
+  decodeWeixinLoginAttempt,
   decodeReport,
   decodeReports,
   decodeOwnerProfile,
@@ -46,6 +50,7 @@ import type {
   ProjectBinding,
   SkillBinding,
   TeamTemplate,
+  WeixinBinding,
 } from './types'
 
 type ReadOptions = Pick<ApiRequestOptions, 'signal'>
@@ -75,6 +80,45 @@ export const getLoopRuntime = (loopId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/loops/${segment(loopId)}/runtime`, decodeLoopRuntimeState, options)
 export const getNotificationStatus = (options: ReadOptions = {}) =>
   apiRequest('/api/settings/notifications', decodeNotificationStatus, options)
+export const getWeixinAccounts = (options: ReadOptions = {}) =>
+  apiRequest('/api/channels/weixin/accounts', decodeWeixinAccounts, options)
+export const startWeixinLogin = (
+  input: { account_id?: string; base_url?: string; label?: string } = {},
+  options: ReadOptions = {},
+) => apiRequest('/api/channels/weixin/login', decodeWeixinLoginAttempt, {
+  ...options,
+  method: 'POST',
+  body: input,
+})
+export const getWeixinLoginStatus = (attemptId: string, options: ReadOptions = {}) =>
+  apiRequest('/api/channels/weixin/login/' + segment(attemptId), decodeWeixinLoginAttempt, options)
+export const cancelWeixinLogin = (attemptId: string, options: ReadOptions = {}) =>
+  apiRequestNoContent('/api/channels/weixin/login/' + segment(attemptId) + '/cancel', {
+    ...options,
+    method: 'POST',
+  })
+export const logoutWeixinAccount = (accountId: string, options: ReadOptions = {}) =>
+  apiRequestNoContent('/api/channels/weixin/accounts/' + segment(accountId) + '/logout', {
+    ...options,
+    method: 'POST',
+  })
+export const getWeixinBindings = (options: ReadOptions = {}) =>
+  apiRequest('/api/channels/weixin/bindings', decodeWeixinBindings, options)
+export const saveWeixinBinding = (
+  binding: Omit<WeixinBinding, 'created_at' | 'updated_at'>,
+  options: ReadOptions = {},
+) => apiRequest('/api/channels/weixin/bindings', decodeWeixinBindings, {
+  ...options,
+  method: 'POST',
+  body: binding,
+})
+export const deleteWeixinBinding = (bindingId: string, options: ReadOptions = {}) =>
+  apiRequestNoContent('/api/channels/weixin/bindings/' + segment(bindingId), {
+    ...options,
+    method: 'DELETE',
+  })
+export const getWeixinInbox = (accountId: string, options: ReadOptions = {}) =>
+  apiRequest('/api/channels/weixin/inbox?account_id=' + segment(accountId), decodeWeixinInbox, options)
 export const listReports = (options: ReadOptions = {}) =>
   apiRequest('/api/reports?limit=100', decodeReports, options)
 export const retryReport = (reportId: string, options: ReadOptions = {}) =>

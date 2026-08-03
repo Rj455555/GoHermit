@@ -142,6 +142,16 @@ file at a time. Cross-file transactions are intentionally not claimed.
 - Exact private-Memory echo detection is conservative and may reject a public
   Handoff containing the same text.
 
+## First-class Weixin channel
+
+The Weixin channel is an owner-scoped transport documented in
+docs/ai/weixin-channel.md. It uses one cancellable bounded poller per account,
+persists a per-account getUpdates cursor after inbox idempotency, and routes
+only explicitly bound inbound text to a queued Employee Task. It never starts
+execution: Owner Start remains the only Task execution entrypoint. Credentials
+and context tokens are separate from public account metadata, and channel
+delivery is not Session SSE or Run state.
+
 ## Standard verification
 
 ```bash

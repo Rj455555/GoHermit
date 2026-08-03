@@ -802,6 +802,62 @@ export interface NotificationStatus {
   last_sent_at?: string | undefined
 }
 
+export type WeixinAccountState =
+  | 'disconnected'
+  | 'qr_pending'
+  | 'scanned'
+  | 'confirmed'
+  | 'connected'
+  | 'expired'
+  | 'reconnecting'
+  | 'logged_out'
+  | 'failed'
+
+export interface WeixinAccount {
+  id: string
+  label: string
+  state: WeixinAccountState
+  weixin_user_id?: string | undefined
+  created_at: string
+  updated_at: string
+  last_error?: string | undefined
+}
+
+export interface WeixinLoginAttempt {
+  id: string
+  account_id: string
+  state: WeixinAccountState
+  expires_at: string
+  created_at: string
+  updated_at: string
+  qr_available: boolean
+}
+
+export interface WeixinBinding {
+  id: string
+  account_id: string
+  peer_id?: string | undefined
+  group_id?: string | undefined
+  employee_id: string
+  enabled: boolean
+  mention_required: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WeixinInboxItem {
+  id: string
+  account_id: string
+  peer_id: string
+  group_id?: string | undefined
+  message_id: string
+  sequence: number
+  text?: string | undefined
+  state: string
+  task_id?: string | undefined
+  received_at: string
+}
+
 export type ReportDeliveryStatus = 'pending' | 'sent' | 'failed'
 
 export interface ReportRecord {

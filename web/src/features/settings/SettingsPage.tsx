@@ -20,6 +20,7 @@ import { useConnectivity } from '../../components/ConnectivityProvider'
 import { ErrorState } from '../../components/ErrorState'
 import { PageHeader } from '../../components/PageHeader'
 import { useUI } from '../../state/UIContext'
+import { WeixinChannelPage } from './WeixinChannelPage'
 
 const EMPTY_PROFILE: OwnerProfile = {
   schema_version: 1,
@@ -255,6 +256,7 @@ export function SettingsPage() {
     <article className="feature-page settings-page">
       <PageHeader title={t('pages.settings.title')} description={t('settings.description')} />
       {loadError || connectivity.status === 'offline' ? <Alert className="stale-notice" type="warning" showIcon message={t('connectivity.stale')} /> : null}
+      <WeixinChannelPage />
       <form className="projection-card form-grid settings-owner-card" onSubmit={(event) => void submitProfile(event)}>
         <h2>{t('settings.owner')}</h2>
         <label>

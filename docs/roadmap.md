@@ -21,6 +21,10 @@
 
 ## v0.8 candidate themes
 
+- First-class owner-scoped Weixin channel with QR login, account isolation,
+  cursor-backed polling, explicit-Start Employee Task inbox, bounded outbox,
+  and Settings bindings.
+
 - Cross-process owner Employee Store semantics for one instance per Workspace.
 - Explicit Artifact/report export and publish approval workflows.
 - Evidence-backed cross-Employee read-only concurrency.

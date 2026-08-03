@@ -2,6 +2,11 @@
 
 ## 0.8.0-dev
 
+- Added a first-class owner-scoped Weixin transport with bounded QR login,
+  separate credentials, per-account cursor polling, idempotent inbox/outbox,
+  explicit Employee bindings, and queued-only Task creation. Session/Run
+  execution remains under the existing Owner Start control-plane boundary.
+
 - Added Employee-owned recurring Loops with a bounded Goal/Boundaries/SOP
   contract, Definition of Done, Stop Conditions, manual or daily trigger, and
   generated `contracts/{loop-id}/LOOP.md`.

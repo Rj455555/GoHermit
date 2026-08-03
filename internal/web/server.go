@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/Rj455555/GoHermit/internal/app"
+	"github.com/Rj455555/GoHermit/internal/channel/weixin"
+	"github.com/Rj455555/GoHermit/internal/channelstore"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/controlplane"
 	"github.com/Rj455555/GoHermit/internal/event"
@@ -36,6 +38,7 @@ type Server struct {
 	Workspace     string
 	ConfigPath    string
 	svc           *controlplane.Service
+	channels      *weixin.Service
 	subscribersMu sync.Mutex
 	subscribers   map[string]map[chan event.Event]struct{}
 	static        http.Handler
@@ -60,12 +63,33 @@ func New(workspace, configPath string) (*Server, error) {
 		return nil, err
 	}
 	server.svc = svc
+	channelStore, err := channelstore.New("")
+	if err != nil {
+		return nil, err
+	}
+	server.channels = weixin.NewService(channelStore, nil, svc)
 	return server, nil
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
+	mux.HandleFunc("GET /api/channels", s.listChannels)
+	mux.HandleFunc("GET /api/channels/weixin/accounts", s.listWeixinAccounts)
+	mux.HandleFunc("POST /api/channels/weixin/login", s.startWeixinLogin)
+	mux.HandleFunc("GET /api/channels/weixin/login/{attemptID}", s.weixinLoginStatus)
+	mux.HandleFunc("GET /api/channels/weixin/login/{attemptID}/qr", s.weixinLoginQR)
+	mux.HandleFunc("POST /api/channels/weixin/login/{attemptID}/cancel", s.cancelWeixinLogin)
+	mux.HandleFunc("POST /api/channels/weixin/accounts/{accountID}/logout", s.logoutWeixinAccount)
+	mux.HandleFunc("GET /api/channels/weixin/bindings", s.listWeixinBindings)
+	mux.HandleFunc("POST /api/channels/weixin/bindings", s.saveWeixinBinding)
+	mux.HandleFunc("PATCH /api/channels/weixin/bindings/{bindingID}", s.saveWeixinBinding)
+	mux.HandleFunc("DELETE /api/channels/weixin/bindings/{bindingID}", s.deleteWeixinBinding)
+	mux.HandleFunc("GET /api/channels/weixin/accounts/{accountID}/bindings", s.listWeixinBindings)
+	mux.HandleFunc("POST /api/channels/weixin/accounts/{accountID}/bindings", s.saveWeixinBinding)
+	mux.HandleFunc("PATCH /api/channels/weixin/accounts/{accountID}/bindings/{bindingID}", s.saveWeixinBinding)
+	mux.HandleFunc("DELETE /api/channels/weixin/accounts/{accountID}/bindings/{bindingID}", s.deleteWeixinBinding)
+	mux.HandleFunc("GET /api/channels/weixin/inbox", s.listWeixinInbox)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/owner", s.getOwner)
 	mux.HandleFunc("GET /api/projects", s.listProjects)
@@ -140,6 +164,7 @@ func (s *Server) Handler() http.Handler {
 // still flows through the Control Plane's existing Task/Session/Run paths.
 func (s *Server) StartLoopScheduler(ctx context.Context) {
 	s.svc.StartLoopScheduler(ctx)
+	_ = s.channels.Start(ctx)
 }
 
 func rejectAnomalousPaths(next http.Handler) http.Handler {
