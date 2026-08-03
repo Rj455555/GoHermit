@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,6 +44,40 @@ func testServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	return server
+}
+
+type headerSignalRecorder struct {
+	*httptest.ResponseRecorder
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (r *headerSignalRecorder) WriteHeader(code int) {
+	r.once.Do(func() { close(r.ready) })
+	r.ResponseRecorder.WriteHeader(code)
+}
+
+func (r *headerSignalRecorder) Write(value []byte) (int, error) {
+	r.once.Do(func() { close(r.ready) })
+	return r.ResponseRecorder.Write(value)
+}
+
+func serveSSEUntilHeaders(t *testing.T, handler http.Handler, request *http.Request, cancel context.CancelFunc) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := &headerSignalRecorder{ResponseRecorder: httptest.NewRecorder(), ready: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(recorder, request)
+		close(done)
+	}()
+	select {
+	case <-recorder.ready:
+		cancel()
+	case <-time.After(5 * time.Second):
+		t.Fatal("SSE handler did not write headers")
+	}
+	<-done
+	return recorder.ResponseRecorder
 }
 
 func TestReactAssetsAndDeclaredRoutesAreServed(t *testing.T) {
@@ -581,20 +616,16 @@ func TestPersistentSessionAPIAndEventReplay(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(20*time.Millisecond, cancel)
 	request = httptest.NewRequest(http.MethodGet, "/api/sessions/"+created.ID+"/events?after=0", nil).WithContext(ctx)
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	response = serveSSEUntilHeaders(t, handler, request, cancel)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "id: "+strconv.FormatUint(e.Sequence, 10)) || !strings.Contains(response.Body.String(), "task_started") {
 		t.Fatalf("events status=%d body=%s", response.Code, response.Body.String())
 	}
 
 	ctx, cancel = context.WithCancel(context.Background())
-	time.AfterFunc(20*time.Millisecond, cancel)
 	request = httptest.NewRequest(http.MethodGet, "/api/sessions/"+created.ID+"/events?after=0", nil).WithContext(ctx)
 	request.Header.Set("Last-Event-ID", strconv.FormatUint(e.Sequence, 10))
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	response = serveSSEUntilHeaders(t, handler, request, cancel)
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "task_started") {
 		t.Fatalf("Last-Event-ID replayed an acknowledged event: status=%d body=%s", response.Code, response.Body.String())
 	}
