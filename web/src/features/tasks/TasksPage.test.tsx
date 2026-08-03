@@ -357,16 +357,20 @@ describe('Employee Tasks Phase 4 pages', () => {
     expect(api.updateTaskBoardCard).toHaveBeenCalledWith(queuedTask.id, expect.objectContaining({ column_id: 'in_progress' }))
   })
 
-  it('uses a Note card as a queued Task draft without starting it', async () => {
+  it('converts a Note into a queued Task draft and retains its source reference', async () => {
     const user = userEvent.setup()
+    api.createEmployeeTask.mockResolvedValue({ ...queuedTask, id: 'task-from-note' })
     renderTasks('/tasks?view=board')
 
     expect(await screen.findByText('Capture rollout')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Use as Task draft' }))
+    await user.click(screen.getByRole('button', { name: 'Convert to Task draft' }))
 
     expect(screen.getByRole('textbox', { name: 'Task prompt' })).toHaveValue('Capture rollout\n\nRecord the release evidence before shipping.')
     expect(screen.getByRole('button', { name: 'Create as queued' })).toBeDisabled()
-    expect(api.createEmployeeTask).not.toHaveBeenCalled()
+    selectAntOption('Project', 'GoHermit')
+    await user.click(screen.getByRole('button', { name: 'Create as queued' }))
+    await waitFor(() => expect(api.createEmployeeTask).toHaveBeenCalled())
+    expect(api.updateTaskBoardCard).toHaveBeenCalledWith('task-from-note', expect.objectContaining({ source_url: 'task-board://notes/note-1' }))
     expect(api.startEmployeeTask).not.toHaveBeenCalled()
   })
 

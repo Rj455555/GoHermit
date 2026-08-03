@@ -128,6 +128,7 @@ function BoardCardView({ card, onOpen, onDragStart, onConvert }: { card: TaskBoa
           {card.priority > 0 ? <Tag color="gold">P{card.priority}</Tag> : null}
           {card.blocked ? <Tag color="error">{t('tasks.blocked')}</Tag> : null}
           {card.approval_status !== 'none' ? <Tag color="warning">{t('tasks.approval')}: {card.approval_status}</Tag> : null}
+          {card.source_url?.startsWith('task-board://notes/') ? <Tag color="purple">{t('tasks.sourceNote')}</Tag> : null}
         </Space>
         {card.kind === 'note' && card.body ? <Typography.Paragraph ellipsis={{ rows: 3 }} className="safe-wrap" style={{ marginBottom: 0 }}>{card.body}</Typography.Paragraph> : null}
         {card.kind === 'note' ? <Button type="link" size="small" onClick={(event) => { event.stopPropagation(); onConvert(card) }}>{t('tasks.useAsTask')}</Button> : null}
@@ -203,6 +204,7 @@ export function TasksWorkbenchPage() {
   const [noteTitle, setNoteTitle] = useState('')
   const [noteBody, setNoteBody] = useState('')
   const [noteCreating, setNoteCreating] = useState(false)
+  const [noteSourceID, setNoteSourceID] = useState<string | null>(null)
   const [definitionOpen, setDefinitionOpen] = useState(false)
   const [definitionText, setDefinitionText] = useState('')
   const [definitionSaving, setDefinitionSaving] = useState(false)
@@ -408,6 +410,7 @@ export function TasksWorkbenchPage() {
     if (!context || !projectId || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || creating) return
     const epoch = contextEpoch.current
     const owner = employeeId
+    const sourceNoteID = noteSourceID
     setCreating(true)
     try {
       const task = await createEmployeeTask(employeeId, {
@@ -419,7 +422,20 @@ export function TasksWorkbenchPage() {
         policy: { allowed_capabilities: capabilities.split(/\r?\n|,/u).map((item) => item.trim()).filter(Boolean), network_allowed: network, budget },
       })
       if (epoch !== contextEpoch.current || owner !== employeeId) return
+      if (sourceNoteID) {
+        try {
+          const nextBoard = await updateTaskBoardCard(task.id, {
+            column_id: 'todo', rank: Date.now(), labels: [], priority: 0, due_at: null,
+            pinned: false, blocked: false, blocker_reason: '', depends_on: [],
+            source_url: `task-board://notes/${encodeURIComponent(sourceNoteID)}`, loop_id: '',
+          })
+          setBoard(nextBoard)
+        } catch (caught) {
+          actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+        }
+      }
       setPrompt('')
+      setNoteSourceID(null)
       await navigate(`/tasks/${encodeURIComponent(task.id)}`)
     } catch (caught) {
       if (epoch === contextEpoch.current && owner === employeeId) actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
@@ -431,6 +447,7 @@ export function TasksWorkbenchPage() {
   function useNoteAsTask(card: TaskBoardCard) {
     if (card.kind !== 'note') return
     setPrompt([card.title, card.body].filter(Boolean).join('\n\n'))
+    setNoteSourceID(card.id)
     const targetEmployee = card.employee_id && activeEmployees.some((employee) => employee.id === card.employee_id)
       ? card.employee_id
       : activeEmployees[0]?.id ?? ''
