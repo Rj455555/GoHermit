@@ -207,6 +207,9 @@ describe('shared shell components', () => {
         <EmptyState title="Empty" description="No items" />
         <ErrorState title="Error" description="Try later" />
         <StatusBadge tone="success">Ready</StatusBadge>
+        <StatusBadge tone="warning">Paused</StatusBadge>
+        <StatusBadge tone="error">Failed</StatusBadge>
+        <StatusBadge>Running</StatusBadge>
       </>,
     )
 
@@ -214,5 +217,8 @@ describe('shared shell components', () => {
     expect(screen.getByText('No items')).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('Try later')
     expect(screen.getByText('Ready')).toBeInTheDocument()
+    expect(screen.getByText('Paused')).toHaveClass('status-badge--warning')
+    expect(screen.getByText('Failed')).toHaveClass('status-badge--error')
+    expect(screen.getByText('Running')).toHaveClass('status-badge--info')
   })
 })

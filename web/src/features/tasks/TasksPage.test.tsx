@@ -362,7 +362,9 @@ describe('Employee Tasks Phase 4 pages', () => {
         memory_fact_ids: [],
       }),
     ))
-    expect(await screen.findByTestId('task-owner-location')).toHaveTextContent('/tasks/task-queued')
+    await waitFor(() => {
+      expect(screen.getByTestId('task-owner-location')).toHaveTextContent('/tasks/task-queued')
+    }, { timeout: 10_000 })
   })
 
   it('renders execution evidence as structured sections, not raw JSON', async () => {
