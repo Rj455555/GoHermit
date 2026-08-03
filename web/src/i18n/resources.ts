@@ -41,6 +41,10 @@ export const translationResources = {
         stale: '当前显示的是最近一次成功加载的数据。',
       },
       dashboard: {
+        taskBoard: '今日任务工作台',
+        taskBoardDescription: '从 Dashboard 直接查看任务、笔记和执行状态；需要创建或操作时进入完整任务工作台。',
+        taskBoardUnavailable: '任务工作台暂不可用',
+        openTaskBoard: '打开完整看板',
         active: '进行中',
         activeSession: '当前活动会话',
         completed: '已完成',
@@ -924,6 +928,10 @@ export const translationResources = {
       },
       dashboard: {
         active: 'Active',
+        taskBoard: 'Task Workspace',
+        taskBoardDescription: 'See tasks, notes, and execution state from Dashboard; open the full workbench when you need to create or operate.',
+        taskBoardUnavailable: 'Task Workspace is unavailable',
+        openTaskBoard: 'Open full board',
         activeSession: 'Active Session',
         completed: 'Completed',
         description: 'Read-only workspace, access readiness, and Loop invocation overview.',

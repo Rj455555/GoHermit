@@ -13,6 +13,7 @@ import { ErrorState } from '../../components/ErrorState'
 import { PageHeader } from '../../components/PageHeader'
 import { useConnectivity } from '../../components/ConnectivityProvider'
 import { translatedEnum } from '../../i18n/enumLabel'
+import { DashboardTaskBoard } from './DashboardTaskBoard'
 
 interface DashboardProjection {
   info: Info
@@ -135,6 +136,7 @@ export function DashboardPage() {
           <Col xs={24} sm={12} xl={6}><Card><Statistic title={t('dashboard.workspace')} value={projection.info.workspace} valueStyle={{ fontSize: 14 }} /></Card></Col>
           <Col xs={24} sm={12} xl={6}><Card><Statistic title="Owner" value={ownerName} /></Card></Col>
         </Row>
+        <DashboardTaskBoard />
         <Card className="dashboard-hero-card" aria-label={t('dashboard.summary')}>
           <Typography.Text className="dashboard-hero-eyebrow">NEXT BEST ACTION</Typography.Text>
           <Typography.Title level={2}>{recent ? (recentLoop?.name ?? recent.loop_id) : t('dashboard.idle')}</Typography.Title>

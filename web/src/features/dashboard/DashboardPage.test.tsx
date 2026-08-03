@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   listLoops: vi.fn(),
   listSessions: vi.fn(),
   listLoopInvocations: vi.fn(),
+  getTaskBoard: vi.fn(),
 }))
 
 vi.mock('../../api/endpoints', () => api)
@@ -21,6 +22,7 @@ vi.mock('../../components/ConnectivityProvider', () => ({
 describe('DashboardPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    api.getTaskBoard.mockResolvedValue(null)
     void i18n.changeLanguage('zh-CN')
   })
 
@@ -91,6 +93,36 @@ describe('DashboardPage', () => {
       /Literal Loop.*未知状态/u,
     )
     expect(screen.queryByText(/invocationStatus|future_state/u)).not.toBeInTheDocument()
+  })
+
+  it('surfaces the authoritative Task Board on Dashboard', async () => {
+    api.getInfo.mockResolvedValue({ workspace: '/workspace/gohermit', available_companies: [], auth_status: {} })
+    api.listLoops.mockResolvedValue({ loops: [] })
+    api.listSessions.mockResolvedValue({ sessions: [] })
+    api.listLoopInvocations.mockResolvedValue({ invocations: [] })
+    api.getTaskBoard.mockResolvedValue({
+      schema_version: 1,
+      definition: { id: 'software', name: 'Software development', columns: [
+        { id: 'todo', title: 'Todo', color: '#2563eb', hidden: false },
+        { id: 'in_progress', title: 'In progress', color: '#0891b2', hidden: false },
+      ] },
+      cards: [{
+        id: 'task-1', task_id: 'task-1', kind: 'task', title: 'Review the board placement', column_id: 'todo', rank: 1,
+        labels: ['product'], priority: 1, pinned: false, blocked: false, depends_on: [], projection_reason: 'authoritative',
+        authoritative_updated_at: '2026-08-04T08:00:00Z', session_event_sequence: 0, session_count: 0,
+        approval_status: 'none', verification_status: 'none', stale: false, state: 'queued', employee_name: 'Planner',
+      }],
+      view: { view: 'board', wip_enabled: true },
+      filters: { states: [], labels: [] },
+      updated_at: '2026-08-04T08:00:00Z', projection_generated_at: '2026-08-04T08:00:00Z',
+    })
+
+    renderDashboard()
+
+    expect(await screen.findByTestId('dashboard-task-board')).toBeVisible()
+    expect(screen.getByText('Review the board placement')).toBeVisible()
+    expect(screen.getByTestId('dashboard-task-board-column-todo')).toHaveTextContent('Todo')
+    expect(screen.getByRole('link', { name: i18n.t('dashboard.openTaskBoard') })).toHaveAttribute('href', '/tasks?view=board')
   })
 
   it('keeps the authoritative workspace visible when supporting history fails', async () => {
