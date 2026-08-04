@@ -61,6 +61,7 @@ export function TaskBoardGrid({ board, onBoardChange, onRefresh, resolveTask, on
   const startCandidate = boardState.startCandidate
   const startTask = startCandidate?.task ?? null
   const startLoading = !startTask
+  const startAction = startCandidate?.action ?? null
   const noteDetail = boardState.noteDetail
   return <>
     <div className="task-board-scroll" data-testid={testIdPrefix}>
@@ -94,8 +95,8 @@ export function TaskBoardGrid({ board, onBoardChange, onRefresh, resolveTask, on
       okText={t('tasks.start')}
       cancelText={t('actions.cancel')}
       confirmLoading={boardState.startBusy}
-      okButtonProps={{ disabled: startLoading }}
-      onCancel={() => boardState.setStartCandidate(null)}
+      okButtonProps={{ disabled: !startAction }}
+      onCancel={boardState.cancelStartCandidate}
       onOk={() => void boardState.confirmStartCandidate()}
     >
       {startCandidate && startTask ? <Space direction="vertical" size={16} style={{ width: '100%' }}><Alert type="warning" showIcon message={t('tasks.startConfirmation')} /><Descriptions bordered column={1} size="small"><Descriptions.Item label={t('tasks.employee')}>{startCandidate.card.employee_name || startTask.employee_id}</Descriptions.Item><Descriptions.Item label={t('tasks.model')}>{[startCandidate.card.provider, startCandidate.card.model].filter(Boolean).join(' / ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.workspace')}>{startTask.project_binding.workspace_fingerprint}</Descriptions.Item><Descriptions.Item label={t('tasks.skills')}>{startTask.skills.map((skill) => `${skill.skill_id}@${skill.version}`).join(', ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.permissions')}>{startTask.policy.allowed_capabilities.join(', ') || '—'} · {startTask.policy.network_allowed ? t('tasks.networkAllowed') : t('tasks.networkDisabled')}</Descriptions.Item><Descriptions.Item label={t('tasks.writerLease')}>{startTask.project_binding.mutation_allowed ? t('tasks.writerLeaseRequired') : t('tasks.readOnlyWorkspace')}</Descriptions.Item></Descriptions></Space> : null}

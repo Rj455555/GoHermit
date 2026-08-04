@@ -51,9 +51,18 @@ export function boardCardInput(card: TaskBoardCard, columnId = card.column_id, r
   }
 }
 
+export type StartAction = 'start' | 'resume'
+
+export function startActionForState(state: string | undefined): StartAction | null {
+  if (state === 'queued' || state === 'prepared') return 'start'
+  if (state === 'interrupted') return 'resume'
+  return null
+}
+
 export interface StartCandidate {
   card: TaskBoardCard
   task: EmployeeTask | null
+  action: StartAction | null
   targetColumn: string
   loading: boolean
 }
@@ -91,8 +100,13 @@ export function useTaskBoard({ board, onBoardChange, onRefresh, resolveTask, onT
   const lastDragEndAtRef = useRef(0)
   const pressRef = useRef<PressState | null>(null)
   const detachPressListenersRef = useRef<(() => void) | null>(null)
+  // Monotonic generation guarding every async Start-load/confirm continuation.
+  // Any cancel, superseding drag, or unmount increments it; stale completions
+  // check it before touching state, toasts, or the board.
+  const startGenerationRef = useRef(0)
 
   useEffect(() => () => {
+    startGenerationRef.current += 1
     detachPressListenersRef.current?.()
     document.body.classList.remove(BOARD_DRAGGING_CLASS)
   }, [])
@@ -181,6 +195,11 @@ export function useTaskBoard({ board, onBoardChange, onRefresh, resolveTask, onT
     await refreshBoard().catch(() => undefined)
   }
 
+  function reportStartNotAllowed() {
+    actions.showToast({ messageKey: 'tasks.startNotAllowed', tone: 'info' })
+    void refreshBoard().catch(() => undefined)
+  }
+
   async function saveBoardCard(card: TaskBoardCard, columnID: string) {
     if (!connectivity.canMutate || !board) return
     try {
@@ -201,54 +220,95 @@ export function useTaskBoard({ board, onBoardChange, onRefresh, resolveTask, onT
     return getEmployeeTask(taskId)
   }
 
+  function cancelStartCandidate() {
+    startGenerationRef.current += 1
+    setStartBusy(false)
+    setStartCandidate(null)
+  }
+
+  // The loaded Task is authoritative: the card state is only a cheap pre-filter.
+  function applyLoadedTask(card: TaskBoardCard, columnID: string, task: EmployeeTask) {
+    const action = startActionForState(task.state)
+    if (!action) {
+      setStartCandidate(null)
+      reportStartNotAllowed()
+      return
+    }
+    setStartCandidate({ card, task, action, targetColumn: columnID, loading: false })
+  }
+
+  function beginStartLoad(card: TaskBoardCard, taskId: string, columnID: string) {
+    const generation = ++startGenerationRef.current
+    const isCurrent = () => startGenerationRef.current === generation
+    let resolved: Promise<EmployeeTask> | EmployeeTask
+    try {
+      resolved = loadTask(taskId)
+    } catch (caught) {
+      if (isCurrent()) void reportMutationError(caught)
+      return
+    }
+    if (resolved instanceof Promise) {
+      setStartCandidate({ card, task: null, action: null, targetColumn: columnID, loading: true })
+      void resolved.then(
+        (task) => {
+          if (isCurrent()) applyLoadedTask(card, columnID, task)
+        },
+        (caught) => {
+          if (!isCurrent()) return
+          setStartCandidate(null)
+          void reportMutationError(caught)
+        },
+      )
+      return
+    }
+    applyLoadedTask(card, columnID, resolved)
+  }
+
   function dropCard(card: TaskBoardCard, columnID: string) {
     clearDragState()
     if (columnID === card.column_id) return
     if (card.kind === 'task' && columnID === 'in_progress') {
-      const startable = card.state === 'queued' || card.state === 'prepared' || card.state === 'interrupted'
-      if (!startable || !card.task_id) {
-        if (!startable) actions.showToast({ messageKey: 'tasks.startNotAllowed', tone: 'info' })
+      // Fast path only: obviously illegal card states are rejected without a fetch.
+      const plausible = card.state === 'queued' || card.state === 'prepared' || card.state === 'interrupted'
+      if (!plausible || !card.task_id) {
+        if (!plausible) actions.showToast({ messageKey: 'tasks.startNotAllowed', tone: 'info' })
         return
       }
-      let resolved: Promise<EmployeeTask> | EmployeeTask
-      try {
-        resolved = loadTask(card.task_id)
-      } catch (caught) {
-        void reportMutationError(caught)
-        return
-      }
-      if (resolved instanceof Promise) {
-        setStartCandidate({ card, task: null, targetColumn: columnID, loading: true })
-        void resolved.then(
-          (task) => setStartCandidate({ card, task, targetColumn: columnID, loading: false }),
-          (caught) => {
-            setStartCandidate(null)
-            void reportMutationError(caught)
-          },
-        )
-      } else {
-        setStartCandidate({ card, task: resolved, targetColumn: columnID, loading: false })
-      }
+      beginStartLoad(card, card.task_id, columnID)
       return
     }
     void saveBoardCard(card, columnID)
   }
 
   async function confirmStartCandidate() {
-    if (!startCandidate?.card.task_id || startCandidate.loading || !startCandidate.task || !connectivity.canMutate || startBusy) return
+    const candidate = startCandidate
+    if (!candidate) return
+    const task = candidate.task
+    const action = candidate.action
+    if (!candidate.card.task_id || candidate.loading || !task || !action || !connectivity.canMutate || startBusy) return
+    if (action !== startActionForState(task.state)) {
+      // Drift between the validated Task and the candidate action: bail out safely.
+      cancelStartCandidate()
+      reportStartNotAllowed()
+      return
+    }
+    const generation = startGenerationRef.current
+    const isCurrent = () => startGenerationRef.current === generation
     setStartBusy(true)
     try {
-      const task = startCandidate.task
-      const nextTask = task.state === 'interrupted'
+      const nextTask = action === 'resume'
         ? await resumeEmployeeTask(task.id)
         : await startEmployeeTask(task.id)
+      if (!isCurrent()) return
       onTaskUpdated?.(nextTask)
-      onBoardChange(await updateTaskBoardCard(task.id, boardCardInput(startCandidate.card, startCandidate.targetColumn, Date.now())))
+      const nextBoard = await updateTaskBoardCard(task.id, boardCardInput(candidate.card, candidate.targetColumn, Date.now()))
+      if (!isCurrent()) return
+      onBoardChange(nextBoard)
       setStartCandidate(null)
     } catch (caught) {
-      await reportMutationError(caught)
+      if (isCurrent()) await reportMutationError(caught)
     } finally {
-      setStartBusy(false)
+      if (isCurrent()) setStartBusy(false)
     }
   }
 
@@ -262,11 +322,11 @@ export function useTaskBoard({ board, onBoardChange, onRefresh, resolveTask, onT
     startCandidate,
     startBusy,
     noteDetail,
-    setStartCandidate,
     setNoteDetail,
     clearDragState,
     onPressStart,
     dropCard,
+    cancelStartCandidate,
     confirmStartCandidate,
     suppressClick,
   }

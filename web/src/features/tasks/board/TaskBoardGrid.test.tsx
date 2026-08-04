@@ -1,6 +1,6 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -193,6 +193,32 @@ function renderGrid(options: GridOptions = {}) {
 
 function boardWithTaskState(state: TaskBoardCard['state']): TaskBoardView {
   return { ...board, cards: [sessionCard, { ...plainCard, state }, noteCard] }
+}
+
+const hopperCard: TaskBoardCard = {
+  ...plainCard,
+  id: 'task-c',
+  task_id: 'task-c',
+  title: 'Audit the release checklist',
+  rank: 2,
+  employee_id: 'employee-hopper',
+  employee_name: 'Hopper',
+}
+
+const twoTaskBoard: TaskBoardView = { ...board, cards: [sessionCard, plainCard, hopperCard, noteCard] }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+async function flushAsync() {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
 }
 
 function stubHitTarget(element: Element | null) {
@@ -569,5 +595,173 @@ describe('TaskBoardGrid Start gating by task state', () => {
     ))
     expect(api.startEmployeeTask).not.toHaveBeenCalled()
     expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+  })
+})
+
+describe('TaskBoardGrid Start request lifecycle', () => {
+  it('does not reopen the Start modal when a cancelled load later resolves', async () => {
+    const load = deferred<EmployeeTask>()
+    api.getEmployeeTask.mockImplementation(() => load.promise)
+    const user = userEvent.setup()
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByRole('dialog')
+    expect(screen.getByTestId('task-board-start-loading')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await act(async () => { load.resolve(queuedTask); await load.promise })
+    await flushAsync()
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('grid-toast')).not.toBeInTheDocument()
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+  })
+
+  it('shows no late toast or refetch when a cancelled load later rejects', async () => {
+    const load = deferred<EmployeeTask>()
+    api.getEmployeeTask.mockImplementation(() => load.promise)
+    const user = userEvent.setup()
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await act(async () => {
+      load.reject(new ApiError('http_error', 404))
+      await load.promise.catch(() => undefined)
+    })
+    await flushAsync()
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('grid-toast')).not.toBeInTheDocument()
+    expect(api.getTaskBoard).not.toHaveBeenCalled()
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+  })
+
+  it('keeps only the newest Start candidate when an earlier load resolves last', async () => {
+    const loadA = deferred<EmployeeTask>()
+    const loadB = deferred<EmployeeTask>()
+    api.getEmployeeTask.mockImplementation((taskId: string) => (taskId === 'task-c' ? loadB.promise : loadA.promise))
+    const user = userEvent.setup()
+    renderGrid({ board: twoTaskBoard })
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByRole('dialog')
+    pointerDragCardTo(
+      screen.getByRole('link', { name: 'Open task detail: Audit the release checklist' }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+
+    await act(async () => { loadA.resolve(queuedTask); await loadA.promise })
+    await flushAsync()
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).not.toHaveTextContent('Grace')
+
+    await act(async () => { loadB.resolve({ ...queuedTask, id: 'task-c', employee_id: 'employee-hopper' }); await loadB.promise })
+    await waitFor(() => expect(within(dialog).getByText('Hopper')).toBeInTheDocument())
+    expect(within(dialog).queryByText('Grace')).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledWith('task-c'))
+    expect(api.startEmployeeTask).toHaveBeenCalledTimes(1)
+    expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('grid-toast')).not.toBeInTheDocument()
+  })
+
+  it('ignores an in-flight Start load that resolves after unmount', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const load = deferred<EmployeeTask>()
+    api.getEmployeeTask.mockImplementation(() => load.promise)
+    const view = renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByRole('dialog')
+
+    view.unmount()
+    await act(async () => { load.resolve(queuedTask); await load.promise })
+    await flushAsync()
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(api.getTaskBoard).not.toHaveBeenCalled()
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+    expect(consoleError).not.toHaveBeenCalled()
+  })
+})
+
+describe('TaskBoardGrid Start re-validation against the loaded Task', () => {
+  it('rejects the Start when a queued-looking card loads as waiting_owner', async () => {
+    api.getEmployeeTask.mockResolvedValue({ ...queuedTask, state: 'waiting_owner' })
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+
+    await waitFor(() => expect(screen.getByTestId('grid-toast')).toHaveTextContent('info:tasks.startNotAllowed'))
+    await waitFor(() => expect(api.getTaskBoard).toHaveBeenCalled())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+  })
+
+  for (const state of ['completed', 'failed', 'cancelled'] as const) {
+    it(`rejects the Start when a queued-looking card loads as ${state}`, async () => {
+      api.getEmployeeTask.mockResolvedValue({ ...queuedTask, state })
+      renderGrid()
+
+      pointerDragCardTo(
+        await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+        screen.getByTestId('task-board-column-in_progress'),
+      )
+
+      await waitFor(() => expect(screen.getByTestId('grid-toast')).toHaveTextContent('info:tasks.startNotAllowed'))
+      await waitFor(() => expect(api.getTaskBoard).toHaveBeenCalled())
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(api.startEmployeeTask).not.toHaveBeenCalled()
+      expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+      expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+    })
+  }
+
+  it('resumes instead of starting when a queued-looking card loads as interrupted', async () => {
+    const user = userEvent.setup()
+    api.getEmployeeTask.mockResolvedValue({ ...queuedTask, state: 'interrupted' })
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByText('Confirm Task start')
+    await user.click(screen.getByRole('button', { name: 'Start' }))
+
+    await waitFor(() => expect(api.resumeEmployeeTask).toHaveBeenCalledWith('task-b'))
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
+      'task-b',
+      expect.objectContaining({ column_id: 'in_progress' }),
+    ))
   })
 })
