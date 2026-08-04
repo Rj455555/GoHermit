@@ -1,6 +1,6 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter } from 'react-router-dom'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DashboardPage } from './DashboardPage'
@@ -128,7 +128,7 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('link', { name: i18n.t('dashboard.openTaskBoard') })).toHaveAttribute('href', '/tasks?view=board')
   })
 
-  it('renders draggable task cards from every Employee through the shared board grid', async () => {
+  it('renders pointer-draggable task cards from every Employee through the shared board grid', async () => {
     api.getInfo.mockResolvedValue({ workspace: '/workspace/gohermit', available_companies: [], auth_status: {} })
     api.listLoops.mockResolvedValue({ loops: [] })
     api.listSessions.mockResolvedValue({ sessions: [] })
@@ -162,9 +162,15 @@ describe('DashboardPage', () => {
     const grid = await screen.findByTestId('dashboard-task-board')
     // Shared grid structure: same card class and column testid scheme as the Tasks board.
     expect(screen.getByTestId('dashboard-task-board-column-todo')).toBeInTheDocument()
-    const cards = grid.querySelectorAll('.task-board-card')
+    const cards = grid.querySelectorAll<HTMLElement>('.task-board-card')
     expect(cards).toHaveLength(2)
-    for (const card of cards) expect(card).toHaveAttribute('draggable', 'true')
+    for (const card of cards) {
+      fireEvent.pointerDown(card, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+      expect(card).toHaveClass('is-dragging')
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 40, clientY: 40 })
+      expect(card).not.toHaveClass('is-dragging')
+    }
     expect(grid).toHaveTextContent('Ada')
     expect(grid).toHaveTextContent('Grace')
   })

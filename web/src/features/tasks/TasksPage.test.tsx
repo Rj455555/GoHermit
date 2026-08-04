@@ -342,8 +342,10 @@ describe('Employee Tasks Phase 4 pages', () => {
     renderTasks('/tasks?view=board')
 
     const card = await screen.findByRole('link', { name: /Prepare release/u })
-    fireEvent.dragStart(card)
-    fireEvent.drop(screen.getByTestId('task-board-column-in_progress'))
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(screen.getByTestId('task-board-column-in_progress'))
+    fireEvent.pointerDown(card, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 40, clientY: 40 })
     await waitFor(() => {
       const startButtons = screen.getAllByRole('button', { name: 'Start' })
       expect(startButtons[startButtons.length - 1]).toBeVisible()
@@ -397,9 +399,15 @@ describe('Employee Tasks Phase 4 pages', () => {
     // Shared grid structure: same card class and column testid scheme as the Dashboard board.
     expect(screen.getByTestId('task-board-column-todo')).toBeInTheDocument()
     expect(screen.getByTestId('task-board-column-in_progress')).toBeInTheDocument()
-    const cards = grid.querySelectorAll('.task-board-card')
+    const cards = grid.querySelectorAll<HTMLElement>('.task-board-card')
     expect(cards.length).toBeGreaterThanOrEqual(2)
-    for (const card of cards) expect(card).toHaveAttribute('draggable', 'true')
+    for (const card of cards) {
+      fireEvent.pointerDown(card, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+      expect(card).toHaveClass('is-dragging')
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 40, clientY: 40 })
+      expect(card).not.toHaveClass('is-dragging')
+    }
   })
 
   it('loads the last 100 Tasks per Employee and exposes the boundary', async () => {

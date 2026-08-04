@@ -1,6 +1,6 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -169,7 +169,13 @@ function ToastProbe() {
   return <output data-testid="grid-toast">{`${state.toast.tone}:${state.toast.messageKey}`}</output>
 }
 
-function renderGrid(options?: { onUseNoteAsTask?: (note: TaskBoardCard) => void }) {
+interface GridOptions {
+  onUseNoteAsTask?: (note: TaskBoardCard) => void
+  resolveTask?: (taskId: string) => Promise<EmployeeTask | undefined> | EmployeeTask | undefined
+  board?: TaskBoardView
+}
+
+function renderGrid(options: GridOptions = {}) {
   return render(
     <I18nextProvider i18n={i18n}>
       <UIProvider>
@@ -177,7 +183,7 @@ function renderGrid(options?: { onUseNoteAsTask?: (note: TaskBoardCard) => void 
           <GridLocationProbe />
           <ToastProbe />
           <Routes>
-            <Route path="*" element={<TaskBoardGrid board={board} onBoardChange={onBoardChange} {...(options ?? {})} />} />
+            <Route path="*" element={<TaskBoardGrid board={options.board ?? board} onBoardChange={onBoardChange} resolveTask={options.resolveTask} {...(options.onUseNoteAsTask ? { onUseNoteAsTask: options.onUseNoteAsTask } : {})} />} />
           </Routes>
         </MemoryRouter>
       </UIProvider>
@@ -185,12 +191,19 @@ function renderGrid(options?: { onUseNoteAsTask?: (note: TaskBoardCard) => void 
   )
 }
 
-function dragCardToColumn(card: HTMLElement, column: HTMLElement) {
-  const dataTransfer = { setData: vi.fn(), getData: vi.fn(), effectAllowed: '', dropEffect: '' }
-  fireEvent.dragStart(card, { dataTransfer })
-  fireEvent.dragOver(column, { dataTransfer })
-  fireEvent.drop(column, { dataTransfer })
-  return dataTransfer
+function boardWithTaskState(state: TaskBoardCard['state']): TaskBoardView {
+  return { ...board, cards: [sessionCard, { ...plainCard, state }, noteCard] }
+}
+
+function stubHitTarget(element: Element | null) {
+  return vi.spyOn(document, 'elementFromPoint').mockReturnValue(element)
+}
+
+function pointerDragCardTo(card: HTMLElement, target: Element | null) {
+  stubHitTarget(target)
+  fireEvent.pointerDown(card, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+  fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+  fireEvent.pointerUp(window, { pointerId: 1, clientX: 40, clientY: 40 })
 }
 
 beforeEach(() => {
@@ -201,6 +214,7 @@ beforeEach(() => {
   api.getTaskBoard.mockResolvedValue(board)
   api.updateTaskBoardCard.mockResolvedValue(board)
   api.startEmployeeTask.mockResolvedValue({ ...queuedTask, state: 'running', session_id: 'session-2', run_id: 'run-2' })
+  api.resumeEmployeeTask.mockResolvedValue({ ...queuedTask, state: 'running', session_id: 'session-3', run_id: 'run-3' })
 })
 
 describe('TaskBoardGrid card activation', () => {
@@ -229,12 +243,14 @@ describe('TaskBoardGrid card activation', () => {
     expect(screen.getByTestId('grid-location')).toHaveTextContent('/tasks/task-b')
   })
 
-  it('clamps long titles with a native title attribute and no tooltip overlay blocking navigation', async () => {
+  it('clamps long titles without a native tooltip and keeps the full title in the aria-label', async () => {
     renderGrid()
 
-    const title = (await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }))
-      .querySelector('.task-board-card__title')!
-    expect(title).toHaveAttribute('title', longTitle)
+    const card = await screen.findByRole('link', { name: `Open task detail: ${longTitle}` })
+    const title = card.querySelector('.task-board-card__title')!
+    expect(title).not.toHaveAttribute('title')
+    expect(title).toHaveTextContent(longTitle)
+    expect(card).toHaveAttribute('aria-label', `Open task detail: ${longTitle}`)
     fireEvent.mouseOver(title)
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
 
@@ -267,16 +283,72 @@ describe('TaskBoardGrid card activation', () => {
   })
 })
 
-describe('TaskBoardGrid drag and drop', () => {
+describe('TaskBoardGrid pointer dragging', () => {
+  it('activates the drag only past the threshold and hit-tests the target column', async () => {
+    renderGrid()
+
+    const card = await screen.findByRole('link', { name: `Open task detail: ${longTitle}` })
+    const column = screen.getByTestId('task-board-column-done')
+    stubHitTarget(column)
+    fireEvent.pointerDown(card, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 13, clientY: 13 })
+    expect(card).not.toHaveClass('is-dragging')
+
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+    expect(card).toHaveClass('is-dragging')
+    expect(column).toHaveClass('is-drop-target')
+    expect(document.body).toHaveClass('is-board-dragging')
+
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 40, clientY: 40 })
+    expect(card).not.toHaveClass('is-dragging')
+    expect(column).not.toHaveClass('is-drop-target')
+    expect(document.body).not.toHaveClass('is-board-dragging')
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
+      'task-b',
+      expect.objectContaining({ column_id: 'done' }),
+    ))
+  })
+
+  it('ignores non-primary presses and presses that start on interactive elements', async () => {
+    renderGrid()
+
+    const card = await screen.findByRole('link', { name: `Open task detail: ${longTitle}` })
+    fireEvent.pointerDown(card, { button: 2, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 60, clientY: 60 })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 60, clientY: 60 })
+    expect(card).not.toHaveClass('is-dragging')
+
+    const loopLink = screen.getByRole('link', { name: 'Loop: loop-1' })
+    fireEvent.pointerDown(loopLink, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 60, clientY: 60 })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 60, clientY: 60 })
+    expect(card).not.toHaveClass('is-dragging')
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+  })
+
+  it('cancels an active drag on pointercancel without dropping', async () => {
+    renderGrid()
+
+    const card = await screen.findByRole('link', { name: `Open task detail: ${longTitle}` })
+    stubHitTarget(screen.getByTestId('task-board-column-done'))
+    fireEvent.pointerDown(card, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+    expect(card).toHaveClass('is-dragging')
+
+    fireEvent.pointerCancel(window, { pointerId: 1 })
+    expect(card).not.toHaveClass('is-dragging')
+    expect(document.body).not.toHaveClass('is-board-dragging')
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+  })
+
   it('moves a task to a different normal column and ignores same-column drops', async () => {
     renderGrid()
 
     const card = await screen.findByRole('link', { name: `Open task detail: ${longTitle}` })
-    const dataTransfer = dragCardToColumn(card, screen.getByTestId('task-board-column-todo'))
-    expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'task-b')
+    pointerDragCardTo(card, screen.getByTestId('task-board-column-todo'))
     expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
 
-    dragCardToColumn(card, screen.getByTestId('task-board-column-done'))
+    pointerDragCardTo(card, screen.getByTestId('task-board-column-done'))
     await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
       'task-b',
       expect.objectContaining({ column_id: 'done' }),
@@ -285,11 +357,46 @@ describe('TaskBoardGrid drag and drop', () => {
     expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
   })
 
+  it('suppresses a click fired immediately after drag end', async () => {
+    renderGrid()
+
+    const card = await screen.findByRole('link', { name: `Open task detail: ${longTitle}` })
+    pointerDragCardTo(card, null)
+    fireEvent.click(card)
+
+    expect(screen.getByTestId('grid-location')).toHaveTextContent('/')
+    expect(screen.queryByText('Note details')).not.toBeInTheDocument()
+  })
+
+  it('moves a note into In progress without starting anything and opens the note modal on click', async () => {
+    const user = userEvent.setup()
+    renderGrid()
+
+    const note = await screen.findByRole('link', { name: 'Open note: Capture rollout' })
+    pointerDragCardTo(note, screen.getByTestId('task-board-column-in_progress'))
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
+      'note-1',
+      expect.objectContaining({ column_id: 'in_progress' }),
+    ))
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+    expect(screen.queryByText('Confirm Task start')).not.toBeInTheDocument()
+
+    // The drop marks the drag end; clicks inside the 300ms suppression window are ignored.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)) })
+    await user.click(note)
+    const dialog = await screen.findByRole('dialog', { name: 'Note details' })
+    expect(dialog).toHaveTextContent('Record the release evidence before shipping.')
+    expect(screen.getByTestId('grid-location')).toHaveTextContent('/')
+  })
+})
+
+describe('TaskBoardGrid Start confirmation', () => {
   it('cancelling the Start confirmation performs no start, resume, or card move', async () => {
     const user = userEvent.setup()
     renderGrid()
 
-    dragCardToColumn(
+    pointerDragCardTo(
       await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
       screen.getByTestId('task-board-column-in_progress'),
     )
@@ -306,7 +413,7 @@ describe('TaskBoardGrid drag and drop', () => {
     api.startEmployeeTask.mockRejectedValue(new ApiError('http_error', 409))
     renderGrid()
 
-    dragCardToColumn(
+    pointerDragCardTo(
       await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
       screen.getByTestId('task-board-column-in_progress'),
     )
@@ -319,35 +426,148 @@ describe('TaskBoardGrid drag and drop', () => {
     expect(screen.getByTestId('grid-toast')).toHaveTextContent('error:mutation.conflict')
   })
 
-  it('suppresses a click fired immediately after drag end', async () => {
-    renderGrid()
+  it('opens the Start confirmation with content immediately when the task resolves synchronously', async () => {
+    renderGrid({ resolveTask: () => queuedTask })
 
-    const card = await screen.findByRole('link', { name: `Open task detail: ${longTitle}` })
-    fireEvent.dragStart(card)
-    fireEvent.dragEnd(card)
-    fireEvent.click(card)
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
 
-    expect(screen.getByTestId('grid-location')).toHaveTextContent('/')
-    expect(screen.queryByText('Note details')).not.toBeInTheDocument()
+    expect(screen.getByText('Confirm Task start')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-board-start-loading')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start' })).toBeEnabled()
   })
 
-  it('moves a note into In progress without starting anything and opens the note modal on click', async () => {
-    const user = userEvent.setup()
+  it('shows a spinner with a disabled confirm until an async task load resolves', async () => {
+    let resolveLoad!: (task: EmployeeTask) => void
+    api.getEmployeeTask.mockImplementation(() => new Promise<EmployeeTask>((resolve) => { resolveLoad = resolve }))
     renderGrid()
 
-    const note = await screen.findByRole('link', { name: 'Open note: Capture rollout' })
-    dragCardToColumn(note, screen.getByTestId('task-board-column-in_progress'))
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+
+    const dialog = await screen.findByRole('dialog')
+    expect(screen.getByTestId('task-board-start-loading')).toBeInTheDocument()
+    const startButton = screen.getByRole('button', { name: 'Start' })
+    expect(startButton).toBeDisabled()
+    expect(dialog).not.toHaveTextContent('Workspace')
+
+    act(() => { resolveLoad(queuedTask) })
+    await waitFor(() => expect(startButton).toBeEnabled())
+    expect(screen.queryByTestId('task-board-start-loading')).not.toBeInTheDocument()
+    expect(dialog).toHaveTextContent('Workspace')
+  })
+
+  it('closes the modal, toasts, and refetches when the task load 404s', async () => {
+    api.getEmployeeTask.mockRejectedValue(new ApiError('http_error', 404))
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+
+    await waitFor(() => expect(screen.getByTestId('grid-toast')).toHaveTextContent('error:mutation.failed'))
+    await waitFor(() => expect(api.getTaskBoard).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+  })
+
+  it('closes the modal, toasts offline, and refetches when the task load hits a network error', async () => {
+    api.getEmployeeTask.mockRejectedValue(new ApiError('network_error'))
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+
+    await waitFor(() => expect(screen.getByTestId('grid-toast')).toHaveTextContent('error:mutation.offline'))
+    await waitFor(() => expect(api.getTaskBoard).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+  })
+})
+
+describe('TaskBoardGrid Start gating by task state', () => {
+  for (const state of ['queued', 'prepared'] as const) {
+    it(`asks for confirmation and starts a ${state} task dropped on In progress`, async () => {
+      const user = userEvent.setup()
+      api.getEmployeeTask.mockResolvedValue({ ...queuedTask, state })
+      renderGrid({ board: boardWithTaskState(state) })
+
+      pointerDragCardTo(
+        await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+        screen.getByTestId('task-board-column-in_progress'),
+      )
+      await screen.findByText('Confirm Task start')
+      await user.click(screen.getByRole('button', { name: 'Start' }))
+
+      await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledWith('task-b'))
+      expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+      await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
+        'task-b',
+        expect.objectContaining({ column_id: 'in_progress' }),
+      ))
+    })
+  }
+
+  it('asks for confirmation and resumes an interrupted task dropped on In progress', async () => {
+    const user = userEvent.setup()
+    api.getEmployeeTask.mockResolvedValue({ ...queuedTask, state: 'interrupted' })
+    renderGrid({ board: boardWithTaskState('interrupted') })
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByText('Confirm Task start')
+    await user.click(screen.getByRole('button', { name: 'Start' }))
+
+    await waitFor(() => expect(api.resumeEmployeeTask).toHaveBeenCalledWith('task-b'))
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
     await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
-      'note-1',
+      'task-b',
       expect.objectContaining({ column_id: 'in_progress' }),
+    ))
+  })
+
+  for (const state of ['running', 'verifying', 'waiting_owner', 'completed', 'failed', 'cancelled'] as const) {
+    it(`refuses to start a ${state} task dropped on In progress with no mutation at all`, async () => {
+      renderGrid({ board: boardWithTaskState(state) })
+
+      pointerDragCardTo(
+        await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+        screen.getByTestId('task-board-column-in_progress'),
+      )
+
+      await waitFor(() => expect(screen.getByTestId('grid-toast')).toHaveTextContent('info:tasks.startNotAllowed'))
+      expect(screen.queryByText('Confirm Task start')).not.toBeInTheDocument()
+      expect(api.startEmployeeTask).not.toHaveBeenCalled()
+      expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+      expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+      expect(api.getEmployeeTask).not.toHaveBeenCalled()
+    })
+  }
+
+  it('still moves a non-startable task into other columns without Start semantics', async () => {
+    renderGrid({ board: boardWithTaskState('completed') })
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-done'),
+    )
+
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
+      'task-b',
+      expect.objectContaining({ column_id: 'done' }),
     ))
     expect(api.startEmployeeTask).not.toHaveBeenCalled()
     expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
-    expect(screen.queryByText('Confirm Task start')).not.toBeInTheDocument()
-
-    await user.click(note)
-    const dialog = await screen.findByRole('dialog', { name: 'Note details' })
-    expect(dialog).toHaveTextContent('Record the release evidence before shipping.')
-    expect(screen.getByTestId('grid-location')).toHaveTextContent('/')
   })
 })

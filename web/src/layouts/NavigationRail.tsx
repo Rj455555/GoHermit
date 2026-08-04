@@ -6,10 +6,14 @@ import { NavLink } from 'react-router-dom'
 import { navigationItems } from '../routes/routeMeta'
 import { useUI } from '../state/UIContext'
 
-export function NavigationRail() {
+export interface NavigationRailProps {
+  collapsed: boolean
+  allowToggle?: boolean | undefined
+}
+
+export function NavigationRail({ collapsed, allowToggle = true }: NavigationRailProps) {
   const { t } = useTranslation()
   const { state, actions } = useUI()
-  const collapsed = state.navigationCollapsed
   const toggleLabel = t(collapsed ? 'navigation.expand' : 'navigation.collapse')
 
   return (
@@ -48,25 +52,27 @@ export function NavigationRail() {
           </li>
         ))}
       </ul>
-      <div className="navigation-rail__footer">
-        <Button
-          type="text"
-          className="navigation-rail__toggle"
-          aria-label={toggleLabel}
-          title={toggleLabel}
-          aria-expanded={!collapsed}
-          onClick={() => actions.setNavigationCollapsed(!collapsed)}
-        >
-          {collapsed ? (
-            <ChevronRight aria-hidden="true" size={18} />
-          ) : (
-            <>
-              <ChevronLeft aria-hidden="true" size={18} />
-              <span>{toggleLabel}</span>
-            </>
-          )}
-        </Button>
-      </div>
+      {allowToggle ? (
+        <div className="navigation-rail__footer">
+          <Button
+            type="text"
+            className="navigation-rail__toggle"
+            aria-label={toggleLabel}
+            title={toggleLabel}
+            aria-expanded={!collapsed}
+            onClick={() => actions.setNavigationCollapsed(!state.navigationCollapsed)}
+          >
+            {collapsed ? (
+              <ChevronRight aria-hidden="true" size={18} />
+            ) : (
+              <>
+                <ChevronLeft aria-hidden="true" size={18} />
+                <span>{toggleLabel}</span>
+              </>
+            )}
+          </Button>
+        </div>
+      ) : null}
     </nav>
   )
 }

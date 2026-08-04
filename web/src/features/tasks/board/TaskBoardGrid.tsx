@@ -7,6 +7,7 @@ import {
   Empty,
   Modal,
   Space,
+  Spin,
   Typography,
 } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -59,6 +60,7 @@ export function TaskBoardGrid({ board, onBoardChange, onRefresh, resolveTask, on
 
   const startCandidate = boardState.startCandidate
   const startTask = startCandidate?.task ?? null
+  const startLoading = !startTask
   const noteDetail = boardState.noteDetail
   return <>
     <div className="task-board-scroll" data-testid={testIdPrefix}>
@@ -67,25 +69,8 @@ export function TaskBoardGrid({ board, onBoardChange, onRefresh, resolveTask, on
         return <section
           key={column.id}
           data-testid={`${testIdPrefix}-column-${column.id}`}
+          data-board-column={column.id}
           className={`task-board-column${boardState.dragOverColumnID === column.id ? ' is-drop-target' : ''}`}
-          onDragOver={(event) => {
-            if (!boardState.draggingID) return
-            event.preventDefault()
-            const transfer = event.dataTransfer as DataTransfer | undefined
-            if (transfer) transfer.dropEffect = 'move'
-            if (boardState.dragOverColumnID !== column.id) boardState.setDragOverColumnID(column.id)
-          }}
-          onDragLeave={(event) => {
-            const related = event.relatedTarget
-            if (related instanceof Node && event.currentTarget.contains(related)) return
-            if (boardState.dragOverColumnID === column.id) boardState.setDragOverColumnID(null)
-          }}
-          onDrop={(event) => {
-            event.preventDefault()
-            const card = visibleCards.find((item) => item.id === boardState.draggingID)
-            if (card) boardState.dropCard(card, column.id)
-            else boardState.clearDragState()
-          }}
         >
           <header className="task-board-column__header"><Space><span className="task-board-column__swatch" style={{ background: column.color }} /><Typography.Text strong>{column.title}</Typography.Text><Badge count={columnCards.length} showZero /></Space>{column.wip_limit ? <Typography.Text type="secondary">/{column.wip_limit}</Typography.Text> : null}</header>
           <div className="task-board-column__cards">
@@ -94,13 +79,7 @@ export function TaskBoardGrid({ board, onBoardChange, onRefresh, resolveTask, on
               card={card}
               isDragging={boardState.draggingID === card.id}
               suppressClick={boardState.suppressClick}
-              onDragStart={(event, dragged) => {
-                const transfer = event.dataTransfer as DataTransfer | undefined
-                transfer?.setData('text/plain', dragged.id)
-                if (transfer) transfer.effectAllowed = 'move'
-                boardState.setDraggingID(dragged.id)
-              }}
-              onDragEnd={boardState.endDrag}
+              onPressStart={boardState.onPressStart}
               onActivate={activateCard}
               {...(onUseNoteAsTask ? { onUseNoteAsTask } : {})}
             />)}
@@ -109,8 +88,18 @@ export function TaskBoardGrid({ board, onBoardChange, onRefresh, resolveTask, on
         </section>
       })}
     </div>
-    <Modal open={Boolean(startCandidate)} title={t('tasks.startConfirmationTitle')} okText={t('tasks.start')} cancelText={t('actions.cancel')} confirmLoading={boardState.startBusy} onCancel={() => boardState.setStartCandidate(null)} onOk={() => void boardState.confirmStartCandidate()}>
+    <Modal
+      open={Boolean(startCandidate)}
+      title={t('tasks.startConfirmationTitle')}
+      okText={t('tasks.start')}
+      cancelText={t('actions.cancel')}
+      confirmLoading={boardState.startBusy}
+      okButtonProps={{ disabled: startLoading }}
+      onCancel={() => boardState.setStartCandidate(null)}
+      onOk={() => void boardState.confirmStartCandidate()}
+    >
       {startCandidate && startTask ? <Space direction="vertical" size={16} style={{ width: '100%' }}><Alert type="warning" showIcon message={t('tasks.startConfirmation')} /><Descriptions bordered column={1} size="small"><Descriptions.Item label={t('tasks.employee')}>{startCandidate.card.employee_name || startTask.employee_id}</Descriptions.Item><Descriptions.Item label={t('tasks.model')}>{[startCandidate.card.provider, startCandidate.card.model].filter(Boolean).join(' / ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.workspace')}>{startTask.project_binding.workspace_fingerprint}</Descriptions.Item><Descriptions.Item label={t('tasks.skills')}>{startTask.skills.map((skill) => `${skill.skill_id}@${skill.version}`).join(', ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.permissions')}>{startTask.policy.allowed_capabilities.join(', ') || '—'} · {startTask.policy.network_allowed ? t('tasks.networkAllowed') : t('tasks.networkDisabled')}</Descriptions.Item><Descriptions.Item label={t('tasks.writerLease')}>{startTask.project_binding.mutation_allowed ? t('tasks.writerLeaseRequired') : t('tasks.readOnlyWorkspace')}</Descriptions.Item></Descriptions></Space> : null}
+      {startCandidate && startLoading ? <div className="task-board-start-loading" data-testid={`${testIdPrefix}-start-loading`}><Spin /></div> : null}
     </Modal>
     <Modal
       open={Boolean(noteDetail)}
