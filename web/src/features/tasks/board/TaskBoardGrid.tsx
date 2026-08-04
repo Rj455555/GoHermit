@@ -96,6 +96,10 @@ export function TaskBoardGrid({ board, onBoardChange, onRefresh, resolveTask, on
       cancelText={t('actions.cancel')}
       confirmLoading={boardState.startBusy}
       okButtonProps={{ disabled: !startAction }}
+      cancelButtonProps={{ disabled: boardState.startBusy }}
+      closable={!boardState.startBusy}
+      maskClosable={!boardState.startBusy}
+      keyboard={!boardState.startBusy}
       onCancel={boardState.cancelStartCandidate}
       onOk={() => void boardState.confirmStartCandidate()}
     >

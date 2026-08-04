@@ -9,6 +9,7 @@ import type { EmployeeTask, TaskBoardCard, TaskBoardView } from '../../../api/ty
 import { i18n } from '../../../i18n/i18n'
 import { UIProvider, useUI } from '../../../state/UIContext'
 import { TaskBoardGrid } from './TaskBoardGrid'
+import { useTaskBoard } from './useTaskBoard'
 
 const api = vi.hoisted(() => ({
   getEmployeeTask: vi.fn(),
@@ -219,6 +220,21 @@ function deferred<T>() {
 
 async function flushAsync() {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+}
+
+let probeBoardApi: ReturnType<typeof useTaskBoard> | null = null
+
+function BoardApiProbe() {
+  probeBoardApi = useTaskBoard({ board, onBoardChange })
+  return null
+}
+
+function renderProbe() {
+  return render(
+    <UIProvider>
+      <BoardApiProbe />
+    </UIProvider>,
+  )
 }
 
 function stubHitTarget(element: Element | null) {
@@ -763,5 +779,158 @@ describe('TaskBoardGrid Start re-validation against the loaded Task', () => {
       'task-b',
       expect.objectContaining({ column_id: 'in_progress' }),
     ))
+  })
+})
+
+describe('TaskBoardGrid committed Start transaction', () => {
+  it('locks cancel, close, mask, and Escape while the Start POST is in flight', async () => {
+    const post = deferred<EmployeeTask>()
+    api.startEmployeeTask.mockImplementation(() => post.promise)
+    const user = userEvent.setup()
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByText('Confirm Task start')
+    await user.click(screen.getByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledWith('task-b'))
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    expect(document.querySelector('.ant-modal-close')).not.toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    const wrap = document.querySelector('.ant-modal-wrap')
+    expect(wrap).not.toBeNull()
+    fireEvent.click(wrap!)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await act(async () => {
+      post.resolve({ ...queuedTask, state: 'running', session_id: 'session-2', run_id: 'run-2' })
+      await post.promise
+    })
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
+      'task-b',
+      expect.objectContaining({ column_id: 'in_progress' }),
+    ))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(api.startEmployeeTask).toHaveBeenCalledTimes(1)
+    expect(api.updateTaskBoardCard).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a programmatic cancelStartCandidate while the Start POST is in flight', async () => {
+    const post = deferred<EmployeeTask>()
+    api.startEmployeeTask.mockImplementation(() => post.promise)
+    renderProbe()
+    const boardApi = () => {
+      expect(probeBoardApi).not.toBeNull()
+      return probeBoardApi!
+    }
+
+    act(() => { boardApi().dropCard(plainCard, 'in_progress') })
+    await waitFor(() => expect(boardApi().startCandidate?.task?.id).toBe('task-b'))
+    const candidate = boardApi().startCandidate
+    act(() => { void boardApi().confirmStartCandidate() })
+    await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledWith('task-b'))
+    expect(boardApi().startBusy).toBe(true)
+
+    act(() => { boardApi().cancelStartCandidate() })
+    expect(boardApi().startCandidate).toBe(candidate)
+    expect(boardApi().startBusy).toBe(true)
+
+    await act(async () => { post.resolve({ ...queuedTask, state: 'running' }); await post.promise })
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
+      'task-b',
+      expect.objectContaining({ column_id: 'in_progress' }),
+    ))
+    await waitFor(() => expect(boardApi().startCandidate).toBeNull())
+    expect(api.startEmployeeTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('issues exactly one Start POST followed by exactly one card PUT on the happy path', async () => {
+    const user = userEvent.setup()
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByText('Confirm Task start')
+    await user.click(screen.getByRole('button', { name: 'Start' }))
+
+    await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('closes the interaction with a single POST total when the card PUT fails after a committed Start', async () => {
+    const user = userEvent.setup()
+    api.updateTaskBoardCard.mockRejectedValue(new ApiError('http_error', 409))
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByText('Confirm Task start')
+    await user.click(screen.getByRole('button', { name: 'Start' }))
+
+    await waitFor(() => expect(screen.getByTestId('grid-toast')).toHaveTextContent('error:mutation.conflict'))
+    await waitFor(() => expect(api.getTaskBoard).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(api.startEmployeeTask).toHaveBeenCalledTimes(1)
+    expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
+    expect(api.updateTaskBoardCard).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the modal open after a failed Start POST and allows an explicit retry', async () => {
+    const user = userEvent.setup()
+    api.startEmployeeTask.mockRejectedValueOnce(new ApiError('http_error', 409))
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByText('Confirm Task start')
+    await user.click(screen.getByRole('button', { name: 'Start' }))
+
+    await waitFor(() => expect(screen.getByTestId('grid-toast')).toHaveTextContent('error:mutation.conflict'))
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
+      'task-b',
+      expect.objectContaining({ column_id: 'in_progress' }),
+    ))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('allows cancelling after a failed Start POST because nothing committed', async () => {
+    const user = userEvent.setup()
+    api.startEmployeeTask.mockRejectedValue(new ApiError('http_error', 409))
+    renderGrid()
+
+    pointerDragCardTo(
+      await screen.findByRole('link', { name: `Open task detail: ${longTitle}` }),
+      screen.getByTestId('task-board-column-in_progress'),
+    )
+    await screen.findByText('Confirm Task start')
+    await user.click(screen.getByRole('button', { name: 'Start' }))
+
+    await waitFor(() => expect(screen.getByTestId('grid-toast')).toHaveTextContent('error:mutation.conflict'))
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(api.startEmployeeTask).toHaveBeenCalledTimes(1)
+    expect(api.resumeEmployeeTask).not.toHaveBeenCalled()
   })
 })

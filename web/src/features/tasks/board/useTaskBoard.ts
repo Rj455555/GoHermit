@@ -100,6 +100,9 @@ export function useTaskBoard({ board, onBoardChange, onRefresh, resolveTask, onT
   const lastDragEndAtRef = useRef(0)
   const pressRef = useRef<PressState | null>(null)
   const detachPressListenersRef = useRef<(() => void) | null>(null)
+  // Tracks whether the Start/Resume POST for the current candidate interaction
+  // has been sent successfully; a committed execution never POSTs twice.
+  const executionCommittedRef = useRef(false)
   // Monotonic generation guarding every async Start-load/confirm continuation.
   // Any cancel, superseding drag, or unmount increments it; stale completions
   // check it before touching state, toasts, or the board.
@@ -221,8 +224,11 @@ export function useTaskBoard({ board, onBoardChange, onRefresh, resolveTask, onT
   }
 
   function cancelStartCandidate() {
+    // Once the Start/Resume POST is in flight the execution is committed:
+    // cancellation must not invalidate the generation or clear the candidate.
+    if (startBusy) return
     startGenerationRef.current += 1
-    setStartBusy(false)
+    executionCommittedRef.current = false
     setStartCandidate(null)
   }
 
@@ -238,6 +244,10 @@ export function useTaskBoard({ board, onBoardChange, onRefresh, resolveTask, onT
   }
 
   function beginStartLoad(card: TaskBoardCard, taskId: string, columnID: string) {
+    // Defensive: never overlap a committed execution (the modal is locked, so
+    // this is normally unreachable).
+    if (startBusy) return
+    executionCommittedRef.current = false
     const generation = ++startGenerationRef.current
     const isCurrent = () => startGenerationRef.current === generation
     let resolved: Promise<EmployeeTask> | EmployeeTask
@@ -296,17 +306,28 @@ export function useTaskBoard({ board, onBoardChange, onRefresh, resolveTask, onT
     const isCurrent = () => startGenerationRef.current === generation
     setStartBusy(true)
     try {
-      const nextTask = action === 'resume'
-        ? await resumeEmployeeTask(task.id)
-        : await startEmployeeTask(task.id)
-      if (!isCurrent()) return
-      onTaskUpdated?.(nextTask)
+      if (!executionCommittedRef.current) {
+        const nextTask = action === 'resume'
+          ? await resumeEmployeeTask(task.id)
+          : await startEmployeeTask(task.id)
+        executionCommittedRef.current = true
+        if (!isCurrent()) return
+        onTaskUpdated?.(nextTask)
+      }
       const nextBoard = await updateTaskBoardCard(task.id, boardCardInput(candidate.card, candidate.targetColumn, Date.now()))
       if (!isCurrent()) return
       onBoardChange(nextBoard)
       setStartCandidate(null)
     } catch (caught) {
-      if (isCurrent()) await reportMutationError(caught)
+      if (!isCurrent()) return
+      if (executionCommittedRef.current) {
+        // PUT failed after the execution committed: never re-POST. Close the
+        // interaction, surface the error, and resync the authoritative board.
+        setStartCandidate(null)
+      }
+      // A failed POST leaves the candidate open so the user can retry or
+      // explicitly cancel; the generation stays valid for this candidate.
+      await reportMutationError(caught)
     } finally {
       if (isCurrent()) setStartBusy(false)
     }
