@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 
 const host = '127.0.0.1'
-const port = 4174
+const port = Number(process.env.GOHERMIT_E2E_PORT ?? 4174)
 const root = resolve('internal/web/assets/dist')
 const dialogPrefix = '/__test__/dialog'
 const dialogRoot = mkdtempSync(resolve(tmpdir(), 'gohermit-dialog-e2e-'))
@@ -443,6 +443,219 @@ let employeeTask = {
     verified_at: now,
   }],
 }
+const boardSessionId = 'session-board'
+function makeBoardSession() {
+  const session = makeSession(boardSessionId, 'Board Linked Session')
+  session.status = 'running'
+  session.runs = [{
+    id: 'run-board-1',
+    message: 'Stream board execution updates.',
+    status: 'running',
+    started_at: now,
+    updated_at: now,
+    start_turn: 1,
+    plan_mode: 'auto',
+    plan_approved: false,
+  }]
+  session.active_run_id = 'run-board-1'
+  session.next_event_sequence = 3
+  return session
+}
+sessions.set(boardSessionId, makeBoardSession())
+eventJournals.set(boardSessionId, [])
+
+function makeBoardEmployeeTask(id, state, employee) {
+  const task = structuredClone(employeeTask)
+  task.id = id
+  task.employee_id = employee.id
+  task.employee_revision = employee.revision
+  task.employee_snapshot = {
+    ...task.employee_snapshot,
+    employee_id: employee.id,
+    revision: employee.revision,
+  }
+  task.prompt = `Board fixture task ${id}.`
+  task.state = state
+  return task
+}
+
+const scribeSummary = {
+  ...activeEmployeeSummary,
+  id: 'employee-scribe',
+  name: 'Scribe',
+  job_title: 'Documentation Engineer',
+}
+
+const longChineseTitle = '整理并归档过去三十天所有未归档的发布验证报告与审批记录'
+const longEnglishTitle =
+  'Consolidate every orphaned deployment verification artifact and reconcile the release audit trail across workspaces'
+
+function makeTaskBoardFixture() {
+  const boardTasks = new Map()
+  const track = (id, state, employee) => {
+    boardTasks.set(id, makeBoardEmployeeTask(id, state, employee))
+    return boardTasks.get(id)
+  }
+  track('board-task-01', 'queued', activeEmployeeSummary)
+  track('board-task-drag', 'queued', activeEmployeeSummary)
+  track('board-task-long-zh', 'queued', scribeSummary)
+  track('board-task-blocked', 'queued', employeeSummary)
+  track('board-task-02', 'queued', activeEmployeeSummary)
+  track('board-task-start', 'queued', activeEmployeeSummary)
+  track('board-task-long-en', 'waiting_owner', scribeSummary)
+  track('board-task-run-1', 'running', activeEmployeeSummary)
+  track('board-task-run-2', 'running', activeEmployeeSummary)
+  track('board-task-verify', 'verifying', scribeSummary)
+  track('board-task-review-1', 'waiting_owner', employeeSummary)
+  track('board-task-failed', 'failed', activeEmployeeSummary)
+  track('board-task-interrupted', 'interrupted', activeEmployeeSummary)
+  track('board-task-done-1', 'completed', activeEmployeeSummary)
+  track('board-task-done-2', 'completed', employeeSummary)
+  track('board-task-done-3', 'cancelled', scribeSummary)
+
+  let rank = 0
+  const card = (id, columnId, overrides = {}) => ({
+    id,
+    task_id: id,
+    kind: 'task',
+    title: `Board task ${id}`,
+    column_id: columnId,
+    rank: (rank += 1),
+    labels: [],
+    priority: 0,
+    pinned: false,
+    blocked: false,
+    depends_on: [],
+    projection_reason: 'employee_task_projection',
+    authoritative_updated_at: now,
+    session_event_sequence: 0,
+    session_count: 0,
+    approval_status: 'none',
+    verification_status: 'none',
+    stale: false,
+    ...overrides,
+  })
+  const employees = {
+    builder: { employee_id: 'employee-builder', employee_name: 'Builder' },
+    ada: { employee_id: 'employee-ada', employee_name: 'Ada' },
+    scribe: { employee_id: 'employee-scribe', employee_name: 'Scribe' },
+  }
+  const cards = [
+    card('board-task-01', 'backlog', {
+      title: 'Triage workspace lint warnings',
+      ...employees.builder, state: 'queued',
+      labels: ['dx'], priority: 1,
+    }),
+    card('board-task-drag', 'backlog', {
+      title: 'Refactor board fixture helpers',
+      ...employees.builder, state: 'queued',
+    }),
+    card('board-task-long-zh', 'backlog', {
+      title: longChineseTitle,
+      ...employees.scribe, state: 'queued',
+    }),
+    card('board-task-blocked', 'backlog', {
+      title: 'Provision owner credentials for release',
+      ...employees.ada, state: 'queued',
+      blocked: true, blocker_reason: 'Waiting on owner credentials',
+      approval_status: 'pending', priority: 2,
+    }),
+    card('board-task-02', 'todo', {
+      title: 'Draft loop verification checklist',
+      ...employees.builder, state: 'queued',
+    }),
+    card('board-task-start', 'todo', {
+      title: 'Execute queued migration rehearsal',
+      ...employees.builder, state: 'queued',
+    }),
+    card('board-task-long-en', 'todo', {
+      title: longEnglishTitle,
+      ...employees.scribe, state: 'waiting_owner',
+      labels: ['audit', 'release', 'reconcile', 'q3', 'finance', 'legal', 'ops', 'vendor', 'renewal', 'sox', 'gdpr', 'board'],
+      provider: 'openai-codex-long-tenant', model: 'gpt-5.6-codex-max-preview',
+    }),
+    {
+      ...card('board-note-01', 'todo', {
+        title: 'Release cadence note',
+        state: 'note', state_source: 'owner',
+        body: 'Ship the verified release every Friday after the bounded verification recipe passes.',
+        projection_reason: 'owner_note',
+        source_url: 'task-board://notes/board-note-01',
+      }),
+      task_id: undefined,
+      kind: 'note',
+    },
+    card('board-task-run-1', 'in_progress', {
+      title: 'Stream board execution updates',
+      ...employees.builder, state: 'running',
+      session_id: boardSessionId, run_id: 'run-board-1',
+      session_event_sequence: 3, session_count: 1,
+    }),
+    card('board-task-run-2', 'in_progress', {
+      title: 'Rebuild web asset pipeline',
+      ...employees.builder, state: 'running',
+    }),
+    card('board-task-verify', 'in_progress', {
+      title: 'Verify sandbox escape regressions',
+      ...employees.scribe, state: 'verifying',
+      verification_status: 'running',
+    }),
+    card('board-task-review-1', 'review', {
+      title: 'Review staged config rollout',
+      ...employees.ada, state: 'waiting_owner',
+      approval_status: 'pending',
+    }),
+    card('board-task-failed', 'review', {
+      title: 'Diagnose flaky SSE reconnect test',
+      ...employees.builder, state: 'failed',
+      verification_status: 'failed',
+    }),
+    card('board-task-interrupted', 'review', {
+      title: 'Resume interrupted backup audit',
+      ...employees.builder, state: 'interrupted',
+    }),
+    card('board-task-done-1', 'done', {
+      title: 'Ship workspace traversal hardening',
+      ...employees.builder, state: 'completed',
+      verification_status: 'passed',
+    }),
+    card('board-task-done-2', 'done', {
+      title: 'Publish owner onboarding handbook',
+      ...employees.ada, state: 'completed',
+    }),
+    card('board-task-done-3', 'done', {
+      title: 'Retire legacy reporting hero',
+      ...employees.scribe, state: 'cancelled',
+    }),
+  ]
+  return {
+    boardTasks,
+    board: {
+      schema_version: 1,
+      definition: {
+        id: 'software',
+        name: 'Software development',
+        columns: [
+          { id: 'backlog', title: 'Backlog', color: '#64748b', hidden: false },
+          { id: 'todo', title: 'Todo', color: '#2563eb', hidden: false },
+          { id: 'in_progress', title: 'In progress', color: '#0891b2', hidden: false, wip_limit: 4 },
+          { id: 'review', title: 'Review', color: '#d97706', hidden: false, wip_limit: 3 },
+          { id: 'done', title: 'Done', color: '#16a34a', hidden: false },
+          { id: 'archived', title: 'Archived', color: '#94a3b8', hidden: true },
+        ],
+      },
+      cards,
+      view: { view: 'board', wip_enabled: true },
+      filters: { states: [], labels: [] },
+      updated_at: now,
+      projection_generated_at: now,
+    },
+  }
+}
+
+let taskBoardFixture = makeTaskBoardFixture()
+let taskBoardRequests = []
+
 let teamTemplate = {
   schema_version: 2,
   name: 'default',
@@ -842,6 +1055,17 @@ async function handleApi(request, response, url) {
     json(response, 200, { tasks: [employeeTask] })
     return true
   }
+  const employeeTasksMatch = pathname.match(/^\/api\/employees\/([^/]+)\/tasks$/u)
+  if (request.method === 'GET' && employeeTasksMatch) {
+    const employeeId = decodeURIComponent(employeeTasksMatch[1])
+    json(response, 200, {
+      tasks: [...taskBoardFixture.boardTasks.values()].filter(
+        (task) => task.employee_id === employeeId,
+      ),
+      next_cursor: '',
+    })
+    return true
+  }
   const employeeDryRunMatch = pathname.match(/^\/api\/employees\/([^/]+)\/dry-run$/u)
   if (request.method === 'POST' && employeeDryRunMatch) {
     const employeeId = decodeURIComponent(employeeDryRunMatch[1])
@@ -868,6 +1092,69 @@ async function handleApi(request, response, url) {
       run_id: 'run-task-1',
     }
     json(response, 200, employeeTask)
+    return true
+  }
+  const boardTaskActionMatch = pathname.match(
+    /^\/api\/employee-tasks\/([^/]+)\/(start|resume)$/u,
+  )
+  if (request.method === 'POST' && boardTaskActionMatch) {
+    const taskId = decodeURIComponent(boardTaskActionMatch[1])
+    const task = taskBoardFixture.boardTasks.get(taskId)
+    if (!task) {
+      json(response, 404, { code: 'not_found' })
+      return true
+    }
+    task.state = 'running'
+    task.session_id = boardSessionId
+    task.run_id = `run-${taskId}`
+    taskBoardRequests.push({
+      method: 'POST',
+      path: pathname,
+      action: boardTaskActionMatch[2],
+      task_id: taskId,
+    })
+    json(response, 200, task)
+    return true
+  }
+  const boardTaskMatch = pathname.match(/^\/api\/employee-tasks\/([^/]+)$/u)
+  if (request.method === 'GET' && boardTaskMatch) {
+    const task = taskBoardFixture.boardTasks.get(decodeURIComponent(boardTaskMatch[1]))
+    if (!task) {
+      json(response, 404, { code: 'not_found' })
+      return true
+    }
+    json(response, 200, task)
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/task-board') {
+    json(response, 200, taskBoardFixture.board)
+    return true
+  }
+  const boardCardMatch = pathname.match(/^\/api\/task-board\/cards\/([^/]+)$/u)
+  if (request.method === 'PUT' && boardCardMatch) {
+    const input = await body(request)
+    const cardId = decodeURIComponent(boardCardMatch[1])
+    const card = taskBoardFixture.board.cards.find(
+      (item) => item.id === cardId || item.task_id === cardId,
+    )
+    if (!card || typeof input.column_id !== 'string' || typeof input.rank !== 'number') {
+      json(response, 404, { code: 'not_found' })
+      return true
+    }
+    taskBoardRequests.push({ method: 'PUT', path: pathname, body: input })
+    card.column_id = input.column_id
+    card.rank = input.rank
+    card.labels = input.labels ?? card.labels
+    card.priority = input.priority ?? card.priority
+    card.due_at = input.due_at ?? undefined
+    card.pinned = input.pinned ?? card.pinned
+    card.blocked = input.blocked ?? card.blocked
+    card.blocker_reason = input.blocker_reason || undefined
+    card.depends_on = input.depends_on ?? card.depends_on
+    card.source_url = input.source_url || undefined
+    card.loop_id = input.loop_id || undefined
+    taskBoardFixture.board.updated_at = now
+    json(response, 200, taskBoardFixture.board)
     return true
   }
   if (request.method === 'GET' && pathname === '/api/loops') {
@@ -1227,16 +1514,24 @@ const server = createServer(async (request, response) => {
       json(response, 200, { disconnected: sessionId })
       return
     }
+    if (pathname === '/__test__/task-board-requests' && request.method === 'GET') {
+      json(response, 200, { requests: taskBoardRequests })
+      return
+    }
     if (pathname === '/__test__/reset' && request.method === 'POST') {
       sessions.clear()
       sessions.set('session-1', makeSession('session-1'))
+      sessions.set(boardSessionId, makeBoardSession())
       eventJournals.clear()
       eventJournals.set('session-1', [])
+      eventJournals.set(boardSessionId, [])
       sessionCounter = 1
       codexConfigured = true
       loginSession = null
       loginPolls = 0
       employeeTask = structuredClone(initialEmployeeTask)
+      taskBoardFixture = makeTaskBoardFixture()
+      taskBoardRequests = []
       createdEmployees.clear()
       createdKnowledge.clear()
       stats.maxSSE = stats.activeSSE

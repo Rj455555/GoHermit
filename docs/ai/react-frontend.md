@@ -74,6 +74,24 @@ Delayed resource requests carry an AbortSignal and/or owner request epoch.
 Results, navigation, and Toast details are discarded after their owning route
 changes.
 
+## Task Board workbench
+
+The Task Board is one shared implementation in
+`web/src/features/tasks/board/` (`TaskBoardGrid`, `TaskBoardCard`,
+`useTaskBoard`). Both `/tasks?view=board` and the Dashboard render it through
+thin wrappers; there is no read-only dashboard fork and no second board state
+machine. The whole card is the primary activation target: a Task with an
+authoritative `session_id` deep-links to `/agent/sessions/{sessionID}`, a Task
+without one opens `/tasks/{taskID}`, and a Note opens its own detail modal —
+Notes never create Sessions or Runs. Column moves go through
+`PUT /api/task-board/cards/{id}` (Notes move `column_id`/`rank` only);
+dropping a non-running Task onto `in_progress` always opens the explicit Start
+confirmation first, and any mutation failure refetches the authoritative board
+projection. On desktop (≥1024px) the grid fits all visible business columns
+with `minmax(0,1fr)` tracks and no horizontal scroll; below that the board
+container scrolls horizontally with scroll snap while the page body never
+overflows.
+
 ## Employee Loop workbench
 
 The primary Loops surface is contract-first: cards summarize When / Does / You

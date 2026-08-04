@@ -197,7 +197,10 @@ func (s *Service) UpdateTaskBoardCard(ctx context.Context, taskID string, input 
 		return TaskBoardView{}, classified(KindInvalid, err)
 	}
 	if _, err := s.employees.GetTask(taskID); err != nil {
-		return TaskBoardView{}, classifyEmployeeStore(err)
+		if !errors.Is(err, employeestore.ErrNotFound) {
+			return TaskBoardView{}, classifyEmployeeStore(err)
+		}
+		return s.moveTaskBoardNoteCard(ctx, taskID, input)
 	}
 	document, err := s.board.Load()
 	if err != nil {
@@ -228,6 +231,32 @@ func (s *Service) UpdateTaskBoardCard(ctx context.Context, taskID string, input 
 		return TaskBoardView{}, classified(KindInvalid, err)
 	}
 	return s.GetTaskBoard(ctx)
+}
+
+// moveTaskBoardNoteCard moves a Note card between columns. Notes never carry
+// execution semantics, so only the column and rank metadata may change.
+func (s *Service) moveTaskBoardNoteCard(ctx context.Context, cardID string, input TaskBoardCardInput) (TaskBoardView, error) {
+	document, err := s.board.Load()
+	if err != nil {
+		return TaskBoardView{}, classified(KindInternal, err)
+	}
+	for index := range document.Cards {
+		card := &document.Cards[index]
+		if card.ID != cardID || card.TaskID != "" {
+			continue
+		}
+		if card.Kind != boardstore.CardNote {
+			return TaskBoardView{}, classified(KindConflict, errors.New("task board card is not a note"))
+		}
+		card.ColumnID, card.Rank = input.ColumnID, input.Rank
+		card.UpdatedAt = time.Now().UTC()
+		document.UpdatedAt = card.UpdatedAt
+		if err := s.board.Save(document); err != nil {
+			return TaskBoardView{}, classified(KindInvalid, err)
+		}
+		return s.GetTaskBoard(ctx)
+	}
+	return TaskBoardView{}, classified(KindNotFound, errors.New("task board card not found"))
 }
 
 func (s *Service) CreateTaskBoardNote(ctx context.Context, input TaskBoardNoteInput) (TaskBoardView, error) {

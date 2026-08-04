@@ -52,4 +52,18 @@ describe('responsive shell CSS contract', () => {
     expect(styles).toContain('.team-role-card')
     expect(styles).toContain('overflow-wrap: anywhere')
   })
+
+  it('fits the Task Board to the viewport on desktop and snaps columns on small screens', () => {
+    expect(styles).toContain('grid-auto-columns:minmax(0,1fr)')
+    expect(styles).not.toContain('minmax(280px,1fr)')
+    expect(styles).toContain('grid-auto-columns:minmax(240px,62vw)')
+    expect(styles).toContain('scroll-snap-type:x proximity')
+    expect(styles).toContain('.task-board-card__title')
+    expect(styles).toContain('-webkit-line-clamp:2')
+    expect(styles).toContain('.task-board-card.is-dragging')
+    expect(styles).toContain('.task-board-card:focus-visible')
+    expect(styles).toContain('.task-board-column.is-drop-target')
+    expect(styles).toContain('.task-board-card .ant-tag{max-width:100%;overflow:hidden;text-overflow:ellipsis')
+    expect(styles).not.toContain('.dashboard-task-board-card')
+  })
 })

@@ -25,7 +25,6 @@ import {
   Table,
   Tag,
   Timeline,
-  Tooltip,
   Typography,
   type TableColumnsType,
 } from 'antd'
@@ -71,6 +70,8 @@ import { PageHeader } from '../../components/PageHeader'
 import { useSessionEvents } from '../../hooks/useSessionEvents'
 import { translatedEnum } from '../../i18n/enumLabel'
 import { useUI } from '../../state/UIContext'
+import { TaskBoardGrid } from './board/TaskBoardGrid'
+import { mutationKey, statusColor } from './board/useTaskBoard'
 
 const MAX_PROMPT_BYTES = 16 << 10
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
@@ -99,73 +100,6 @@ const BOARD_TEMPLATES: Record<string, TaskBoardDefinition> = {
 }
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength
 const { Paragraph, Text, Title } = Typography
-
-function mutationKey(error: unknown) {
-  if (error instanceof ApiError && error.code === 'network_error') return 'mutation.offline'
-  if (error instanceof ApiError && error.status === 409) return 'mutation.conflict'
-  return 'mutation.failed'
-}
-
-function statusColor(status: string) {
-  if (['completed', 'approved'].includes(status)) return 'success'
-  if (['failed', 'denied'].includes(status)) return 'error'
-  if (['cancelled', 'interrupted'].includes(status)) return 'warning'
-  if (['running', 'verifying', 'prepared', 'waiting_owner'].includes(status)) return 'processing'
-  return 'default'
-}
-
-function boardCardInput(card: TaskBoardCard, columnId = card.column_id, rank = card.rank) {
-  return {
-    column_id: columnId,
-    rank,
-    labels: card.labels,
-    priority: card.priority,
-    due_at: card.due_at ?? null,
-    pinned: card.pinned,
-    blocked: card.blocked,
-    blocker_reason: card.blocker_reason ?? '',
-    depends_on: card.depends_on,
-    source_url: card.source_url ?? '',
-    loop_id: card.loop_id ?? '',
-  }
-}
-
-function BoardCardView({ card, onOpen, onDragStart, onConvert }: { card: TaskBoardCard; onOpen: (card: TaskBoardCard) => void; onDragStart: (card: TaskBoardCard) => void; onConvert: (card: TaskBoardCard) => void }) {
-  const { t } = useTranslation()
-  const isTask = card.kind === 'task' && Boolean(card.task_id)
-  return <div
-    className={`task-board-card${card.blocked ? ' is-blocked' : ''}${card.pinned ? ' is-pinned' : ''}`}
-    draggable={isTask}
-    onDragStart={() => onDragStart(card)}
-    onClick={() => onOpen(card)}
-    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen(card) } }}
-    role={isTask ? 'link' : 'article'}
-    tabIndex={0}
-  >
-    <Card size="small" title={<Typography.Text ellipsis={{ tooltip: card.title }}>{card.title}</Typography.Text>} extra={card.kind === 'note' ? <Tag color="default">{t('tasks.note')}</Tag> : <Tag color={statusColor(card.state ?? 'queued')}>{translatedEnum(t, 'taskStatus', card.state ?? 'queued')}</Tag>}>
-      <Space direction="vertical" size={8} style={{ width: '100%' }}>
-        <Space wrap size={[4, 4]}>
-          {card.employee_name ? <Tag>{card.employee_name}</Tag> : null}
-          {card.provider || card.model ? <Tag color="blue">{[card.provider, card.model].filter(Boolean).join(' / ')}</Tag> : null}
-          {card.priority > 0 ? <Tag color="gold">P{card.priority}</Tag> : null}
-          {card.blocked ? <Tag color="error">{t('tasks.blocked')}</Tag> : null}
-          {card.approval_status !== 'none' ? <Tag color="warning">{t('tasks.approval')}: {card.approval_status}</Tag> : null}
-          {card.source_url?.startsWith('task-board://notes/') ? <Tag color="purple">{t('tasks.sourceNote')}</Tag> : null}
-        </Space>
-        {card.kind === 'note' && card.body ? <Typography.Paragraph ellipsis={{ rows: 3 }} className="safe-wrap" style={{ marginBottom: 0 }}>{card.body}</Typography.Paragraph> : null}
-        {card.kind === 'note' ? <Button type="link" size="small" onClick={(event) => { event.stopPropagation(); onConvert(card) }}>{t('tasks.useAsTask')}</Button> : null}
-        {card.labels.length > 0 ? <Space wrap size={[4, 4]}>{card.labels.map((label) => <Tag key={label}>{label}</Tag>)}</Space> : null}
-        {card.loop_id ? <Link to={`/loops/${encodeURIComponent(card.loop_id)}`} onClick={(event) => event.stopPropagation()}>{t('tasks.loop')}: {card.loop_id}</Link> : null}
-        <Space split="·" size={4} wrap>
-          <Typography.Text type="secondary">{card.kind === 'task' ? card.id : t('tasks.note')}</Typography.Text>
-          {card.session_count > 0 ? <Typography.Text type="secondary">{t('tasks.sessions')}: {card.session_count}</Typography.Text> : null}
-          {card.session_event_sequence > 0 ? <Typography.Text type="secondary">{t('tasks.events')}: {card.session_event_sequence}</Typography.Text> : null}
-          {card.stale ? <Tooltip title={t('tasks.staleProjection')}><Tag color="warning">{t('tasks.stale')}</Tag></Tooltip> : null}
-        </Space>
-      </Space>
-    </Card>
-  </div>
-}
 
 async function loadAllEmployees(signal: AbortSignal) {
   const employees: EmployeeSummary[] = []
@@ -231,9 +165,6 @@ export function TasksWorkbenchPage() {
   const [definitionText, setDefinitionText] = useState('')
   const [definitionTemplate, setDefinitionTemplate] = useState('custom')
   const [definitionSaving, setDefinitionSaving] = useState(false)
-  const [draggingID, setDraggingID] = useState<string | null>(null)
-  const [startCandidate, setStartCandidate] = useState<{ card: TaskBoardCard; targetColumn: string } | null>(null)
-  const [startBusy, setStartBusy] = useState(false)
   const [employeeId, setEmployeeId] = useState('')
   const [context, setContext] = useState<{ record: EmployeeRecord; knowledge: EmployeeKnowledge; memory: MemoryFact[]; skills: Awaited<ReturnType<typeof getEmployeeSkills>> } | null>(null)
   const [prompt, setPrompt] = useState('')
@@ -332,48 +263,15 @@ export function TasksWorkbenchPage() {
     setParams(next)
   }
 
-  async function saveBoardCard(card: TaskBoardCard, columnID: string) {
-    if (!connectivity.canMutate || !board) return
-    try {
-      const next = await updateTaskBoardCard(card.task_id ?? card.id, boardCardInput(card, columnID, Date.now()))
-      setBoard(next)
-    } catch (caught) {
-      actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
-    }
-  }
+  const refreshBoard = useCallback(async () => {
+    setBoard(await getTaskBoard())
+  }, [])
 
-  function dropCard(card: TaskBoardCard, columnID: string) {
-    setDraggingID(null)
-    if (card.kind === 'task' && columnID === 'in_progress' && card.state !== 'running' && card.state !== 'verifying') {
-      setStartCandidate({ card, targetColumn: columnID })
-      return
-    }
-    void saveBoardCard(card, columnID)
-  }
+  const resolveBoardTask = useCallback((taskId: string) => taskByID.get(taskId), [taskByID])
 
-  async function confirmStartCandidate() {
-    if (!startCandidate?.card.task_id || !connectivity.canMutate || startBusy) return
-    const task = taskByID.get(startCandidate.card.task_id)
-    if (!task) return
-    setStartBusy(true)
-    try {
-      const nextTask = task.state === 'interrupted'
-        ? await resumeEmployeeTask(task.id)
-        : await startEmployeeTask(task.id)
-      setTasks((current) => current.map((item) => item.id === nextTask.id ? nextTask : item))
-      const nextBoard = await updateTaskBoardCard(task.id, boardCardInput(startCandidate.card, startCandidate.targetColumn, Date.now()))
-      setBoard(nextBoard)
-      setStartCandidate(null)
-    } catch (caught) {
-      actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
-      if (caught instanceof ApiError && caught.status === 409) {
-        const refreshed = await getTaskBoard().catch(() => undefined)
-        if (refreshed) setBoard(refreshed)
-      }
-    } finally {
-      setStartBusy(false)
-    }
-  }
+  const handleBoardTaskUpdated = useCallback((nextTask: EmployeeTask) => {
+    setTasks((current) => current.map((item) => (item.id === nextTask.id ? nextTask : item)))
+  }, [])
 
   async function createNote() {
     if (!noteTitle.trim() || noteCreating || !connectivity.canMutate) return
@@ -493,7 +391,6 @@ export function TasksWorkbenchPage() {
   const providerOptions = Array.from(new Set((board?.cards ?? []).map((card) => card.provider).filter((value): value is string => Boolean(value))))
   const modelOptions = Array.from(new Set((board?.cards ?? []).map((card) => card.model).filter((value): value is string => Boolean(value))))
   const labelOptions = Array.from(new Set((board?.cards ?? []).flatMap((card) => card.labels)))
-  const boardColumns = (board?.definition.columns ?? []).filter((column) => !column.hidden || params.get('archived') === '1')
   const citations = context?.knowledge.indexes.flatMap((index) => index.documents).flatMap((document) => document.citations) ?? []
   return <article className="feature-page antd-deep-page tasks-workbench-page">
     <PageHeader title={t('pages.tasks.title')} description={t('tasks.description')} />
@@ -531,19 +428,17 @@ export function TasksWorkbenchPage() {
     </Card>
     {boardError ? <Alert type="warning" showIcon message={t('tasks.boardUnavailable')} description={t('common.retryDescription')} /> : null}
     {viewMode === 'list' ? <Card><TaskList tasks={filtered} /></Card> : <Card title={<Space><span>{board?.definition.name ?? t('tasks.board')}</span><Badge count={filteredBoardCards.length} showZero /></Space>}>
-      <div className="task-board-scroll" data-testid="task-board">
-        {boardColumns.map((column) => {
-          const cards = filteredBoardCards.filter((card) => card.column_id === column.id).sort((left, right) => left.rank - right.rank || Date.parse(left.authoritative_updated_at) - Date.parse(right.authoritative_updated_at))
-          return <section key={column.id} data-testid={`task-board-column-${column.id}`} className="task-board-column" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const card = filteredBoardCards.find((item) => item.id === draggingID); if (card) dropCard(card, column.id) }}>
-            <header className="task-board-column__header"><Space><span className="task-board-column__swatch" style={{ background: column.color }} /><Typography.Text strong>{column.title}</Typography.Text><Badge count={cards.length} showZero /></Space>{column.wip_limit ? <Typography.Text type="secondary">/{column.wip_limit}</Typography.Text> : null}</header>
-          <div className="task-board-column__cards">{cards.map((card) => <BoardCardView key={card.id} card={card} onOpen={(item) => { if (item.task_id) void navigate(`/tasks/${encodeURIComponent(item.task_id)}`) }} onDragStart={(item) => { setDraggingID(item.id) }} onConvert={useNoteAsTask} />)}{cards.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('tasks.emptyColumn')} /> : null}</div>
-          </section>
-        })}
-      </div>
+      {board ? <TaskBoardGrid
+        board={board}
+        cards={filteredBoardCards}
+        onBoardChange={setBoard}
+        onRefresh={refreshBoard}
+        resolveTask={resolveBoardTask}
+        onTaskUpdated={handleBoardTaskUpdated}
+        showHiddenColumns={params.get('archived') === '1'}
+        onUseNoteAsTask={useNoteAsTask}
+      /> : null}
     </Card>}
-    <Modal open={Boolean(startCandidate)} title={t('tasks.startConfirmationTitle')} okText={t('tasks.start')} cancelText={t('actions.cancel')} confirmLoading={startBusy} onCancel={() => setStartCandidate(null)} onOk={() => void confirmStartCandidate()}>
-      {startCandidate ? (() => { const task = startCandidate.card.task_id ? taskByID.get(startCandidate.card.task_id) : undefined; return task ? <Space direction="vertical" size={16} style={{ width: '100%' }}><Alert type="warning" showIcon message={t('tasks.startConfirmation')} /><Descriptions bordered column={1} size="small"><Descriptions.Item label={t('tasks.employee')}>{startCandidate.card.employee_name || task.employee_id}</Descriptions.Item><Descriptions.Item label={t('tasks.model')}>{[startCandidate.card.provider, startCandidate.card.model].filter(Boolean).join(' / ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.workspace')}>{task.project_binding.workspace_fingerprint}</Descriptions.Item><Descriptions.Item label={t('tasks.skills')}>{task.skills.map((skill) => `${skill.skill_id}@${skill.version}`).join(', ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.permissions')}>{task.policy.allowed_capabilities.join(', ') || '—'} · {task.policy.network_allowed ? t('tasks.networkAllowed') : t('tasks.networkDisabled')}</Descriptions.Item><Descriptions.Item label={t('tasks.writerLease')}>{task.project_binding.mutation_allowed ? t('tasks.writerLeaseRequired') : t('tasks.readOnlyWorkspace')}</Descriptions.Item></Descriptions></Space> : null })() : null}
-    </Modal>
     <Modal open={noteOpen} title={t('tasks.newNote')} okText={t('actions.save')} cancelText={t('actions.cancel')} confirmLoading={noteCreating} onCancel={() => setNoteOpen(false)} onOk={() => void createNote()}>
       <Form layout="vertical"><Form.Item label={t('tasks.noteTitle')} required><Input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} /></Form.Item><Form.Item label={t('tasks.noteBody')}><Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} value={noteBody} onChange={(event) => setNoteBody(event.target.value)} /></Form.Item></Form>
     </Modal>
@@ -643,7 +538,7 @@ export function TaskWorkbenchDetailPage() {
     <Card className="task-summary-card" title={<Space wrap><Title level={2}>{t('tasks.context')}</Title><Tag data-testid="task-status" color={statusColor(task.state)}>{translatedEnum(t, 'taskStatus', task.state)}</Tag></Space>}>
       {!connectivity.canMutate ? <Alert type="warning" showIcon message={t('mutation.offline')} /> : null}
       {prepared ? <Alert type="info" showIcon message={t('tasks.preparedAuthority')} /> : null}
-      <Descriptions column={{ xs: 1, sm: 2, lg: 3 }} bordered size="small"><Descriptions.Item label={t('tasks.employeeRevision')}>{task.employee_revision}</Descriptions.Item><Descriptions.Item label={t('tasks.employeeSnapshot')}><Text copyable ellipsis={{ tooltip: task.employee_snapshot.digest }}>r{task.employee_snapshot.revision} · {task.employee_snapshot.digest}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.project')}>{task.project_binding.label} · <Text copyable>{task.project_binding.workspace_fingerprint}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.skills')}>{task.skills.map((item) => `${item.skill_id}@${item.version}`).join('; ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.session')}><Text copyable>{task.session_id ?? '—'}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.run')}><Text copyable>{task.run_id ?? '—'}</Text></Descriptions.Item></Descriptions>
+      <Descriptions column={{ xs: 1, sm: 2, lg: 3 }} bordered size="small"><Descriptions.Item label={t('tasks.employeeRevision')}>{task.employee_revision}</Descriptions.Item><Descriptions.Item label={t('tasks.employeeSnapshot')}><Text copyable ellipsis={{ tooltip: task.employee_snapshot.digest }}>r{task.employee_snapshot.revision} · {task.employee_snapshot.digest}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.project')}>{task.project_binding.label} · <Text copyable>{task.project_binding.workspace_fingerprint}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.skills')}>{task.skills.map((item) => `${item.skill_id}@${item.version}`).join('; ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.session')}>{task.session_id ? <Space size={8} wrap><Text copyable>{task.session_id}</Text><Link to={`/agent/sessions/${encodeURIComponent(task.session_id)}`}>{t('tasks.openSession')}</Link></Space> : <Text copyable>—</Text>}</Descriptions.Item><Descriptions.Item label={t('tasks.run')}><Text copyable>{task.run_id ?? '—'}</Text></Descriptions.Item></Descriptions>
       {screens.md ? actionsBar : null}
     </Card>
     <Card data-testid="task-timeline" title={<Title level={2}>{t('tasks.activity')}</Title>}>

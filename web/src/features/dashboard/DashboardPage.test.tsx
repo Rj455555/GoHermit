@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DashboardPage } from './DashboardPage'
 import { i18n } from '../../i18n/i18n'
+import { UIProvider } from '../../state/UIContext'
 
 const api = vi.hoisted(() => ({
   getInfo: vi.fn(),
@@ -29,9 +30,11 @@ describe('DashboardPage', () => {
   function renderDashboard() {
     return render(
       <I18nextProvider i18n={i18n}>
-        <MemoryRouter>
-          <DashboardPage />
-        </MemoryRouter>
+        <UIProvider>
+          <MemoryRouter>
+            <DashboardPage />
+          </MemoryRouter>
+        </UIProvider>
       </I18nextProvider>,
     )
   }
@@ -123,6 +126,47 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Review the board placement')).toBeVisible()
     expect(screen.getByTestId('dashboard-task-board-column-todo')).toHaveTextContent('Todo')
     expect(screen.getByRole('link', { name: i18n.t('dashboard.openTaskBoard') })).toHaveAttribute('href', '/tasks?view=board')
+  })
+
+  it('renders draggable task cards from every Employee through the shared board grid', async () => {
+    api.getInfo.mockResolvedValue({ workspace: '/workspace/gohermit', available_companies: [], auth_status: {} })
+    api.listLoops.mockResolvedValue({ loops: [] })
+    api.listSessions.mockResolvedValue({ sessions: [] })
+    api.listLoopInvocations.mockResolvedValue({ invocations: [] })
+    api.getTaskBoard.mockResolvedValue({
+      schema_version: 1,
+      definition: { id: 'software', name: 'Software development', columns: [
+        { id: 'todo', title: 'Todo', color: '#2563eb', hidden: false },
+        { id: 'in_progress', title: 'In progress', color: '#0891b2', hidden: false },
+      ] },
+      cards: [{
+        id: 'task-1', task_id: 'task-1', kind: 'task', title: 'Review the board placement', column_id: 'todo', rank: 1,
+        labels: [], priority: 0, pinned: false, blocked: false, depends_on: [], projection_reason: 'authoritative',
+        authoritative_updated_at: '2026-08-04T08:00:00Z', session_event_sequence: 0, session_count: 0,
+        approval_status: 'none', verification_status: 'none', stale: false, state: 'queued',
+        employee_id: 'employee-ada', employee_name: 'Ada',
+      }, {
+        id: 'task-2', task_id: 'task-2', kind: 'task', title: 'Audit the release checklist', column_id: 'todo', rank: 2,
+        labels: [], priority: 0, pinned: false, blocked: false, depends_on: [], projection_reason: 'authoritative',
+        authoritative_updated_at: '2026-08-04T08:00:00Z', session_event_sequence: 0, session_count: 0,
+        approval_status: 'none', verification_status: 'none', stale: false, state: 'queued',
+        employee_id: 'employee-grace', employee_name: 'Grace',
+      }],
+      view: { view: 'board', wip_enabled: true },
+      filters: { states: [], labels: [] },
+      updated_at: '2026-08-04T08:00:00Z', projection_generated_at: '2026-08-04T08:00:00Z',
+    })
+
+    renderDashboard()
+
+    const grid = await screen.findByTestId('dashboard-task-board')
+    // Shared grid structure: same card class and column testid scheme as the Tasks board.
+    expect(screen.getByTestId('dashboard-task-board-column-todo')).toBeInTheDocument()
+    const cards = grid.querySelectorAll('.task-board-card')
+    expect(cards).toHaveLength(2)
+    for (const card of cards) expect(card).toHaveAttribute('draggable', 'true')
+    expect(grid).toHaveTextContent('Ada')
+    expect(grid).toHaveTextContent('Grace')
   })
 
   it('keeps the authoritative workspace visible when supporting history fails', async () => {

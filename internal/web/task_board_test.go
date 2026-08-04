@@ -77,3 +77,64 @@ func TestTaskBoardProjectsQueuedTaskAndNoteWithoutCreatingExecution(t *testing.T
 		t.Fatal("created Note missing from Board projection")
 	}
 }
+
+func TestTaskBoardMovesNoteCardWithoutExecution(t *testing.T) {
+	server, _, _ := newEmployeeTestServer(t)
+	handler := server.Handler()
+	response := requestJSON(t, handler, http.MethodPost, "/api/task-board/notes", map[string]any{
+		"title": "Research idea", "body": "Keep this outside the execution runtime.", "column_id": "backlog",
+		"rank": 1, "labels": []string{"research"}, "priority": 1, "due_at": nil, "pinned": false,
+		"source_url": "", "blocker_reason": "",
+	}, "")
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create Note status=%d body=%s", response.Code, response.Body.String())
+	}
+	var board controlplane.TaskBoardView
+	if err := json.Unmarshal(response.Body.Bytes(), &board); err != nil {
+		t.Fatal(err)
+	}
+	noteID := ""
+	for _, card := range board.Cards {
+		if card.Kind == "note" {
+			noteID = card.ID
+		}
+	}
+	if noteID == "" {
+		t.Fatal("created Note missing from Board projection")
+	}
+
+	move := func(cardID string) int {
+		return requestJSON(t, handler, http.MethodPut, "/api/task-board/cards/"+cardID, map[string]any{
+			"column_id": "review", "rank": 42, "labels": []string{"research"}, "priority": 1,
+			"due_at": nil, "pinned": false, "blocked": false, "blocker_reason": "", "depends_on": []string{},
+			"source_url": "", "loop_id": "",
+		}, "").Code
+	}
+	if code := move("note-missing"); code != http.StatusNotFound {
+		t.Fatalf("move unknown card status=%d", code)
+	}
+	if code := move(noteID); code != http.StatusOK {
+		t.Fatalf("move Note status=%d", code)
+	}
+
+	response = requestJSON(t, handler, http.MethodGet, "/api/task-board", nil, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("get board status=%d body=%s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &board); err != nil {
+		t.Fatal(err)
+	}
+	for _, card := range board.Cards {
+		if card.ID != noteID {
+			continue
+		}
+		if card.Kind != "note" || card.ColumnID != "review" || card.Rank != 42 {
+			t.Fatalf("moved Note projection = %#v", card)
+		}
+		if card.SessionID != "" || card.RunID != "" || card.State != "note" {
+			t.Fatalf("Note move entered execution projection = %#v", card)
+		}
+		return
+	}
+	t.Fatal("moved Note missing from Board projection")
+}

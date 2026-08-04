@@ -390,6 +390,18 @@ describe('Employee Tasks Phase 4 pages', () => {
     expect(api.createEmployeeTask).not.toHaveBeenCalled()
   })
 
+  it('renders the Tasks board view through the shared board grid', async () => {
+    renderTasks('/tasks?view=board')
+
+    const grid = await screen.findByTestId('task-board')
+    // Shared grid structure: same card class and column testid scheme as the Dashboard board.
+    expect(screen.getByTestId('task-board-column-todo')).toBeInTheDocument()
+    expect(screen.getByTestId('task-board-column-in_progress')).toBeInTheDocument()
+    const cards = grid.querySelectorAll('.task-board-card')
+    expect(cards.length).toBeGreaterThanOrEqual(2)
+    for (const card of cards) expect(card).toHaveAttribute('draggable', 'true')
+  })
+
   it('loads the last 100 Tasks per Employee and exposes the boundary', async () => {
     renderTasks()
 
