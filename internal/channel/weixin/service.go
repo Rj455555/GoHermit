@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,28 @@ type TaskSink interface {
 
 type BindingValidator interface {
 	ValidateChannelEmployee(employeeID string) error
+}
+
+type ConversationDirection string
+
+const (
+	DirectionInbound  ConversationDirection = "inbound"
+	DirectionOutbound ConversationDirection = "outbound"
+)
+
+type ConversationMessage struct {
+	ID        string                `json:"id"`
+	AccountID string                `json:"account_id"`
+	PeerID    string                `json:"peer_id"`
+	GroupID   string                `json:"group_id,omitempty"`
+	MessageID string                `json:"message_id"`
+	Direction ConversationDirection `json:"direction"`
+	Kind      string                `json:"kind"`
+	Text      string                `json:"text"`
+	State     string                `json:"state"`
+	TaskID    string                `json:"task_id,omitempty"`
+	Attempts  int                   `json:"attempts,omitempty"`
+	Time      time.Time             `json:"time"`
 }
 
 type Service struct {
@@ -263,6 +286,53 @@ func (s *Service) DeleteBinding(id string) error {
 
 func (s *Service) ListInbox(accountID string, limit int) ([]channelstore.InboxMessage, error) {
 	return s.store.ListInbox(accountID, limit)
+}
+
+func (s *Service) ListConversation(accountID string, limit int) ([]ConversationMessage, error) {
+	if limit < 1 || limit > 200 {
+		limit = 100
+	}
+	if _, err := s.store.GetAccount(accountID); err != nil {
+		return nil, err
+	}
+	inbox, err := s.store.ListInbox(accountID, 200)
+	if err != nil {
+		return nil, err
+	}
+	outbox, err := s.store.ListOutbox(accountID, 200)
+	if err != nil {
+		return nil, err
+	}
+	type correlation struct{ groupID, taskID string }
+	correlations := make(map[string]correlation, len(inbox))
+	items := make([]ConversationMessage, 0, len(inbox)+len(outbox))
+	for _, message := range inbox {
+		correlations[message.PeerID+"\x00"+message.MessageID] = correlation{groupID: message.GroupID, taskID: message.TaskID}
+		items = append(items, ConversationMessage{
+			ID: message.ID, AccountID: message.AccountID, PeerID: message.PeerID,
+			GroupID: message.GroupID, MessageID: message.MessageID, Direction: DirectionInbound,
+			Kind: "message", Text: message.Text, State: message.State, TaskID: message.TaskID, Time: message.ReceivedAt,
+		})
+	}
+	for _, message := range outbox {
+		match := correlations[message.PeerID+"\x00"+message.MessageID]
+		items = append(items, ConversationMessage{
+			ID: message.ID, AccountID: message.AccountID, PeerID: message.PeerID,
+			GroupID: match.groupID, MessageID: message.MessageID, Direction: DirectionOutbound,
+			Kind: message.Kind, Text: message.Text, State: message.State, TaskID: match.taskID,
+			Attempts: message.Attempts, Time: message.CreatedAt,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Time.Equal(items[j].Time) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].Time.Before(items[j].Time)
+	})
+	if len(items) > limit {
+		items = items[len(items)-limit:]
+	}
+	return items, nil
 }
 
 func (s *Service) DeliverFinal(ctx context.Context, accountID, peerID, messageID, text string) error {

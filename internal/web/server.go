@@ -24,6 +24,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/controlplane"
 	"github.com/Rj455555/GoHermit/internal/event"
 	"github.com/Rj455555/GoHermit/internal/owner"
+	"github.com/Rj455555/GoHermit/internal/session"
 	"github.com/Rj455555/GoHermit/internal/teamtemplate"
 )
 
@@ -90,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/channels/weixin/accounts/{accountID}/bindings/{bindingID}", s.saveWeixinBinding)
 	mux.HandleFunc("DELETE /api/channels/weixin/accounts/{accountID}/bindings/{bindingID}", s.deleteWeixinBinding)
 	mux.HandleFunc("GET /api/channels/weixin/inbox", s.listWeixinInbox)
+	mux.HandleFunc("GET /api/channels/weixin/conversations", s.listWeixinConversation)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/owner", s.getOwner)
 	mux.HandleFunc("GET /api/projects", s.listProjects)
@@ -638,7 +640,17 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := s.svc.ListSessions(r.Context(), limit)
+	var items []session.SessionSummary
+	var err error
+	switch kind := r.URL.Query().Get("kind"); kind {
+	case "":
+		items, err = s.svc.ListSessions(r.Context(), limit)
+	case string(session.SummaryKindInteractive), string(session.SummaryKindEmployeeTask):
+		items, err = s.svc.ListSessionsByKind(r.Context(), limit, session.SummaryKind(kind))
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid Session kind"})
+		return
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return

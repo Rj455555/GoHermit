@@ -29,6 +29,7 @@ import {
   decodeWeixinAccounts,
   decodeWeixinBindings,
   decodeWeixinInbox,
+  decodeWeixinConversation,
   decodeWeixinLoginAttempt,
   decodeReport,
   decodeReports,
@@ -119,6 +120,8 @@ export const deleteWeixinBinding = (bindingId: string, options: ReadOptions = {}
   })
 export const getWeixinInbox = (accountId: string, options: ReadOptions = {}) =>
   apiRequest('/api/channels/weixin/inbox?account_id=' + segment(accountId), decodeWeixinInbox, options)
+export const getWeixinConversation = (accountId: string, options: ReadOptions = {}) =>
+  apiRequest('/api/channels/weixin/conversations?account_id=' + segment(accountId) + '&limit=200', decodeWeixinConversation, options)
 export const listReports = (options: ReadOptions = {}) =>
   apiRequest('/api/reports?limit=100', decodeReports, options)
 export const retryReport = (reportId: string, options: ReadOptions = {}) =>
@@ -417,6 +420,8 @@ export const getCodexLogin = (loginId: string, options: ReadOptions = {}) =>
 
 export const listSessions = (options: ReadOptions = {}) =>
   apiRequest('/api/sessions?limit=100', decodeSessionList, options)
+export const listInteractiveSessions = (options: ReadOptions = {}) =>
+  apiRequest('/api/sessions?limit=100&kind=interactive', decodeSessionList, options)
 export const getSession = (sessionId: string, options: ReadOptions = {}) =>
   apiRequest(`/api/sessions/${segment(sessionId)}`, decodeSessionDetail, options)
 export const createSession = (

@@ -11,7 +11,12 @@ export function trapFocus(event: React.KeyboardEvent<HTMLElement>): void {
   if (event.key !== 'Tab') return
   const focusable = Array.from(
     event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-  ).filter((element) => !element.hasAttribute('hidden'))
+  ).filter(
+    (element) =>
+      element.tabIndex >= 0 &&
+      !element.hasAttribute('hidden') &&
+      element.getAttribute('aria-hidden') !== 'true',
+  )
   if (focusable.length === 0) {
     event.preventDefault()
     return

@@ -84,6 +84,48 @@ func TestPreparedSessionUsesStableIDAndCompactSnapshot(t *testing.T) {
 	}
 }
 
+func TestListInteractiveSummariesFiltersEmployeeTasksBeforeLimit(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, ".gohermit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	conversation, err := NewConversation("Owner conversation", root, "digest", Selection{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation.CreatedAt = now.Add(-time.Hour)
+	conversation.UpdatedAt = conversation.CreatedAt
+	if err = store.Save(context.Background(), conversation); err != nil {
+		t.Fatal(err)
+	}
+	employeeSession, err := NewPrepared(
+		"employee-session-newer", "Scheduled employee work", root, "digest",
+		"employee-a", "task-a", 7, strings.Repeat("a", 64), preparedCompactSnapshot(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	employeeSession.CreatedAt = now
+	employeeSession.UpdatedAt = now
+	if err = store.Save(context.Background(), employeeSession); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := store.ListSummaries(context.Background(), 1)
+	if err != nil || len(all) != 1 || all[0].Kind != SummaryKindEmployeeTask {
+		t.Fatalf("all summaries = %#v err=%v", all, err)
+	}
+	interactive, err := store.ListSummariesByKind(context.Background(), 1, SummaryKindInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(interactive) != 1 || interactive[0].ID != conversation.ID || interactive[0].Kind != SummaryKindInteractive {
+		t.Fatalf("interactive summaries = %#v", interactive)
+	}
+}
+
 func TestPreparedSessionRejectsOversizedOrMismatchedCompactSnapshot(t *testing.T) {
 	root := t.TempDir()
 	snapshot := preparedCompactSnapshot()

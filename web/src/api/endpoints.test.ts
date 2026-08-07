@@ -37,6 +37,7 @@ import {
   getOwner,
   getSession,
   getTeamTemplate,
+  getWeixinConversation,
   importLoop,
   importTeamTemplate,
   editEmployeeMemory,
@@ -46,6 +47,7 @@ import {
   listLoopInvocationDetails,
   listLoopInvocations,
   listLoops,
+  listInteractiveSessions,
   listSessions,
   listProjects,
   listSkills,
@@ -95,6 +97,8 @@ describe('Phase 3 endpoint map', () => {
       startCodexLogin(),
       getCodexLogin('login one'),
       listSessions(),
+      listInteractiveSessions(),
+      getWeixinConversation('account one'),
       getSession('session one'),
       createSession({
         title: 'title',
@@ -113,10 +117,12 @@ describe('Phase 3 endpoint map', () => {
     ])
 
     const paths = client.apiRequest.mock.calls.map(([path]) => path as string)
-    expect(paths).toHaveLength(22)
+    expect(paths).toHaveLength(24)
     expect(paths.every((path) => path.startsWith('/api/'))).toBe(true)
     expect(paths).not.toContain('/api/run')
     expect(paths).toContain('/api/sessions?limit=100')
+    expect(paths).toContain('/api/sessions?limit=100&kind=interactive')
+    expect(paths).toContain('/api/channels/weixin/conversations?account_id=account%20one&limit=200')
     expect(paths).not.toContain('/api/sessions?limit=200')
     expect(paths).toContain('/api/sessions/session%20one/runs/run%20one/cancel')
     expect(paths).toContain('/api/settings/providers/openai%20api/api-key')

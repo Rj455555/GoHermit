@@ -181,3 +181,41 @@ func TestStableIDHandlesEmptyParts(t *testing.T) {
 		t.Fatal("stable outbox IDs are not bounded and distinct")
 	}
 }
+
+func TestConversationProjectsInboundAndOutboundMessages(t *testing.T) {
+	store, err := channelstore.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &fakeBackend{}
+	sink := &fakeTaskSink{}
+	service := NewService(store, backend, sink)
+	now := time.Now().UTC()
+	account := channelstore.Account{SchemaVersion: channelstore.SchemaVersion, ID: "account-1", State: channelstore.StateConnected, BaseURL: "https://example.test", CreatedAt: now, UpdatedAt: now}
+	if err = store.SaveAccount(account); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SaveSecret(account.ID, channelstore.Secret{SchemaVersion: channelstore.SchemaVersion, Token: "token", ContextTokens: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.UpsertBinding(channelstore.Binding{SchemaVersion: channelstore.SchemaVersion, ID: "binding-1", AccountID: account.ID, PeerID: "peer-1", GroupID: "group-1", EmployeeID: "employee-1", Enabled: true, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	service.handleMessage(context.Background(), account, channelstore.Secret{SchemaVersion: channelstore.SchemaVersion, Token: "token", ContextTokens: map[string]string{}}, Message{
+		ID: "message-1", Sequence: 9, PeerID: "peer-1", GroupID: "group-1", Text: "请整理今天的重点", ContextToken: "context-secret",
+	})
+
+	items, err := service.ListConversation(account.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Direction != DirectionInbound || items[1].Direction != DirectionOutbound {
+		t.Fatalf("conversation = %#v", items)
+	}
+	if items[0].TaskID != "task-queued" || items[1].TaskID != "task-queued" || items[1].GroupID != "group-1" {
+		t.Fatalf("conversation correlation = %#v", items)
+	}
+	if items[1].Kind != "ack" || items[1].State != "sent" || items[1].Text != FixedQueuedAcknowledgement {
+		t.Fatalf("outbound projection = %#v", items[1])
+	}
+}

@@ -1867,32 +1867,81 @@ textarea {
   gap: 12px;
 }
 
-.session-new-link {
-  display: flex;
-  margin: 10px 0;
-  text-decoration: none;
+.session-browser {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.session-browser__hint.ant-typography {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.session-browser__search {
+  width: 100%;
+}
+
+.session-list {
+  max-height: calc(100vh - 240px);
+  padding-right: 3px;
+  overflow-y: auto;
 }
 
 .session-list__item {
   display: grid;
-  gap: 4px;
-  padding: 10px;
-  border: 1px solid transparent;
-  border-radius: 9px;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
+  background: var(--color-surface);
   color: inherit;
   text-decoration: none;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .session-list__item:hover,
 .session-list__item.is-active {
-  border-color: var(--color-border);
+  border-color: color-mix(in srgb, var(--color-accent) 48%, var(--color-border));
   background: var(--color-accent-soft);
+  box-shadow: inset 3px 0 0 var(--color-accent);
 }
 
-.session-list__item span,
+.session-list__heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-list__heading strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-list__heading .ant-tag {
+  flex: 0 0 auto;
+  margin-inline-end: 0;
+  font-size: 0.7rem;
+  line-height: 19px;
+}
+
+.session-list__selection,
 .session-list__item time {
   color: var(--color-text-muted);
   font-size: 0.78rem;
+}
+
+.session-list__selection {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .message {
@@ -5041,6 +5090,15 @@ button {
   gap: 20px;
 }
 
+.report-center-tabs .ant-tabs-nav {
+  margin-bottom: 16px;
+}
+
+.report-center-panel {
+  display: grid;
+  gap: 16px;
+}
+
 .report-center-overview {
   display: flex;
   align-items: center;
@@ -5075,6 +5133,13 @@ button {
   padding: 56px 24px;
   color: var(--muted, #64748b);
   text-align: center;
+}
+
+.report-center-loading,
+.weixin-conversation-loading {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
 }
 
 .report-center-empty h2,
@@ -5136,6 +5201,81 @@ button {
   font-size: 0.875rem;
 }
 
+.weixin-conversation-card .ant-card-body {
+  display: grid;
+  gap: 14px;
+}
+
+.weixin-conversation-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.weixin-conversation-toolbar .ant-select {
+  width: min(320px, 100%);
+}
+
+.weixin-conversation-description.ant-typography {
+  max-width: 76ch;
+  margin: 0;
+}
+
+.weixin-conversation-timeline {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface-subtle);
+}
+
+.weixin-message {
+  display: grid;
+  width: min(78%, 720px);
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px 14px 14px 4px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.weixin-message--outbound {
+  justify-self: end;
+  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+  border-radius: 14px 14px 4px;
+  background: var(--color-accent-soft);
+}
+
+.weixin-message header,
+.weixin-message footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weixin-message header time {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.weixin-message p {
+  margin: 0;
+  color: var(--color-text);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.weixin-message footer {
+  justify-content: flex-start;
+  font-size: 0.78rem;
+}
+
 @media (max-width: 720px) {
   .report-center-overview {
     align-items: flex-start;
@@ -5153,6 +5293,15 @@ button {
   .report-center-item > .button {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .weixin-message {
+    width: 100%;
+  }
+
+  .weixin-conversation-toolbar .ant-select,
+  .weixin-conversation-toolbar .ant-btn {
+    width: 100%;
   }
 }
 

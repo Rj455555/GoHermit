@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rj455555/GoHermit/internal/channel/weixin"
 	"github.com/Rj455555/GoHermit/internal/channelstore"
@@ -90,5 +91,37 @@ func TestWeixinAccountBindingRoutesAreAccountScoped(t *testing.T) {
 	server.Handler().ServeHTTP(other, httptest.NewRequest(http.MethodGet, "/api/channels/weixin/accounts/account-2/bindings", nil))
 	if other.Code != http.StatusOK || strings.Contains(other.Body.String(), "binding-1") {
 		t.Fatalf("cross-account binding response = %d body=%s", other.Code, other.Body.String())
+	}
+}
+
+func TestWeixinConversationRouteReturnsInboundAndOutboundProjection(t *testing.T) {
+	server := testServer(t)
+	store, err := channelstore.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.channels = weixin.NewService(store, channelTestBackend{}, server.svc)
+	now := time.Now().UTC()
+	if err = store.SaveAccount(channelstore.Account{SchemaVersion: channelstore.SchemaVersion, ID: "account-1", State: channelstore.StateConnected, BaseURL: "https://example.test", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = store.Ingest(channelstore.Inbound{AccountID: "account-1", PeerID: "peer-1", GroupID: "group-1", MessageID: "message-1", Sequence: 1, Text: "inbound", ContextToken: "secret-context"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = store.EnqueueOutbox(channelstore.OutboxMessage{ID: "out-1", AccountID: "account-1", PeerID: "peer-1", MessageID: "message-1", Kind: "ack", Text: "outbound", State: "sent"}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/channels/weixin/conversations?account_id=account-1&limit=20", nil)
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"direction":"inbound"`) || !strings.Contains(response.Body.String(), `"direction":"outbound"`) {
+		t.Fatalf("conversation response = %s", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "secret-context") {
+		t.Fatalf("conversation leaked context token: %s", response.Body.String())
 	}
 }

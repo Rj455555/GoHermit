@@ -117,3 +117,33 @@ func TestDeleteLoginAttemptsForAccountIsScoped(t *testing.T) {
 		t.Fatalf("account B attempt was removed: %v", err)
 	}
 }
+
+func TestListOutboxReturnsBoundedAccountScopedMessages(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, accountID := range []string{"account-a", "account-b"} {
+		if err = store.SaveAccount(Account{SchemaVersion: SchemaVersion, ID: accountID, State: StateConnected, BaseURL: "https://example.test", CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, message := range []OutboxMessage{
+		{ID: "out-a-1", AccountID: "account-a", PeerID: "peer-a", MessageID: "message-a-1", Kind: "ack", Text: "first", State: "pending"},
+		{ID: "out-a-2", AccountID: "account-a", PeerID: "peer-a", MessageID: "message-a-2", Kind: "final", Text: "second", State: "pending"},
+		{ID: "out-b-1", AccountID: "account-b", PeerID: "peer-b", MessageID: "message-b-1", Kind: "ack", Text: "other", State: "pending"},
+	} {
+		if _, _, err = store.EnqueueOutbox(message); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, err := store.ListOutbox("account-a", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != "out-a-2" || items[0].AccountID != "account-a" {
+		t.Fatalf("outbox items = %#v", items)
+	}
+}

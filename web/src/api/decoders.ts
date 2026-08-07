@@ -63,6 +63,7 @@ import type {
   WeixinAccountState,
   WeixinBinding,
   WeixinInboxItem,
+  WeixinConversationItem,
   WeixinLoginAttempt,
   WorkItem,
 } from './types'
@@ -392,6 +393,9 @@ function decodeSessionSummary(value: unknown): SessionSummary {
   return {
     id: id(source.id),
     title: string(source.title, 4096),
+    kind: source.kind === undefined
+      ? 'interactive'
+      : enumeration(source.kind, ['interactive', 'employee_task'] as const),
     status: enumeration(source.status, SESSION_STATUSES),
     updated_at: time(source.updated_at),
     active_run_id: optionalID(source.active_run_id),
@@ -1553,6 +1557,32 @@ function decodeWeixinInboxItem(value: unknown): WeixinInboxItem {
 export function decodeWeixinInbox(value: unknown): { items: WeixinInboxItem[] } {
   const source = object(value)
   return { items: array(source.items, decodeWeixinInboxItem, 200) }
+}
+
+function decodeWeixinConversationItem(value: unknown): WeixinConversationItem {
+  const source = object(value)
+  return {
+    id: id(source.id),
+    account_id: id(source.account_id),
+    peer_id: string(source.peer_id, 512),
+    group_id: optionalString(source.group_id, 512),
+    message_id: string(source.message_id, 512),
+    direction: enumeration(source.direction, ['inbound', 'outbound'] as const),
+    kind: string(source.kind, 64),
+    text: string(source.text, MAX_TEXT),
+    state: string(source.state, 64),
+    task_id: optionalID(source.task_id),
+    attempts: source.attempts === undefined ? 0 : integer(source.attempts),
+    time: time(source.time),
+  }
+}
+
+export function decodeWeixinConversation(value: unknown): { items: WeixinConversationItem[]; limit: number } {
+  const source = object(value)
+  return {
+    items: array(source.items, decodeWeixinConversationItem, 200),
+    limit: integer(source.limit),
+  }
 }
 
 const REPORT_DELIVERY_STATUSES = ['pending', 'sent', 'failed'] as const

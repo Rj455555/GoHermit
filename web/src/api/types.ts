@@ -156,6 +156,7 @@ export interface SessionSelection {
 export interface SessionSummary {
   id: string
   title: string
+  kind: 'interactive' | 'employee_task'
   status: SessionStatus
   updated_at: string
   active_run_id?: string | undefined
@@ -856,6 +857,21 @@ export interface WeixinInboxItem {
   state: string
   task_id?: string | undefined
   received_at: string
+}
+
+export interface WeixinConversationItem {
+  id: string
+  account_id: string
+  peer_id: string
+  group_id?: string | undefined
+  message_id: string
+  direction: 'inbound' | 'outbound'
+  kind: string
+  text: string
+  state: string
+  task_id?: string | undefined
+  attempts: number
+  time: string
 }
 
 export type ReportDeliveryStatus = 'pending' | 'sent' | 'failed'

@@ -9,6 +9,7 @@ import {
   decodeProjects,
   decodeWeixinAccounts,
   decodeWeixinBindings,
+  decodeWeixinConversation,
   decodeWeixinInbox,
   decodeWeixinLoginAttempt,
 } from './decoders'
@@ -40,6 +41,15 @@ describe('bounded channel and employee projection decoders', () => {
       message_id: 'message-2', sequence: 2, text: null, state: 'queued', task_id: 'task-1',
       received_at: now,
     }] }).items[0]?.text).toBe('hello')
+    expect(decodeWeixinConversation({ items: [{
+      id: 'inbox-1', account_id: 'account-1', peer_id: 'peer-1', group_id: 'group-1',
+      message_id: 'message-1', direction: 'inbound', kind: 'message', text: 'hello',
+      state: 'queued', task_id: 'task-1', time: now,
+    }, {
+      id: 'out-1', account_id: 'account-1', peer_id: 'peer-1', group_id: 'group-1',
+      message_id: 'message-1', direction: 'outbound', kind: 'ack', text: 'received',
+      state: 'sent', task_id: 'task-1', attempts: 1, time: now,
+    }], limit: 100 }).items.map((item) => item.direction)).toEqual(['inbound', 'outbound'])
   })
 
   it('decodes readiness, knowledge, memory, project, and bounded activity records', () => {

@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 
-import { getInfo, listSessions } from '../../api/endpoints'
+import { getInfo, listInteractiveSessions } from '../../api/endpoints'
 import type { Info, SessionSummary } from '../../api/types'
 import { useConnectivity } from '../../components/ConnectivityProvider'
 
@@ -49,7 +49,7 @@ export function AgentDataProvider({
     try {
       const [infoResult, sessionsResult] = await Promise.allSettled([
         getInfo({ signal: controller.signal }),
-        listSessions({ signal: controller.signal }),
+        listInteractiveSessions({ signal: controller.signal }),
       ])
       if (controller.signal.aborted || requestVersion.current !== version) return
       if (infoResult.status === 'fulfilled') setInfo(infoResult.value)

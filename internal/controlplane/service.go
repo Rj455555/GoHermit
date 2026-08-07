@@ -410,6 +410,17 @@ func (s *Service) ListSessions(ctx context.Context, limit int) ([]session.Sessio
 	return items, nil
 }
 
+// ListSessionsByKind returns one explicit public Session projection. Employee
+// execution Sessions stay available to Task/Loop pages, but no longer crowd
+// the interactive Agent conversation list.
+func (s *Service) ListSessionsByKind(ctx context.Context, limit int, kind session.SummaryKind) ([]session.SessionSummary, error) {
+	items, err := s.store.ListSummariesByKind(ctx, limit, kind)
+	if err != nil {
+		return nil, classified(KindInternal, err)
+	}
+	return items, nil
+}
+
 // GetSession loads one session and its visible message history.
 func (s *Service) GetSession(ctx context.Context, id string) (*session.Session, []session.MessageRecord, error) {
 	sess, err := s.loadPublicSession(ctx, id)

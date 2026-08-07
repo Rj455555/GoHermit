@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Rj455555/GoHermit/internal/channelstore"
@@ -190,6 +191,29 @@ func (s *Server) listWeixinInbox(w http.ResponseWriter, r *http.Request) {
 		result = append(result, map[string]any{"id": item.ID, "account_id": item.AccountID, "peer_id": item.PeerID, "group_id": item.GroupID, "message_id": item.MessageID, "sequence": item.Sequence, "text": item.Text, "state": item.State, "task_id": item.TaskID, "received_at": item.ReceivedAt})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": result})
+}
+
+func (s *Server) listWeixinConversation(w http.ResponseWriter, r *http.Request) {
+	accountID := strings.TrimSpace(r.URL.Query().Get("account_id"))
+	if accountID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "account_id is required"})
+		return
+	}
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 200 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "limit must be between 1 and 200"})
+			return
+		}
+		limit = parsed
+	}
+	items, err := s.channels.ListConversation(accountID, limit)
+	if err != nil {
+		writeChannelError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "limit": limit})
 }
 
 func publicAccounts(accounts []channelstore.Account) []map[string]any {

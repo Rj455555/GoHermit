@@ -715,6 +715,42 @@ func (s *Store) UpdateOutbox(message OutboxMessage) error {
 	return ErrNotFound
 }
 
+func (s *Store) ListOutbox(accountID string, limit int) ([]OutboxMessage, error) {
+	if !validID(accountID) {
+		return nil, errors.New("invalid channel account id")
+	}
+	if limit < 1 || limit > 200 {
+		limit = 100
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var value struct {
+		SchemaVersion int
+		Messages      []OutboxMessage
+	}
+	_, err := s.readJSON(filepath.Join("accounts", accountID, "outbox.json"), &value)
+	if errors.Is(err, os.ErrNotExist) {
+		return []OutboxMessage{}, nil
+	}
+	if err != nil || value.SchemaVersion != SchemaVersion || len(value.Messages) > 1024 {
+		return nil, ErrCorrupt
+	}
+	for _, message := range value.Messages {
+		if message.SchemaVersion != SchemaVersion || message.AccountID != accountID ||
+			!validID(message.ID) || message.PeerID == "" || len(message.PeerID) > 512 ||
+			message.MessageID == "" || len(message.MessageID) > 512 || message.Kind == "" || len(message.Kind) > 64 ||
+			!validText(message.Text, MaxMessageBytes) || message.Attempts < 0 || message.Attempts > 8 ||
+			message.CreatedAt.IsZero() || message.UpdatedAt.IsZero() ||
+			(message.State != "pending" && message.State != "sent" && message.State != "unknown") {
+			return nil, ErrCorrupt
+		}
+	}
+	if len(value.Messages) > limit {
+		value.Messages = value.Messages[len(value.Messages)-limit:]
+	}
+	return append([]OutboxMessage(nil), value.Messages...), nil
+}
+
 func (s *Store) writeJSON(relative string, value any) error {
 	data, err := json.Marshal(value)
 	if err != nil || len(data) > MaxFileBytes {

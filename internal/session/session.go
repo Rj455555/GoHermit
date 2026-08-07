@@ -116,14 +116,22 @@ type MessageRecord struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
+type SummaryKind string
+
+const (
+	SummaryKindInteractive  SummaryKind = "interactive"
+	SummaryKindEmployeeTask SummaryKind = "employee_task"
+)
+
 type SessionSummary struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Status      Status    `json:"status"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	ActiveRunID string    `json:"active_run_id,omitempty"`
-	LastRun     RunStatus `json:"last_run_status,omitempty"`
-	Selection   Selection `json:"selection"`
+	ID          string      `json:"id"`
+	Title       string      `json:"title"`
+	Kind        SummaryKind `json:"kind"`
+	Status      Status      `json:"status"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+	ActiveRunID string      `json:"active_run_id,omitempty"`
+	LastRun     RunStatus   `json:"last_run_status,omitempty"`
+	Selection   Selection   `json:"selection"`
 }
 
 type ToolRecord struct {
@@ -1332,6 +1340,13 @@ func (s *Store) Events(id string, after uint64) ([]event.Event, error) {
 }
 
 func (s *Store) ListSummaries(ctx context.Context, limit int) ([]SessionSummary, error) {
+	return s.ListSummariesByKind(ctx, limit, "")
+}
+
+func (s *Store) ListSummariesByKind(ctx context.Context, limit int, kind SummaryKind) ([]SessionSummary, error) {
+	if kind != "" && kind != SummaryKindInteractive && kind != SummaryKindEmployeeTask {
+		return nil, errors.New("invalid Session summary kind")
+	}
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
@@ -1348,7 +1363,14 @@ func (s *Store) ListSummaries(ctx context.Context, limit int) ([]SessionSummary,
 		if loaded.Hidden {
 			continue
 		}
-		item := SessionSummary{ID: loaded.ID, Title: loaded.Title, Status: loaded.Status, UpdatedAt: loaded.UpdatedAt, ActiveRunID: loaded.ActiveRunID, Selection: loaded.Selection}
+		loadedKind := SummaryKindInteractive
+		if loaded.EmployeeTaskID != "" {
+			loadedKind = SummaryKindEmployeeTask
+		}
+		if kind != "" && loadedKind != kind {
+			continue
+		}
+		item := SessionSummary{ID: loaded.ID, Title: loaded.Title, Kind: loadedKind, Status: loaded.Status, UpdatedAt: loaded.UpdatedAt, ActiveRunID: loaded.ActiveRunID, Selection: loaded.Selection}
 		if len(loaded.Runs) > 0 {
 			item.LastRun = loaded.Runs[len(loaded.Runs)-1].Status
 		}

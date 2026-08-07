@@ -13,7 +13,7 @@ import { AgentLandingPage, AgentSessionPage } from './AgentPage'
 
 const api = vi.hoisted(() => ({
   getInfo: vi.fn(),
-  listSessions: vi.fn(),
+  listInteractiveSessions: vi.fn(),
   createSession: vi.fn(),
   getSession: vi.fn(),
   startRun: vi.fn(),
@@ -116,14 +116,14 @@ beforeEach(() => {
     }],
     agents: [{ id: 'coding', label: 'Coding', description: '', read_only: false, tool_policy: 'workspace' }],
   })
-  api.listSessions.mockResolvedValue({ sessions: [] })
+  api.listInteractiveSessions.mockResolvedValue({ sessions: [] })
   api.listApprovals.mockResolvedValue({ approvals: [] })
   api.getSession.mockResolvedValue(sessionDetail(undefined))
 })
 
 describe('Agent pages', () => {
   it('keeps Agent configuration usable when legacy Session history fails', async () => {
-    api.listSessions.mockRejectedValue(new ApiError('invalid_response', 200))
+    api.listInteractiveSessions.mockRejectedValue(new ApiError('invalid_response', 200))
     renderAgent()
 
     await screen.findByRole('button', { name: i18n.t('agent.createSession') })
