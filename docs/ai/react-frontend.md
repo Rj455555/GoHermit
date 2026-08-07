@@ -74,6 +74,31 @@ Delayed resource requests carry an AbortSignal and/or owner request epoch.
 Results, navigation, and Toast details are discarded after their owning route
 changes.
 
+## Task Board workbench
+
+The Task Board is one shared implementation in
+`web/src/features/tasks/board/` (`TaskBoardGrid`, `TaskBoardCard`,
+`useTaskBoard`). Both `/tasks?view=board` and the Dashboard render it through
+thin wrappers; there is no read-only dashboard fork and no second board state
+machine. The whole card is the primary activation target: a Task with an
+authoritative `session_id` deep-links to `/agent/sessions/{sessionID}`, a Task
+without one opens `/tasks/{taskID}`, and a Note opens its own detail modal —
+Notes never create Sessions or Runs. Column moves go through
+`PUT /api/task-board/cards/{id}` (Notes move `column_id`/`rank` only).
+Dragging is pointer-based (6px threshold, `elementFromPoint` column
+hit-testing, 300ms post-drag click suppression) so real mouse gestures and
+plain clicks coexist on the same card. Dropping a Task onto `in_progress` is
+state-gated: `queued`/`prepared` open the explicit Start confirmation,
+`interrupted` opens it for Resume, and every other state is rejected with a
+localized toast and no mutation. The confirmation modal loads the
+authoritative Task first (spinner + disabled confirm while loading; load
+failure closes the modal, toasts the real error, and refetches the board).
+Any mutation failure refetches the authoritative board projection. On
+desktop (≥1024px) the navigation Sider auto-collapses to its 68px rail below
+1280px and the grid fits all visible business columns with `minmax(0,1fr)`
+tracks and no horizontal scroll; below 1024px the board container scrolls
+horizontally with scroll snap while the page body never overflows.
+
 ## Employee Loop workbench
 
 The primary Loops surface is contract-first: cards summarize When / Does / You

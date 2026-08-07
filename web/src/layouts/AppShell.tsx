@@ -32,6 +32,7 @@ import { SessionSidebar } from './SessionSidebar'
 import { LanguageSwitcher } from './LanguageSwitcher'
 
 const MOBILE_QUERY = '(max-width: 900px)'
+const COMPACT_SIDER_QUERY = '(max-width: 1279px)'
 
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
@@ -50,6 +51,8 @@ function AppShellFrame({ children }: { children: ReactNode }) {
   const { state, actions } = useUI()
   const connectivity = useConnectivity()
   const mobile = useMediaQuery(MOBILE_QUERY)
+  const compactSider = useMediaQuery(COMPACT_SIDER_QUERY)
+  const siderCollapsed = state.navigationCollapsed || compactSider
   const agentRoute = isAgentRoute(location.pathname)
   const restoreSidebarRef = useRef<HTMLButtonElement>(null)
   const drawerTriggerRef = useRef<HTMLButtonElement>(null)
@@ -104,12 +107,12 @@ function AppShellFrame({ children }: { children: ReactNode }) {
           {!mobile ? (
             <Layout.Sider
               className="app-shell__sider"
-              collapsed={state.navigationCollapsed}
+              collapsed={siderCollapsed}
               collapsedWidth={68}
               width={228}
               trigger={null}
             >
-              <NavigationRail />
+              <NavigationRail collapsed={siderCollapsed} allowToggle={!compactSider} />
             </Layout.Sider>
           ) : null}
           <Layout className="app-shell__workspace">

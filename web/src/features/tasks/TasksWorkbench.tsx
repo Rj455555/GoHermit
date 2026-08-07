@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
+  Badge,
   Button,
   Card,
   Checkbox,
@@ -14,8 +15,10 @@ import {
   Input,
   InputNumber,
   List,
+  Modal,
   Row,
   Select,
+  Segmented,
   Skeleton,
   Space,
   Switch,
@@ -38,11 +41,15 @@ import {
   getEmployeeSkills,
   getEmployeeTask,
   getSession,
+  getTaskBoard,
+  createTaskBoardNote,
   listApprovals,
   listEmployeeTasks,
   listEmployees,
   resumeEmployeeTask,
   startEmployeeTask,
+  updateTaskBoardCard,
+  updateTaskBoardSettings,
 } from '../../api/endpoints'
 import { ApiError } from '../../api/errors'
 import type {
@@ -53,6 +60,9 @@ import type {
   EmployeeTask,
   MemoryFact,
   SessionDetailResponse,
+  TaskBoardCard,
+  TaskBoardDefinition,
+  TaskBoardView,
 } from '../../api/types'
 import { useConnectivity } from '../../components/ConnectivityProvider'
 import { ErrorState } from '../../components/ErrorState'
@@ -60,26 +70,36 @@ import { PageHeader } from '../../components/PageHeader'
 import { useSessionEvents } from '../../hooks/useSessionEvents'
 import { translatedEnum } from '../../i18n/enumLabel'
 import { useUI } from '../../state/UIContext'
+import { TaskBoardGrid } from './board/TaskBoardGrid'
+import { mutationKey, statusColor } from './board/useTaskBoard'
 
 const MAX_PROMPT_BYTES = 16 << 10
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
 const TASK_STATES = ['queued', 'prepared', 'waiting_owner', 'running', 'verifying', 'interrupted', 'completed', 'failed', 'cancelled'] as const
+const BOARD_TEMPLATES: Record<string, TaskBoardDefinition> = {
+  software: {
+    id: 'software', name: 'Software development', columns: [
+      { id: 'backlog', title: 'Backlog', color: '#64748b', hidden: false },
+      { id: 'todo', title: 'Todo', color: '#2563eb', hidden: false },
+      { id: 'in_progress', title: 'In progress', color: '#0891b2', hidden: false, wip_limit: 4 },
+      { id: 'review', title: 'Review', color: '#d97706', hidden: false, wip_limit: 3 },
+      { id: 'done', title: 'Done', color: '#16a34a', hidden: false },
+      { id: 'archived', title: 'Archived', color: '#94a3b8', hidden: true },
+    ],
+  },
+  research: {
+    id: 'research', name: 'Content and research', columns: [
+      { id: 'ideas', title: 'Ideas', color: '#7c3aed', hidden: false },
+      { id: 'todo', title: 'To research', color: '#2563eb', hidden: false },
+      { id: 'in_progress', title: 'Researching', color: '#0891b2', hidden: false, wip_limit: 5 },
+      { id: 'review', title: 'Owner review', color: '#d97706', hidden: false, wip_limit: 3 },
+      { id: 'done', title: 'Published', color: '#16a34a', hidden: false },
+      { id: 'archived', title: 'Archived', color: '#94a3b8', hidden: true },
+    ],
+  },
+}
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength
 const { Paragraph, Text, Title } = Typography
-
-function mutationKey(error: unknown) {
-  if (error instanceof ApiError && error.code === 'network_error') return 'mutation.offline'
-  if (error instanceof ApiError && error.status === 409) return 'mutation.conflict'
-  return 'mutation.failed'
-}
-
-function statusColor(status: string) {
-  if (['completed', 'approved'].includes(status)) return 'success'
-  if (['failed', 'denied'].includes(status)) return 'error'
-  if (['cancelled', 'interrupted'].includes(status)) return 'warning'
-  if (['running', 'verifying', 'prepared', 'waiting_owner'].includes(status)) return 'processing'
-  return 'default'
-}
 
 async function loadAllEmployees(signal: AbortSignal) {
   const employees: EmployeeSummary[] = []
@@ -132,8 +152,19 @@ export function TasksWorkbenchPage() {
   const contextEpoch = useRef(0)
   const [employees, setEmployees] = useState<EmployeeSummary[]>([])
   const [tasks, setTasks] = useState<EmployeeTask[]>([])
+  const [board, setBoard] = useState<TaskBoardView | null>(null)
   const [error, setError] = useState(false)
+  const [boardError, setBoardError] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [noteOpen, setNoteOpen] = useState(false)
+  const [noteTitle, setNoteTitle] = useState('')
+  const [noteBody, setNoteBody] = useState('')
+  const [noteCreating, setNoteCreating] = useState(false)
+  const [noteSourceID, setNoteSourceID] = useState<string | null>(null)
+  const [definitionOpen, setDefinitionOpen] = useState(false)
+  const [definitionText, setDefinitionText] = useState('')
+  const [definitionTemplate, setDefinitionTemplate] = useState('custom')
+  const [definitionSaving, setDefinitionSaving] = useState(false)
   const [employeeId, setEmployeeId] = useState('')
   const [context, setContext] = useState<{ record: EmployeeRecord; knowledge: EmployeeKnowledge; memory: MemoryFact[]; skills: Awaited<ReturnType<typeof getEmployeeSkills>> } | null>(null)
   const [prompt, setPrompt] = useState('')
@@ -149,12 +180,23 @@ export function TasksWorkbenchPage() {
     try {
       const all = await loadAllEmployees(signal)
       const loaded = await loadLatestTasks(all, signal)
+      let projectedBoard: TaskBoardView | null = null
+      try {
+        projectedBoard = await getTaskBoard({ signal })
+      } catch (caught) {
+        if (caught instanceof ApiError && caught.code === 'aborted') throw caught
+      }
       setEmployees(all)
       setTasks(loaded)
+      setBoard(projectedBoard)
+      setBoardError(projectedBoard === null)
       setEmployeeId((current) => { const active = all.filter((item) => item.state === 'active'); return active.some((item) => item.id === current) ? current : active[0]?.id ?? '' })
       setError(false)
     } catch (caught) {
-      if (!(caught instanceof ApiError && caught.code === 'aborted')) setError(true)
+      if (!(caught instanceof ApiError && caught.code === 'aborted')) {
+        setError(true)
+        setBoardError(true)
+      }
     }
   }, [])
 
@@ -180,13 +222,109 @@ export function TasksWorkbenchPage() {
   }, [employeeId])
 
   const filtered = useMemo(() => tasks.filter((task) => {
+    const query = params.get('q')?.trim().toLocaleLowerCase() ?? ''
     const employee = params.get('employee')
     const state = params.get('state')
     const project = params.get('project')
     const time = params.get('time')
     const windowMs = time === '24h' ? 86_400_000 : time === '7d' ? 604_800_000 : time === '30d' ? 2_592_000_000 : 0
-    return (!employee || task.employee_id === employee) && (!state || task.state === state) && (!project || task.project_binding.id === project) && (!windowMs || Date.parse(task.updated_at) >= Date.now() - windowMs)
+    return (!query || task.prompt.toLocaleLowerCase().includes(query) || task.id.toLocaleLowerCase().includes(query)) && (!employee || task.employee_id === employee) && (!state || task.state === state) && (!project || task.project_binding.id === project) && (!windowMs || Date.parse(task.updated_at) >= Date.now() - windowMs)
   }), [params, tasks])
+
+  const taskByID = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks])
+  const viewMode = params.get('view') === 'board' ? 'board' : 'list'
+  const filteredBoardCards = useMemo(() => {
+    if (!board) return []
+    const query = params.get('q')?.trim().toLocaleLowerCase() ?? ''
+    const employee = params.get('employee')
+    const state = params.get('state')
+    const label = params.get('label')
+    const provider = params.get('provider')
+    const model = params.get('model')
+    const loop = params.get('loop')
+    const priority = Number(params.get('priority') ?? 0)
+    const blocked = params.get('blocked')
+    const owner = params.get('owner')
+    const time = params.get('time')
+    const windowMs = time === '24h' ? 86_400_000 : time === '7d' ? 604_800_000 : time === '30d' ? 2_592_000_000 : 0
+    return board.cards.filter((card) => {
+      const task = card.task_id ? taskByID.get(card.task_id) : undefined
+      const matchesQuery = !query || card.title.toLocaleLowerCase().includes(query) || card.id.toLocaleLowerCase().includes(query)
+      const matchesState = !state || card.state === state
+      const matchesProject = !params.get('project') || task?.project_binding.id === params.get('project')
+      return matchesQuery && (!employee || card.employee_id === employee) && matchesState && matchesProject && (!label || card.labels.includes(label)) && (!provider || card.provider === provider) && (!model || card.model === model) && (!loop || card.loop_id === loop) && (!priority || card.priority === priority) && (blocked === null || blocked === '' || card.blocked === (blocked === 'true')) && (owner === null || owner === '' || (owner === 'true' ? card.approval_status === 'pending' : card.approval_status !== 'pending')) && (!windowMs || Date.parse(card.authoritative_updated_at) >= Date.now() - windowMs)
+    })
+  }, [board, params, taskByID])
+
+  const setFilter = (name: string, value: string) => {
+    const next = new URLSearchParams(params)
+    if (value) next.set(name, value)
+    else next.delete(name)
+    setParams(next)
+  }
+
+  const refreshBoard = useCallback(async () => {
+    setBoard(await getTaskBoard())
+  }, [])
+
+  const resolveBoardTask = useCallback((taskId: string) => taskByID.get(taskId), [taskByID])
+
+  const handleBoardTaskUpdated = useCallback((nextTask: EmployeeTask) => {
+    setTasks((current) => current.map((item) => (item.id === nextTask.id ? nextTask : item)))
+  }, [])
+
+  async function createNote() {
+    if (!noteTitle.trim() || noteCreating || !connectivity.canMutate) return
+    setNoteCreating(true)
+    try {
+      const next = await createTaskBoardNote({
+        title: noteTitle.trim(), body: noteBody, column_id: 'backlog', rank: Date.now(), labels: [], priority: 0,
+        due_at: null, pinned: false, source_url: '', blocker_reason: '',
+      })
+      setBoard(next)
+      setNoteTitle('')
+      setNoteBody('')
+      setNoteOpen(false)
+    } catch (caught) {
+      actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+    } finally {
+      setNoteCreating(false)
+    }
+  }
+
+  function openDefinitionEditor() {
+    if (!board) return
+    setDefinitionText(JSON.stringify(board.definition, null, 2))
+    setDefinitionTemplate('custom')
+    setDefinitionOpen(true)
+  }
+
+  function selectDefinitionTemplate(value: string) {
+    setDefinitionTemplate(value)
+    const template = BOARD_TEMPLATES[value]
+    if (template) setDefinitionText(JSON.stringify(template, null, 2))
+  }
+
+  async function saveDefinition() {
+    if (!board || definitionSaving || !connectivity.canMutate) return
+    let definition: TaskBoardDefinition
+    try {
+      definition = JSON.parse(definitionText) as TaskBoardDefinition
+    } catch {
+      actions.showToast({ messageKey: 'tasks.invalidDefinition', tone: 'error' })
+      return
+    }
+    setDefinitionSaving(true)
+    try {
+      const next = await updateTaskBoardSettings({ definition, view: board.view, filters: board.filters })
+      setBoard(next)
+      setDefinitionOpen(false)
+    } catch (caught) {
+      actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+    } finally {
+      setDefinitionSaving(false)
+    }
+  }
 
   const promptBytes = utf8Bytes(prompt)
   const availableSkills = context?.skills.bindings.filter((item) => item.status === 'current' && item.binding.enabled) ?? []
@@ -200,6 +338,7 @@ export function TasksWorkbenchPage() {
     if (!context || !projectId || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || creating) return
     const epoch = contextEpoch.current
     const owner = employeeId
+    const sourceNoteID = noteSourceID
     setCreating(true)
     try {
       const task = await createEmployeeTask(employeeId, {
@@ -211,7 +350,20 @@ export function TasksWorkbenchPage() {
         policy: { allowed_capabilities: capabilities.split(/\r?\n|,/u).map((item) => item.trim()).filter(Boolean), network_allowed: network, budget },
       })
       if (epoch !== contextEpoch.current || owner !== employeeId) return
+      if (sourceNoteID) {
+        try {
+          const nextBoard = await updateTaskBoardCard(task.id, {
+            column_id: 'todo', rank: Date.now(), labels: [], priority: 0, due_at: null,
+            pinned: false, blocked: false, blocker_reason: '', depends_on: [],
+            source_url: `task-board://notes/${encodeURIComponent(sourceNoteID)}`, loop_id: '',
+          })
+          setBoard(nextBoard)
+        } catch (caught) {
+          actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+        }
+      }
       setPrompt('')
+      setNoteSourceID(null)
       await navigate(`/tasks/${encodeURIComponent(task.id)}`)
     } catch (caught) {
       if (epoch === contextEpoch.current && owner === employeeId) actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
@@ -220,10 +372,25 @@ export function TasksWorkbenchPage() {
     }
   }
 
+  function useNoteAsTask(card: TaskBoardCard) {
+    if (card.kind !== 'note') return
+    setPrompt([card.title, card.body].filter(Boolean).join('\n\n'))
+    setNoteSourceID(card.id)
+    const targetEmployee = card.employee_id && activeEmployees.some((employee) => employee.id === card.employee_id)
+      ? card.employee_id
+      : activeEmployees[0]?.id ?? ''
+    setEmployeeId(targetEmployee)
+    setProjectId('')
+    setFilter('view', 'list')
+    actions.showToast({ messageKey: 'tasks.notePrefilled', tone: 'info' })
+  }
+
   if (error && tasks.length === 0) return <ErrorState title={t('tasks.loadError')} description={t('common.retryDescription')} />
   const activeEmployees = employees.filter((item) => item.state === 'active')
   const projectOptions = Array.from(new Map(tasks.map((task) => [task.project_binding.id, { id: task.project_binding.id, label: task.project_binding.label }])).values())
-  const setFilter = (name: 'employee' | 'project' | 'state' | 'time', value: string) => { const next = new URLSearchParams(params); if (value) next.set(name, value); else next.delete(name); setParams(next) }
+  const providerOptions = Array.from(new Set((board?.cards ?? []).map((card) => card.provider).filter((value): value is string => Boolean(value))))
+  const modelOptions = Array.from(new Set((board?.cards ?? []).map((card) => card.model).filter((value): value is string => Boolean(value))))
+  const labelOptions = Array.from(new Set((board?.cards ?? []).flatMap((card) => card.labels)))
   const citations = context?.knowledge.indexes.flatMap((index) => index.documents).flatMap((document) => document.citations) ?? []
   return <article className="feature-page antd-deep-page tasks-workbench-page">
     <PageHeader title={t('pages.tasks.title')} description={t('tasks.description')} />
@@ -244,15 +411,40 @@ export function TasksWorkbenchPage() {
         <Button className="task-create-action" block={!screens.md} type="primary" loading={creating} disabled={!connectivity.canMutate || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || !projectId} onClick={() => void create()}>{t('tasks.createQueued')}</Button>
       </Form>
     </Card>
-    <Card title={t('tasks.filters')}>
+    <Card title={<Space wrap><span>{t('tasks.filters')}</span><Segmented aria-label={t('tasks.view')} value={viewMode} options={[{ label: t('tasks.board'), value: 'board' }, { label: t('tasks.list'), value: 'list' }]} onChange={(value) => setFilter('view', String(value))} /></Space>} extra={<Space wrap><Button disabled={!board} onClick={openDefinitionEditor}>{t('tasks.boardSettings')}</Button><Button onClick={() => setNoteOpen(true)}>{t('tasks.newNote')}</Button><Button onClick={() => setFilter('archived', params.get('archived') === '1' ? '' : '1')}>{params.get('archived') === '1' ? t('tasks.hideArchived') : t('tasks.showArchived')}</Button></Space>}>
       <Row gutter={[16, 0]}>
+        <Col xs={24} sm={12} lg={8}><Form.Item label={t('tasks.search')}><Input.Search aria-label={t('tasks.search')} allowClear defaultValue={params.get('q') ?? ''} onSearch={(value) => setFilter('q', value)} /></Form.Item></Col>
         <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.employeeFilter')}><Select aria-label={t('tasks.employeeFilter')} allowClear value={params.get('employee') || undefined} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} onChange={(value) => setFilter('employee', value ?? '')} /></Form.Item></Col>
         <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.projectFilter')}><Select aria-label={t('tasks.projectFilter')} allowClear value={params.get('project') || undefined} options={projectOptions.map((project) => ({ value: project.id, label: project.label }))} onChange={(value) => setFilter('project', value ?? '')} /></Form.Item></Col>
         <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.stateFilter')}><Select aria-label={t('tasks.stateFilter')} allowClear value={params.get('state') || undefined} options={TASK_STATES.map((state) => ({ value: state, label: translatedEnum(t, 'taskStatus', state) }))} onChange={(value) => setFilter('state', value ?? '')} /></Form.Item></Col>
         <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.timeFilter')}><Select aria-label={t('tasks.timeFilter')} allowClear value={params.get('time') || undefined} options={[{ value: '24h', label: t('tasks.time24h') }, { value: '7d', label: t('tasks.time7d') }, { value: '30d', label: t('tasks.time30d') }]} onChange={(value) => setFilter('time', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.labelFilter')}><Select aria-label={t('tasks.labelFilter')} allowClear value={params.get('label') || undefined} options={labelOptions.map((label) => ({ value: label, label }))} onChange={(value) => setFilter('label', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.providerFilter')}><Select aria-label={t('tasks.providerFilter')} allowClear value={params.get('provider') || undefined} options={providerOptions.map((value) => ({ value, label: value }))} onChange={(value) => setFilter('provider', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.modelFilter')}><Select aria-label={t('tasks.modelFilter')} allowClear value={params.get('model') || undefined} options={modelOptions.map((value) => ({ value, label: value }))} onChange={(value) => setFilter('model', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.priorityFilter')}><Select aria-label={t('tasks.priorityFilter')} allowClear value={params.get('priority') || undefined} options={[1, 2, 3, 4].map((value) => ({ value: String(value), label: `P${value}` }))} onChange={(value) => setFilter('priority', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.blockedFilter')}><Select aria-label={t('tasks.blockedFilter')} allowClear value={params.get('blocked') || undefined} options={[{ value: 'true', label: t('common.yes') }, { value: 'false', label: t('common.no') }]} onChange={(value) => setFilter('blocked', value ?? '')} /></Form.Item></Col>
+        <Col xs={24} sm={12} lg={6}><Form.Item label={t('tasks.ownerFilter')}><Select aria-label={t('tasks.ownerFilter')} allowClear value={params.get('owner') || undefined} options={[{ value: 'true', label: t('tasks.needsOwner') }, { value: 'false', label: t('tasks.noOwner') }]} onChange={(value) => setFilter('owner', value ?? '')} /></Form.Item></Col>
       </Row>
     </Card>
-    <Card><TaskList tasks={filtered} /></Card>
+    {boardError ? <Alert type="warning" showIcon message={t('tasks.boardUnavailable')} description={t('common.retryDescription')} /> : null}
+    {viewMode === 'list' ? <Card><TaskList tasks={filtered} /></Card> : <Card title={<Space><span>{board?.definition.name ?? t('tasks.board')}</span><Badge count={filteredBoardCards.length} showZero /></Space>}>
+      {board ? <TaskBoardGrid
+        board={board}
+        cards={filteredBoardCards}
+        onBoardChange={setBoard}
+        onRefresh={refreshBoard}
+        resolveTask={resolveBoardTask}
+        onTaskUpdated={handleBoardTaskUpdated}
+        showHiddenColumns={params.get('archived') === '1'}
+        onUseNoteAsTask={useNoteAsTask}
+      /> : null}
+    </Card>}
+    <Modal open={noteOpen} title={t('tasks.newNote')} okText={t('actions.save')} cancelText={t('actions.cancel')} confirmLoading={noteCreating} onCancel={() => setNoteOpen(false)} onOk={() => void createNote()}>
+      <Form layout="vertical"><Form.Item label={t('tasks.noteTitle')} required><Input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} /></Form.Item><Form.Item label={t('tasks.noteBody')}><Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} value={noteBody} onChange={(event) => setNoteBody(event.target.value)} /></Form.Item></Form>
+    </Modal>
+    <Modal open={definitionOpen} title={t('tasks.boardSettings')} okText={t('actions.save')} cancelText={t('actions.cancel')} confirmLoading={definitionSaving} onCancel={() => setDefinitionOpen(false)} onOk={() => void saveDefinition()}>
+      <Form layout="vertical"><Form.Item label={t('tasks.template')}><Select aria-label={t('tasks.template')} value={definitionTemplate} options={[{ value: 'software', label: t('tasks.templateSoftware') }, { value: 'research', label: t('tasks.templateResearch') }, { value: 'custom', label: t('tasks.templateCustom') }]} onChange={selectDefinitionTemplate} /></Form.Item><Form.Item label={t('tasks.definitionJSON')} help={t('tasks.definitionHelp')}><Input.TextArea aria-label={t('tasks.definitionJSON')} autoSize={{ minRows: 12, maxRows: 28 }} value={definitionText} onChange={(event) => { setDefinitionTemplate('custom'); setDefinitionText(event.target.value) }} /></Form.Item></Form>
+    </Modal>
   </article>
 }
 
@@ -346,7 +538,7 @@ export function TaskWorkbenchDetailPage() {
     <Card className="task-summary-card" title={<Space wrap><Title level={2}>{t('tasks.context')}</Title><Tag data-testid="task-status" color={statusColor(task.state)}>{translatedEnum(t, 'taskStatus', task.state)}</Tag></Space>}>
       {!connectivity.canMutate ? <Alert type="warning" showIcon message={t('mutation.offline')} /> : null}
       {prepared ? <Alert type="info" showIcon message={t('tasks.preparedAuthority')} /> : null}
-      <Descriptions column={{ xs: 1, sm: 2, lg: 3 }} bordered size="small"><Descriptions.Item label={t('tasks.employeeRevision')}>{task.employee_revision}</Descriptions.Item><Descriptions.Item label={t('tasks.employeeSnapshot')}><Text copyable ellipsis={{ tooltip: task.employee_snapshot.digest }}>r{task.employee_snapshot.revision} · {task.employee_snapshot.digest}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.project')}>{task.project_binding.label} · <Text copyable>{task.project_binding.workspace_fingerprint}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.skills')}>{task.skills.map((item) => `${item.skill_id}@${item.version}`).join('; ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.session')}><Text copyable>{task.session_id ?? '—'}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.run')}><Text copyable>{task.run_id ?? '—'}</Text></Descriptions.Item></Descriptions>
+      <Descriptions column={{ xs: 1, sm: 2, lg: 3 }} bordered size="small"><Descriptions.Item label={t('tasks.employeeRevision')}>{task.employee_revision}</Descriptions.Item><Descriptions.Item label={t('tasks.employeeSnapshot')}><Text copyable ellipsis={{ tooltip: task.employee_snapshot.digest }}>r{task.employee_snapshot.revision} · {task.employee_snapshot.digest}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.project')}>{task.project_binding.label} · <Text copyable>{task.project_binding.workspace_fingerprint}</Text></Descriptions.Item><Descriptions.Item label={t('tasks.skills')}>{task.skills.map((item) => `${item.skill_id}@${item.version}`).join('; ') || '—'}</Descriptions.Item><Descriptions.Item label={t('tasks.session')}>{task.session_id ? <Space size={8} wrap><Text copyable>{task.session_id}</Text><Link to={`/agent/sessions/${encodeURIComponent(task.session_id)}`}>{t('tasks.openSession')}</Link></Space> : <Text copyable>—</Text>}</Descriptions.Item><Descriptions.Item label={t('tasks.run')}><Text copyable>{task.run_id ?? '—'}</Text></Descriptions.Item></Descriptions>
       {screens.md ? actionsBar : null}
     </Card>
     <Card data-testid="task-timeline" title={<Title level={2}>{t('tasks.activity')}</Title>}>

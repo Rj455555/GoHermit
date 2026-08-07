@@ -1,16 +1,18 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter } from 'react-router-dom'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DashboardPage } from './DashboardPage'
 import { i18n } from '../../i18n/i18n'
+import { UIProvider } from '../../state/UIContext'
 
 const api = vi.hoisted(() => ({
   getInfo: vi.fn(),
   listLoops: vi.fn(),
   listSessions: vi.fn(),
   listLoopInvocations: vi.fn(),
+  getTaskBoard: vi.fn(),
 }))
 
 vi.mock('../../api/endpoints', () => api)
@@ -21,15 +23,18 @@ vi.mock('../../components/ConnectivityProvider', () => ({
 describe('DashboardPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    api.getTaskBoard.mockResolvedValue(null)
     void i18n.changeLanguage('zh-CN')
   })
 
   function renderDashboard() {
     return render(
       <I18nextProvider i18n={i18n}>
-        <MemoryRouter>
-          <DashboardPage />
-        </MemoryRouter>
+        <UIProvider>
+          <MemoryRouter>
+            <DashboardPage />
+          </MemoryRouter>
+        </UIProvider>
       </I18nextProvider>,
     )
   }
@@ -91,6 +96,83 @@ describe('DashboardPage', () => {
       /Literal Loop.*未知状态/u,
     )
     expect(screen.queryByText(/invocationStatus|future_state/u)).not.toBeInTheDocument()
+  })
+
+  it('surfaces the authoritative Task Board on Dashboard', async () => {
+    api.getInfo.mockResolvedValue({ workspace: '/workspace/gohermit', available_companies: [], auth_status: {} })
+    api.listLoops.mockResolvedValue({ loops: [] })
+    api.listSessions.mockResolvedValue({ sessions: [] })
+    api.listLoopInvocations.mockResolvedValue({ invocations: [] })
+    api.getTaskBoard.mockResolvedValue({
+      schema_version: 1,
+      definition: { id: 'software', name: 'Software development', columns: [
+        { id: 'todo', title: 'Todo', color: '#2563eb', hidden: false },
+        { id: 'in_progress', title: 'In progress', color: '#0891b2', hidden: false },
+      ] },
+      cards: [{
+        id: 'task-1', task_id: 'task-1', kind: 'task', title: 'Review the board placement', column_id: 'todo', rank: 1,
+        labels: ['product'], priority: 1, pinned: false, blocked: false, depends_on: [], projection_reason: 'authoritative',
+        authoritative_updated_at: '2026-08-04T08:00:00Z', session_event_sequence: 0, session_count: 0,
+        approval_status: 'none', verification_status: 'none', stale: false, state: 'queued', employee_name: 'Planner',
+      }],
+      view: { view: 'board', wip_enabled: true },
+      filters: { states: [], labels: [] },
+      updated_at: '2026-08-04T08:00:00Z', projection_generated_at: '2026-08-04T08:00:00Z',
+    })
+
+    renderDashboard()
+
+    expect(await screen.findByTestId('dashboard-task-board')).toBeVisible()
+    expect(screen.getByText('Review the board placement')).toBeVisible()
+    expect(screen.getByTestId('dashboard-task-board-column-todo')).toHaveTextContent('Todo')
+    expect(screen.getByRole('link', { name: i18n.t('dashboard.openTaskBoard') })).toHaveAttribute('href', '/tasks?view=board')
+  })
+
+  it('renders pointer-draggable task cards from every Employee through the shared board grid', async () => {
+    api.getInfo.mockResolvedValue({ workspace: '/workspace/gohermit', available_companies: [], auth_status: {} })
+    api.listLoops.mockResolvedValue({ loops: [] })
+    api.listSessions.mockResolvedValue({ sessions: [] })
+    api.listLoopInvocations.mockResolvedValue({ invocations: [] })
+    api.getTaskBoard.mockResolvedValue({
+      schema_version: 1,
+      definition: { id: 'software', name: 'Software development', columns: [
+        { id: 'todo', title: 'Todo', color: '#2563eb', hidden: false },
+        { id: 'in_progress', title: 'In progress', color: '#0891b2', hidden: false },
+      ] },
+      cards: [{
+        id: 'task-1', task_id: 'task-1', kind: 'task', title: 'Review the board placement', column_id: 'todo', rank: 1,
+        labels: [], priority: 0, pinned: false, blocked: false, depends_on: [], projection_reason: 'authoritative',
+        authoritative_updated_at: '2026-08-04T08:00:00Z', session_event_sequence: 0, session_count: 0,
+        approval_status: 'none', verification_status: 'none', stale: false, state: 'queued',
+        employee_id: 'employee-ada', employee_name: 'Ada',
+      }, {
+        id: 'task-2', task_id: 'task-2', kind: 'task', title: 'Audit the release checklist', column_id: 'todo', rank: 2,
+        labels: [], priority: 0, pinned: false, blocked: false, depends_on: [], projection_reason: 'authoritative',
+        authoritative_updated_at: '2026-08-04T08:00:00Z', session_event_sequence: 0, session_count: 0,
+        approval_status: 'none', verification_status: 'none', stale: false, state: 'queued',
+        employee_id: 'employee-grace', employee_name: 'Grace',
+      }],
+      view: { view: 'board', wip_enabled: true },
+      filters: { states: [], labels: [] },
+      updated_at: '2026-08-04T08:00:00Z', projection_generated_at: '2026-08-04T08:00:00Z',
+    })
+
+    renderDashboard()
+
+    const grid = await screen.findByTestId('dashboard-task-board')
+    // Shared grid structure: same card class and column testid scheme as the Tasks board.
+    expect(screen.getByTestId('dashboard-task-board-column-todo')).toBeInTheDocument()
+    const cards = grid.querySelectorAll<HTMLElement>('.task-board-card')
+    expect(cards).toHaveLength(2)
+    for (const card of cards) {
+      fireEvent.pointerDown(card, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+      expect(card).toHaveClass('is-dragging')
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 40, clientY: 40 })
+      expect(card).not.toHaveClass('is-dragging')
+    }
+    expect(grid).toHaveTextContent('Ada')
+    expect(grid).toHaveTextContent('Grace')
   })
 
   it('keeps the authoritative workspace visible when supporting history fails', async () => {

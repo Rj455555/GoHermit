@@ -33,6 +33,22 @@ function installMobileQuery(initial: boolean) {
   }
 }
 
+function installViewportQueries({ mobile = false, compactSider = false } = {}) {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches:
+      query === '(max-width: 900px)' ? mobile
+        : query === '(max-width: 1279px)' ? compactSider
+          : false,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }))
+}
+
 describe('desktop shell preferences', () => {
   it('collapses and restores the navigation rail with canonical persistence', async () => {
     const user = userEvent.setup()
@@ -152,6 +168,31 @@ describe('desktop shell preferences', () => {
       ([key]) => key === STORAGE_KEYS.navigationCollapsed,
     )
     expect(writes).toEqual([[STORAGE_KEYS.navigationCollapsed, 'true']])
+  })
+
+  it('auto-collapses the sider below 1280px, hides the manual toggle, and leaves the persisted preference untouched', () => {
+    installViewportQueries({ compactSider: true })
+    renderApp('/dashboard')
+
+    const rail = screen.getByRole('navigation', { name: '主导航' })
+    expect(rail).toHaveAttribute('data-collapsed', 'true')
+    expect(screen.queryByRole('button', { name: '收起主导航' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '展开主导航' })).not.toBeInTheDocument()
+    expect(document.querySelector('.app-shell__sider')).toHaveStyle({ width: '68px' })
+    expect(localStorage.getItem(STORAGE_KEYS.navigationCollapsed)).toBeNull()
+  })
+
+  it('keeps the manual toggle and expanded sider at 1280px and above', async () => {
+    installViewportQueries({ compactSider: false })
+    const user = userEvent.setup()
+    renderApp('/dashboard')
+
+    const rail = screen.getByRole('navigation', { name: '主导航' })
+    expect(rail).toHaveAttribute('data-collapsed', 'false')
+    expect(document.querySelector('.app-shell__sider')).toHaveStyle({ width: '228px' })
+    await user.click(screen.getByRole('button', { name: '收起主导航' }))
+    expect(rail).toHaveAttribute('data-collapsed', 'true')
+    expect(localStorage.getItem(STORAGE_KEYS.navigationCollapsed)).toBe('true')
   })
 })
 

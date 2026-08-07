@@ -24,6 +24,10 @@ const api = vi.hoisted(() => ({
   startEmployeeTask: vi.fn(),
   cancelEmployeeTask: vi.fn(),
   resumeEmployeeTask: vi.fn(),
+  getTaskBoard: vi.fn(),
+  updateTaskBoardSettings: vi.fn(),
+  updateTaskBoardCard: vi.fn(),
+  createTaskBoardNote: vi.fn(),
 }))
 const eventState = vi.hoisted(() => ({
   events: [] as Array<Record<string, unknown>>,
@@ -97,6 +101,71 @@ const queuedTask = {
   session_id: '',
   run_id: '',
   artifacts: [],
+}
+
+const taskBoard = {
+  schema_version: 1,
+  definition: {
+    id: 'default',
+    name: 'Task workspace',
+    columns: [
+      { id: 'backlog', title: 'Backlog', color: '#64748b', hidden: false },
+      { id: 'todo', title: 'Todo', color: '#2563eb', hidden: false },
+      { id: 'in_progress', title: 'In progress', color: '#0891b2', hidden: false },
+      { id: 'review', title: 'Review', color: '#d97706', hidden: false },
+      { id: 'done', title: 'Done', color: '#16a34a', hidden: false },
+    ],
+  },
+  cards: [{
+    id: queuedTask.id,
+    task_id: queuedTask.id,
+    kind: 'task',
+    title: queuedTask.prompt,
+    column_id: 'todo',
+    rank: 0,
+    labels: [],
+    priority: 0,
+    pinned: false,
+    blocked: false,
+    depends_on: [],
+    employee_id: employee.id,
+    employee_name: employee.name,
+    provider: 'openai',
+    model: 'gpt',
+    state: 'queued',
+    state_source: 'employee_task',
+    projection_reason: 'queued_task',
+    authoritative_updated_at: now,
+    session_event_sequence: 0,
+    session_count: 0,
+    approval_status: 'none',
+    verification_status: 'none',
+    stale: false,
+  }, {
+    id: 'note-1',
+    kind: 'note',
+    title: 'Capture rollout',
+    body: 'Record the release evidence before shipping.',
+    column_id: 'backlog',
+    rank: 1,
+    labels: ['release'],
+    priority: 1,
+    pinned: false,
+    blocked: false,
+    depends_on: [],
+    employee_id: employee.id,
+    projection_reason: 'note',
+    authoritative_updated_at: now,
+    session_event_sequence: 0,
+    session_count: 0,
+    approval_status: 'none',
+    verification_status: 'none',
+    stale: false,
+  }],
+  view: { view: 'board', wip_enabled: false },
+  filters: { states: [], labels: [] },
+  updated_at: now,
+  projection_generated_at: now,
 }
 
 function renderTasks(path = '/tasks') {
@@ -214,6 +283,10 @@ beforeEach(() => {
   api.getEmployeeSkills.mockResolvedValue({ employee_id: employee.id, revision: 3, bindings: [] })
   api.getEmployeeKnowledge.mockResolvedValue({ employee_id: employee.id, sources: [], indexes: [], results: [] })
   api.getEmployeeMemory.mockResolvedValue({ employee_id: employee.id, facts: [] })
+  api.getTaskBoard.mockResolvedValue(taskBoard)
+  api.updateTaskBoardSettings.mockResolvedValue(taskBoard)
+  api.updateTaskBoardCard.mockResolvedValue({ ...taskBoard, cards: [{ ...taskBoard.cards[0], column_id: 'in_progress', state: 'running', projection_reason: 'run_running', session_id: 'session-1', run_id: 'run-1', session_count: 1 }] })
+  api.createTaskBoardNote.mockResolvedValue(taskBoard)
 })
 
 describe('Employee Tasks Phase 4 pages', () => {
@@ -261,6 +334,80 @@ describe('Employee Tasks Phase 4 pages', () => {
     expect(screen.getByRole('link', { name: 'Prepare release.' })).toHaveAttribute('href', '/tasks/task-queued')
     expect(screen.getByText('Queued')).toBeVisible()
     expect(screen.getByText('Ada')).toBeVisible()
+  })
+
+  it('renders Board cards and requires explicit Start confirmation before an In progress drop', async () => {
+    const user = userEvent.setup()
+    api.startEmployeeTask.mockResolvedValue({ ...queuedTask, state: 'running', session_id: 'session-1', run_id: 'run-1' })
+    renderTasks('/tasks?view=board')
+
+    const card = await screen.findByRole('link', { name: /Prepare release/u })
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(screen.getByTestId('task-board-column-in_progress'))
+    fireEvent.pointerDown(card, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 40, clientY: 40 })
+    await waitFor(() => {
+      const startButtons = screen.getAllByRole('button', { name: 'Start' })
+      expect(startButtons[startButtons.length - 1]).toBeVisible()
+    })
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    const startButtons = screen.getAllByRole('button', { name: 'Start' })
+    const startButton = startButtons[startButtons.length - 1]!
+    expect(startButton.closest('.ant-modal')).toHaveTextContent('Employee')
+    await user.click(startButton)
+    await waitFor(() => expect(api.startEmployeeTask).toHaveBeenCalledWith(queuedTask.id))
+    expect(api.updateTaskBoardCard).toHaveBeenCalledWith(queuedTask.id, expect.objectContaining({ column_id: 'in_progress' }))
+  })
+
+  it('converts a Note into a queued Task draft and retains its source reference', async () => {
+    const user = userEvent.setup()
+    api.createEmployeeTask.mockResolvedValue({ ...queuedTask, id: 'task-from-note' })
+    renderTasks('/tasks?view=board')
+
+    expect(await screen.findByText('Capture rollout')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Convert to Task draft' }))
+
+    expect(screen.getByRole('textbox', { name: 'Task prompt' })).toHaveValue('Capture rollout\n\nRecord the release evidence before shipping.')
+    expect(screen.getByRole('button', { name: 'Create as queued' })).toBeDisabled()
+    selectAntOption('Project', 'GoHermit')
+    await user.click(screen.getByRole('button', { name: 'Create as queued' }))
+    await waitFor(() => expect(api.createEmployeeTask).toHaveBeenCalled())
+    expect(api.updateTaskBoardCard).toHaveBeenCalledWith('task-from-note', expect.objectContaining({ source_url: 'task-board://notes/note-1' }))
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+  })
+
+  it('opens and saves a custom Board definition without touching Task execution', async () => {
+    const user = userEvent.setup()
+    renderTasks('/tasks?view=board')
+
+    await screen.findByTestId('task-board')
+    await user.click(screen.getByRole('button', { name: 'Board settings' }))
+    const definition = { ...taskBoard.definition, name: 'Release workspace' }
+    const editor = screen.getByRole('textbox', { name: 'Board Definition JSON' })
+    fireEvent.change(editor, { target: { value: JSON.stringify(definition) } })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.updateTaskBoardSettings).toHaveBeenCalledWith(expect.objectContaining({ definition })))
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    expect(api.createEmployeeTask).not.toHaveBeenCalled()
+  })
+
+  it('renders the Tasks board view through the shared board grid', async () => {
+    renderTasks('/tasks?view=board')
+
+    const grid = await screen.findByTestId('task-board')
+    // Shared grid structure: same card class and column testid scheme as the Dashboard board.
+    expect(screen.getByTestId('task-board-column-todo')).toBeInTheDocument()
+    expect(screen.getByTestId('task-board-column-in_progress')).toBeInTheDocument()
+    const cards = grid.querySelectorAll<HTMLElement>('.task-board-card')
+    expect(cards.length).toBeGreaterThanOrEqual(2)
+    for (const card of cards) {
+      fireEvent.pointerDown(card, { button: 0, isPrimary: true, pointerId: 1, clientX: 10, clientY: 10 })
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+      expect(card).toHaveClass('is-dragging')
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 40, clientY: 40 })
+      expect(card).not.toHaveClass('is-dragging')
+    }
   })
 
   it('loads the last 100 Tasks per Employee and exposes the boundary', async () => {

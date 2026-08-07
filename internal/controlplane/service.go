@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 	"github.com/Rj455555/GoHermit/internal/app"
 	"github.com/Rj455555/GoHermit/internal/approval"
 	modelauth "github.com/Rj455555/GoHermit/internal/auth"
+	"github.com/Rj455555/GoHermit/internal/boardstore"
 	"github.com/Rj455555/GoHermit/internal/config"
 	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/employeestore"
@@ -107,6 +109,7 @@ type Service struct {
 	teamTemplates         *teamtemplate.Store
 	loopStore             *loopstore.Store
 	employees             *employeestore.Store
+	board                 *boardstore.Store
 	skills                *skill.Catalog
 	knowledge             *knowledge.Catalog
 	prepareStageHook      func(string) error
@@ -149,6 +152,14 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	boardRoot := filepath.Join(workspace, ".gohermit", "board")
+	if configured := strings.TrimSpace(os.Getenv("GOHERMIT_BOARD_STORE")); configured != "" {
+		boardRoot = configured
+	}
+	boardStore, err := boardstore.NewStore(boardRoot, "owner", workspace)
+	if err != nil {
+		return nil, err
+	}
 	skillCatalog, err := skill.NewCatalog("")
 	if err != nil {
 		return nil, err
@@ -179,6 +190,7 @@ func New(workspace, configPath string, publish Publisher) (*Service, error) {
 		loopStore: loopStore, loopStoreErr: loopStoreErr,
 		notificationConfig: notificationConfig,
 		employees:          employeeStore,
+		board:              boardStore,
 		skills:             skillCatalog,
 		knowledge:          knowledgeCatalog,
 		approvals:          broker,
