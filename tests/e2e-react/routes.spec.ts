@@ -26,6 +26,7 @@ const declaredRoutes = [
   '/loops/daily-review',
   '/loops/daily-review/invocations/invocation-1',
   '/settings',
+  '/reports',
 ]
 
 test('all declared React routes support direct access and refresh', async ({ page }) => {

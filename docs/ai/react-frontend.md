@@ -10,6 +10,13 @@ layout density, navigation dimensions, form behavior, responsive rules, and bann
 generic dashboard patterns. Read it before changing shared CSS or introducing a new
 resource page.
 
+## Agent conversations and Weixin projection
+
+- The Agent sidebar is an owner-facing conversation browser. It calls `GET /api/sessions?kind=interactive` and must not display Employee Task or scheduled Loop execution Sessions.
+- Employee execution history remains authoritative in Tasks, Loops, and Reports. The frontend must not classify Sessions from titles or ID prefixes.
+- Reports includes a read-only OpenClaw Weixin conversation tab. `GET /api/channels/weixin/conversations?account_id=...&limit=200` merges bounded inbound and outbound records in chronological order.
+- Conversation responses contain display text and correlation metadata only. They never expose channel tokens, context tokens, credentials, raw provider payloads, or private reasoning. Peer and group identifiers are masked in the UI.
+
 ## Source and serving layout
 
 ```text
@@ -36,6 +43,7 @@ Go returns `index.html` only for these declared shapes:
 - `/loops`, `/loops/{loopID}`
 - `/loops/{loopID}/invocations/{invocationID}`
 - `/settings`
+- `/reports`
 
 `GET /` redirects to `/dashboard`. A resource missing inside a legal detail
 shape is rendered by React as a localized resource Not Found. Unknown top-level

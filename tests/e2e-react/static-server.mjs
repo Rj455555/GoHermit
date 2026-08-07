@@ -202,7 +202,14 @@ function makeTerminalHistorySession() {
   }]
   return session
 }
+function makeEmployeeExecutionSession() {
+  const session = makeSession('employee-session-1', 'Scheduled Employee Session')
+  session.employee_id = 'employee-builder'
+  session.employee_task_id = 'task-queued'
+  return session
+}
 sessions.set('session-1', makeSession('session-1'))
+sessions.set('employee-session-1', makeEmployeeExecutionSession())
 eventJournals.set('session-1', [])
 
 const loops = [{
@@ -689,6 +696,7 @@ function sessionSummary(session) {
   return {
     id: session.id,
     title: session.title,
+    kind: session.employee_task_id ? 'employee_task' : 'interactive',
     status: session.status,
     updated_at: session.updated_at,
     active_run_id: session.active_run_id,
@@ -1279,8 +1287,67 @@ async function handleApi(request, response, url) {
     json(response, 200, { invocations: [loopInvocation], limit: 50 })
     return true
   }
+  if (request.method === 'GET' && pathname === '/api/reports') {
+    json(response, 200, { reports: [], limit: 100 })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/channels/weixin/accounts') {
+    json(response, 200, {
+      accounts: [{
+        id: 'account-1',
+        label: 'Owner Weixin',
+        state: 'connected',
+        created_at: now,
+        updated_at: now,
+      }],
+    })
+    return true
+  }
+  if (request.method === 'GET' && pathname === '/api/channels/weixin/conversations') {
+    if (url.searchParams.get('account_id') !== 'account-1') {
+      json(response, 404, { error: 'account not found' })
+      return true
+    }
+    json(response, 200, {
+      items: [{
+        id: 'conversation-in-1',
+        account_id: 'account-1',
+        peer_id: 'peer-secret-1234',
+        message_id: 'message-1',
+        direction: 'inbound',
+        kind: 'message',
+        text: '微信里发来的任务请求',
+        state: 'received',
+        task_id: 'task-queued',
+        attempts: 0,
+        time: now,
+      }, {
+        id: 'conversation-out-1',
+        account_id: 'account-1',
+        peer_id: 'peer-secret-1234',
+        message_id: 'message-1',
+        direction: 'outbound',
+        kind: 'final',
+        text: 'GoHermit 已完成并回传结果',
+        state: 'sent',
+        task_id: 'task-queued',
+        attempts: 1,
+        time: now,
+      }],
+      limit: 200,
+    })
+    return true
+  }
   if (request.method === 'GET' && pathname === '/api/sessions') {
-    json(response, 200, { sessions: [...sessions.values()].map(sessionSummary) })
+    const requestedKind = url.searchParams.get('kind')
+    if (requestedKind !== null && !['interactive', 'employee_task'].includes(requestedKind)) {
+      json(response, 400, { error: 'invalid Session kind' })
+      return true
+    }
+    const summaries = [...sessions.values()]
+      .map(sessionSummary)
+      .filter((summary) => requestedKind === null || summary.kind === requestedKind)
+    json(response, 200, { sessions: summaries })
     return true
   }
   if (request.method === 'POST' && pathname === '/api/sessions') {
@@ -1521,6 +1588,7 @@ const server = createServer(async (request, response) => {
     if (pathname === '/__test__/reset' && request.method === 'POST') {
       sessions.clear()
       sessions.set('session-1', makeSession('session-1'))
+      sessions.set('employee-session-1', makeEmployeeExecutionSession())
       sessions.set(boardSessionId, makeBoardSession())
       eventJournals.clear()
       eventJournals.set('session-1', [])
