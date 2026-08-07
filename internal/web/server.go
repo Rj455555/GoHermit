@@ -235,7 +235,7 @@ func isDeclaredReactRoute(requestPath string) bool {
 	parts := strings.Split(strings.TrimPrefix(requestPath, "/"), "/")
 	if len(parts) == 1 {
 		switch parts[0] {
-		case "dashboard", "employees", "tasks", "agent", "loops", "settings":
+		case "dashboard", "employees", "tasks", "agent", "loops", "settings", "reports":
 			return true
 		default:
 			return false

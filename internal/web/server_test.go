@@ -110,6 +110,7 @@ func TestReactAssetsAndDeclaredRoutesAreServed(t *testing.T) {
 		"/loops/release.v2",
 		"/loops/loop-1/invocations/invocation-1",
 		"/settings",
+		"/reports",
 	} {
 		t.Run(path, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, path, nil)
