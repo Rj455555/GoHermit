@@ -1,6 +1,6 @@
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Grid } from 'antd'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -46,12 +46,25 @@ vi.mock('../../components/ConnectivityProvider', () => ({
 
 const now = '2026-07-29T08:00:00Z'
 
-function selectAntOption(label: string, option: string) {
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: label }))
+function selectAntOption(label: string, option: string, container?: HTMLElement) {
+  const combobox = container
+    ? within(container).getByRole('combobox', { name: label })
+    : screen.getByRole('combobox', { name: label })
+  fireEvent.mouseDown(combobox)
   const optionLabel = screen.getAllByText(option, { exact: true }).find((node) =>
     node.classList.contains('ant-select-item-option-content'))
   expect(optionLabel).toBeDefined()
   fireEvent.click(optionLabel!)
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, reject, resolve }
 }
 const employee = {
   id: 'employee-ada',
@@ -184,6 +197,12 @@ function renderTasks(path = '/tasks') {
       </UIProvider>
     </I18nextProvider>,
   )
+}
+
+async function openNoteTaskDraft(user: ReturnType<typeof userEvent.setup>) {
+  renderTasks('/tasks?view=board')
+  await user.click(await screen.findByRole('button', { name: 'Convert to Task draft' }))
+  return screen.findByRole('dialog', { name: 'Create Task' })
 }
 
 function DialogProbe() {
@@ -362,18 +381,123 @@ describe('Employee Tasks Phase 4 pages', () => {
   it('converts a Note into a queued Task draft and retains its source reference', async () => {
     const user = userEvent.setup()
     api.createEmployeeTask.mockResolvedValue({ ...queuedTask, id: 'task-from-note' })
-    renderTasks('/tasks?view=board')
 
-    expect(await screen.findByText('Capture rollout')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Convert to Task draft' }))
+    const dialog = await openNoteTaskDraft(user)
+    expect(within(dialog).getByRole('textbox', { name: 'Task prompt' })).toHaveValue('Capture rollout\n\nRecord the release evidence before shipping.')
+    const createButton = within(dialog).getByRole('button', { name: 'Create as queued' })
+    expect(createButton).toBeDisabled()
 
-    expect(screen.getByRole('textbox', { name: 'Task prompt' })).toHaveValue('Capture rollout\n\nRecord the release evidence before shipping.')
-    expect(screen.getByRole('button', { name: 'Create as queued' })).toBeDisabled()
-    selectAntOption('Project', 'GoHermit')
-    await user.click(screen.getByRole('button', { name: 'Create as queued' }))
-    await waitFor(() => expect(api.createEmployeeTask).toHaveBeenCalled())
-    expect(api.updateTaskBoardCard).toHaveBeenCalledWith('task-from-note', expect.objectContaining({ source_url: 'task-board://notes/note-1' }))
+    selectAntOption('Project', 'GoHermit', dialog)
+    await waitFor(() => expect(createButton).toBeEnabled())
+    fireEvent.click(createButton)
+
+    await waitFor(() => expect(api.createEmployeeTask).toHaveBeenCalledWith(
+      employee.id,
+      expect.objectContaining({
+        prompt: 'Capture rollout\n\nRecord the release evidence before shipping.',
+        project_binding_id: 'project-main',
+      }),
+    ))
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledWith(
+      'task-from-note',
+      expect.objectContaining({ source_url: 'task-board://notes/note-1' }),
+    ))
+    expect(api.createEmployeeTask).toHaveBeenCalledTimes(1)
+    expect(api.updateTaskBoardCard).toHaveBeenCalledTimes(1)
     expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByTestId('task-owner-location')).toHaveTextContent('/tasks/task-from-note'))
+  })
+
+  it('creates at most one queued Task when Create is clicked twice rapidly', async () => {
+    const user = userEvent.setup()
+    const request = deferred<typeof queuedTask>()
+    api.createEmployeeTask.mockReturnValue(request.promise)
+    const dialog = await openNoteTaskDraft(user)
+    selectAntOption('Project', 'GoHermit', dialog)
+    const createButton = within(dialog).getByRole('button', { name: 'Create as queued' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+
+    fireEvent.click(createButton)
+    fireEvent.click(createButton)
+    await waitFor(() => expect(api.createEmployeeTask).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      request.resolve({ ...queuedTask, id: 'task-from-note' })
+      await request.promise
+    })
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledTimes(1))
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+  })
+
+  it('locks every Note draft dismissal path while Task creation is in flight', async () => {
+    const user = userEvent.setup()
+    const request = deferred<typeof queuedTask>()
+    api.createEmployeeTask.mockReturnValue(request.promise)
+    const dialog = await openNoteTaskDraft(user)
+    selectAntOption('Project', 'GoHermit', dialog)
+    const createButton = within(dialog).getByRole('button', { name: 'Create as queued' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+
+    fireEvent.click(createButton)
+    await waitFor(() => expect(api.createEmployeeTask).toHaveBeenCalledTimes(1))
+    expect(createButton).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    expect(within(dialog).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+
+    const modalWraps = document.querySelectorAll<HTMLElement>('.ant-modal-wrap')
+    fireEvent.click(modalWraps[modalWraps.length - 1]!)
+    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
+    fireEvent.click(createButton)
+    expect(dialog).toBeVisible()
+    expect(api.createEmployeeTask).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      request.resolve({ ...queuedTask, id: 'task-from-note' })
+      await request.promise
+    })
+    await waitFor(() => expect(api.updateTaskBoardCard).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not recreate a committed Task when its source card update fails', async () => {
+    const user = userEvent.setup()
+    api.createEmployeeTask.mockResolvedValue({ ...queuedTask, id: 'task-from-note' })
+    api.updateTaskBoardCard.mockRejectedValue(new Error('board update failed'))
+    const dialog = await openNoteTaskDraft(user)
+    selectAntOption('Project', 'GoHermit', dialog)
+    const createButton = within(dialog).getByRole('button', { name: 'Create as queued' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+
+    fireEvent.click(createButton)
+    const recoveryLink = await within(dialog).findByRole('link', { name: 'Open created Task' })
+    expect(recoveryLink).toHaveAttribute('href', '/tasks/task-from-note')
+    expect(within(dialog).getByText('Task created; board update failed')).toBeVisible()
+    expect(api.createEmployeeTask).toHaveBeenCalledTimes(1)
+    expect(api.updateTaskBoardCard).toHaveBeenCalledTimes(1)
+    expect(api.startEmployeeTask).not.toHaveBeenCalled()
+    expect(within(dialog).queryByRole('button', { name: 'Create as queued' })).not.toBeInTheDocument()
+  })
+
+  it('drops a delayed Note draft response after routing away', async () => {
+    const user = userEvent.setup()
+    const request = deferred<typeof queuedTask>()
+    api.createEmployeeTask.mockReturnValue(request.promise)
+    const dialog = await openNoteTaskDraft(user)
+    selectAntOption('Project', 'GoHermit', dialog)
+    const createButton = within(dialog).getByRole('button', { name: 'Create as queued' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+    fireEvent.click(createButton)
+    await waitFor(() => expect(api.createEmployeeTask).toHaveBeenCalledTimes(1))
+
+    await user.click(screen.getByRole('button', { name: 'Leave task' }))
+    expect(screen.getByTestId('task-owner-location')).toHaveTextContent('/elsewhere')
+    await act(async () => {
+      request.resolve({ ...queuedTask, id: 'task-from-note' })
+      await request.promise
+    })
+
+    expect(screen.queryByRole('dialog', { name: 'Create Task' })).not.toBeInTheDocument()
+    expect(api.updateTaskBoardCard).not.toHaveBeenCalled()
+    expect(screen.getByTestId('task-owner-location')).toHaveTextContent('/elsewhere')
   })
 
   it('opens and saves a custom Board definition without touching Task execution', async () => {

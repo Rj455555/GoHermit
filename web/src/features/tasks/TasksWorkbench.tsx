@@ -150,6 +150,9 @@ export function TasksWorkbenchPage() {
   const screens = Grid.useBreakpoint()
   const [params, setParams] = useSearchParams()
   const contextEpoch = useRef(0)
+  const creationGeneration = useRef(0)
+  const creationInFlight = useRef(false)
+  const creationCommittedTask = useRef<EmployeeTask | null>(null)
   const [employees, setEmployees] = useState<EmployeeSummary[]>([])
   const [tasks, setTasks] = useState<EmployeeTask[]>([])
   const [board, setBoard] = useState<TaskBoardView | null>(null)
@@ -161,6 +164,8 @@ export function TasksWorkbenchPage() {
   const [noteBody, setNoteBody] = useState('')
   const [noteCreating, setNoteCreating] = useState(false)
   const [noteSourceID, setNoteSourceID] = useState<string | null>(null)
+  const [noteDraftOpen, setNoteDraftOpen] = useState(false)
+  const [noteDraftCommittedTask, setNoteDraftCommittedTask] = useState<EmployeeTask | null>(null)
   const [definitionOpen, setDefinitionOpen] = useState(false)
   const [definitionText, setDefinitionText] = useState('')
   const [definitionTemplate, setDefinitionTemplate] = useState('custom')
@@ -201,6 +206,7 @@ export function TasksWorkbenchPage() {
   }, [])
 
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort() }, [load, connectivity.generation])
+  useEffect(() => () => { creationGeneration.current += 1 }, [])
   useEffect(() => {
     if (!employeeId) { setContext(null); return }
     const controller = new AbortController()
@@ -335,21 +341,26 @@ export function TasksWorkbenchPage() {
   }) ?? []
 
   async function create() {
-    if (!context || !projectId || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || creating) return
+    if (!context || !projectId || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || creationInFlight.current || creationCommittedTask.current) return
     const epoch = contextEpoch.current
     const owner = employeeId
     const sourceNoteID = noteSourceID
+    const generation = ++creationGeneration.current
+    const isCurrent = () => generation === creationGeneration.current && epoch === contextEpoch.current && owner === employeeId
+    const request = {
+      prompt,
+      skills: selectedSkills.map((binding) => ({ skill_id: binding.skill_id, version: binding.version })),
+      knowledge: knowledgeInput,
+      memory_fact_ids: memoryIds,
+      project_binding_id: projectId,
+      policy: { allowed_capabilities: capabilities.split(/\r?\n|,/u).map((item) => item.trim()).filter(Boolean), network_allowed: network, budget },
+    }
+    creationInFlight.current = true
     setCreating(true)
     try {
-      const task = await createEmployeeTask(employeeId, {
-        prompt,
-        skills: selectedSkills.map((binding) => ({ skill_id: binding.skill_id, version: binding.version })),
-        knowledge: knowledgeInput,
-        memory_fact_ids: memoryIds,
-        project_binding_id: projectId,
-        policy: { allowed_capabilities: capabilities.split(/\r?\n|,/u).map((item) => item.trim()).filter(Boolean), network_allowed: network, budget },
-      })
-      if (epoch !== contextEpoch.current || owner !== employeeId) return
+      const task = await createEmployeeTask(owner, request)
+      if (!isCurrent()) return
+      creationCommittedTask.current = task
       if (sourceNoteID) {
         try {
           const nextBoard = await updateTaskBoardCard(task.id, {
@@ -357,23 +368,49 @@ export function TasksWorkbenchPage() {
             pinned: false, blocked: false, blocker_reason: '', depends_on: [],
             source_url: `task-board://notes/${encodeURIComponent(sourceNoteID)}`, loop_id: '',
           })
+          if (!isCurrent()) return
           setBoard(nextBoard)
         } catch (caught) {
+          if (!isCurrent()) return
+          setNoteDraftCommittedTask(task)
           actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+          return
         }
       }
+      if (!isCurrent()) return
       setPrompt('')
       setNoteSourceID(null)
+      setProjectId('')
+      setNoteDraftOpen(false)
+      setNoteDraftCommittedTask(null)
       await navigate(`/tasks/${encodeURIComponent(task.id)}`)
     } catch (caught) {
-      if (epoch === contextEpoch.current && owner === employeeId) actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
+      if (isCurrent() && !creationCommittedTask.current) actions.showToast({ messageKey: mutationKey(caught), tone: 'error' })
     } finally {
-      if (epoch === contextEpoch.current && owner === employeeId) setCreating(false)
+      if (isCurrent()) {
+        creationInFlight.current = false
+        setCreating(false)
+      }
     }
+  }
+
+  function closeNoteTaskDraft() {
+    if (creationInFlight.current) return
+    creationGeneration.current += 1
+    creationCommittedTask.current = null
+    setNoteDraftCommittedTask(null)
+    setNoteDraftOpen(false)
+    setNoteSourceID(null)
+    setPrompt('')
+    setProjectId('')
   }
 
   function useNoteAsTask(card: TaskBoardCard) {
     if (card.kind !== 'note') return
+    creationGeneration.current += 1
+    creationInFlight.current = false
+    creationCommittedTask.current = null
+    setNoteDraftCommittedTask(null)
     setPrompt([card.title, card.body].filter(Boolean).join('\n\n'))
     setNoteSourceID(card.id)
     const targetEmployee = card.employee_id && activeEmployees.some((employee) => employee.id === card.employee_id)
@@ -381,7 +418,7 @@ export function TasksWorkbenchPage() {
       : activeEmployees[0]?.id ?? ''
     setEmployeeId(targetEmployee)
     setProjectId('')
-    setFilter('view', 'list')
+    setNoteDraftOpen(true)
     actions.showToast({ messageKey: 'tasks.notePrefilled', tone: 'info' })
   }
 
@@ -408,7 +445,7 @@ export function TasksWorkbenchPage() {
           { key: 'memory', label: t('tasks.acceptedMemory'), children: <Checkbox.Group value={memoryIds} onChange={setMemoryIds}><Space direction="vertical">{context?.memory.map((fact) => <Checkbox key={fact.id} value={fact.id}>{fact.category}: {fact.value}</Checkbox>)}</Space></Checkbox.Group> },
           { key: 'policy', label: t('tasks.capabilities'), children: <Row gutter={[16, 0]}><Col xs={24}><Form.Item label={t('tasks.capabilities')}><Input.TextArea aria-label={t('tasks.capabilities')} value={capabilities} onChange={(event) => setCapabilities(event.target.value)} /></Form.Item></Col><Col xs={24}><Form.Item label={t('tasks.networkAllowed')}><Switch aria-label={t('tasks.networkAllowed')} checked={network} onChange={setNetwork} /></Form.Item></Col><Col xs={24} md={8}><Form.Item label={t('tasks.maxCalls')}><InputNumber aria-label={t('tasks.maxCalls')} min={1} inputMode="numeric" value={budget.max_model_calls} onChange={(value) => setBudget({ ...budget, max_model_calls: value ?? 1 })} /></Form.Item></Col><Col xs={24} md={8}><Form.Item label={t('tasks.maxTokens')}><InputNumber aria-label={t('tasks.maxTokens')} min={1} inputMode="numeric" value={budget.max_tokens} onChange={(value) => setBudget({ ...budget, max_tokens: value ?? 1 })} /></Form.Item></Col><Col xs={24} md={8}><Form.Item label={t('tasks.timeoutSeconds')}><InputNumber aria-label={t('tasks.timeoutSeconds')} min={1} inputMode="numeric" value={budget.timeout_seconds} onChange={(value) => setBudget({ ...budget, timeout_seconds: value ?? 1 })} /></Form.Item></Col></Row> },
         ]} />
-        <Button className="task-create-action" block={!screens.md} type="primary" loading={creating} disabled={!connectivity.canMutate || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || !projectId} onClick={() => void create()}>{t('tasks.createQueued')}</Button>
+        <Button className="task-create-action" block={!screens.md} type="primary" loading={creating} disabled={creating || !connectivity.canMutate || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES || !projectId} onClick={() => void create()}>{t('tasks.createQueued')}</Button>
       </Form>
     </Card>
     <Card title={<Space wrap><span>{t('tasks.filters')}</span><Segmented aria-label={t('tasks.view')} value={viewMode} options={[{ label: t('tasks.board'), value: 'board' }, { label: t('tasks.list'), value: 'list' }]} onChange={(value) => setFilter('view', String(value))} /></Space>} extra={<Space wrap><Button disabled={!board} onClick={openDefinitionEditor}>{t('tasks.boardSettings')}</Button><Button onClick={() => setNoteOpen(true)}>{t('tasks.newNote')}</Button><Button onClick={() => setFilter('archived', params.get('archived') === '1' ? '' : '1')}>{params.get('archived') === '1' ? t('tasks.hideArchived') : t('tasks.showArchived')}</Button></Space>}>
@@ -439,6 +476,60 @@ export function TasksWorkbenchPage() {
         onUseNoteAsTask={useNoteAsTask}
       /> : null}
     </Card>}
+    <Modal
+      open={noteDraftOpen}
+      title={t('tasks.create')}
+      okText={t('tasks.createQueued')}
+      cancelText={t('actions.cancel')}
+      confirmLoading={creating}
+      okButtonProps={{ disabled: creating || !connectivity.canMutate || !context || !projectId || !prompt.trim() || promptBytes > MAX_PROMPT_BYTES }}
+      cancelButtonProps={{ disabled: creating }}
+      closable={!creating}
+      maskClosable={!creating}
+      keyboard={!creating}
+      footer={noteDraftCommittedTask ? <Space>
+        <Button onClick={closeNoteTaskDraft}>{t('actions.dismiss')}</Button>
+        <Button type="primary"><Link to={`/tasks/${encodeURIComponent(noteDraftCommittedTask.id)}`}>{t('tasks.openCreatedTask')}</Link></Button>
+      </Space> : undefined}
+      onCancel={closeNoteTaskDraft}
+      onOk={() => void create()}
+    >
+      {noteDraftCommittedTask ? <Alert
+        type="warning"
+        showIcon
+        message={t('tasks.noteTaskBoardUpdateFailed')}
+        description={t('tasks.noteTaskBoardUpdateRecovery')}
+      /> : <Form layout="vertical">
+        <Form.Item label={t('tasks.employee')} required>
+          <Select<string>
+            aria-label={t('tasks.employee')}
+            disabled={creating}
+            {...(employeeId ? { value: employeeId } : {})}
+            options={activeEmployees.map((employee) => ({ value: employee.id, label: employee.name }))}
+            onChange={setEmployeeId}
+          />
+        </Form.Item>
+        <Form.Item label={t('tasks.project')} required>
+          <Select<string>
+            aria-label={t('tasks.project')}
+            disabled={creating}
+            loading={!context}
+            {...(projectId ? { value: projectId } : {})}
+            placeholder={t('common.select')}
+            options={context?.record.project_bindings.map((project) => ({ value: project.id, label: project.label })) ?? []}
+            onChange={setProjectId}
+          />
+        </Form.Item>
+        <Form.Item
+          label={t('tasks.prompt')}
+          required
+          {...(promptBytes > MAX_PROMPT_BYTES ? { validateStatus: 'error' as const } : {})}
+          help={<Text type={promptBytes > MAX_PROMPT_BYTES ? 'danger' : 'secondary'}>{promptBytes} / {MAX_PROMPT_BYTES}</Text>}
+        >
+          <Input.TextArea aria-label={t('tasks.prompt')} disabled={creating} autoSize={{ minRows: 4, maxRows: 12 }} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+        </Form.Item>
+      </Form>}
+    </Modal>
     <Modal open={noteOpen} title={t('tasks.newNote')} okText={t('actions.save')} cancelText={t('actions.cancel')} confirmLoading={noteCreating} onCancel={() => setNoteOpen(false)} onOk={() => void createNote()}>
       <Form layout="vertical"><Form.Item label={t('tasks.noteTitle')} required><Input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} /></Form.Item><Form.Item label={t('tasks.noteBody')}><Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} value={noteBody} onChange={(event) => setNoteBody(event.target.value)} /></Form.Item></Form>
     </Modal>
