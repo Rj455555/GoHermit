@@ -323,8 +323,7 @@ describe('Loops Phase 4 pages', () => {
 
     await user.click(await screen.findByRole('tab', { name: 'Advanced settings' }))
     const name = await screen.findByDisplayValue('Daily review')
-    await user.clear(name)
-    await user.type(name, 'Daily review updated')
+    fireEvent.change(name, { target: { value: 'Daily review updated' } })
     await user.click(screen.getByRole('button', { name: 'Save contract' }))
     await waitFor(() => expect(api.updateLoop).toHaveBeenCalledWith(
       definition.id,
