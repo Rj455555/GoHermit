@@ -52,9 +52,10 @@ func LoadProjectMemory(workspace string) (ProjectMemory, error) {
 	return memory, nil
 }
 
-// UpdateProjectMemory records only bounded, verified facts. Semantic decisions
-// come from the structured session state; raw prompts and tool output are never
-// copied into project memory.
+// UpdateProjectMemory records only bounded verified commands and known issues.
+// Existing Project Memory is preserved, but modified paths and CompletedSteps
+// are not sufficiently strong evidence to create new Architecture or Decision
+// facts. Raw prompts and tool output are never copied into project memory.
 func UpdateProjectMemory(workspace string, s *session.Session, run session.Run) error {
 	memory, err := LoadProjectMemory(workspace)
 	if err != nil {
@@ -62,16 +63,10 @@ func UpdateProjectMemory(workspace string, s *session.Session, run session.Run) 
 	}
 	memory.SchemaVersion = projectMemoryVersion
 	memory.UpdatedAt = time.Now().UTC()
-	for _, path := range run.ModifiedFiles {
-		memory.Architecture = mergeFact(memory.Architecture, "Touched workspace path: "+path, run.ID, 80)
-	}
 	for _, result := range s.TestResults {
 		if result.Passed {
 			memory.VerifiedCommands = mergeFact(memory.VerifiedCommands, result.Command, run.ID, 80)
 		}
-	}
-	if len(s.CompletedSteps) > 0 {
-		memory.Decisions = mergeFact(memory.Decisions, s.CompletedSteps[len(s.CompletedSteps)-1], run.ID, 80)
 	}
 	if run.Error != "" {
 		memory.KnownIssues = mergeFact(memory.KnownIssues, run.Error, run.ID, 40)

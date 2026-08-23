@@ -6,10 +6,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/employeememory"
 	"github.com/Rj455555/GoHermit/internal/knowledge"
 )
@@ -72,6 +74,60 @@ func TestKnowledgeAndMemoryAreEmployeeIsolatedAndSurviveReopen(t *testing.T) {
 	}
 }
 
+func TestGeneratedMemoryCandidateAtomicallyHonorsCurrentPolicy(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "employees"))
+	record := createRecord(t, store, "employee-a")
+	enabled := record.Employee
+	enabled.MemoryPolicy.CandidateGeneration = true
+	record, err := store.Update(record.Employee.ID, record.Employee.Revision, enabled, record.ProjectBindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	draft := employeememory.Candidate{
+		ID: "candidate-generated-enabled", EmployeeID: record.Employee.ID,
+		Category: "verified-run", Value: "Persist the verified result.",
+		Provenance: []employeememory.Provenance{{
+			SourceType: "run", SourceID: "run-enabled", SourceTaskID: "task-enabled",
+			SourceSessionID: "session-enabled", SourceRunID: "run-enabled", VerifiedAt: now,
+		}},
+	}
+	created, err := store.AddGeneratedMemoryCandidate(record.Employee.ID, draft, now)
+	if err != nil || !created {
+		t.Fatalf("enabled generated Candidate = %t, %v", created, err)
+	}
+
+	disabled := record.Employee
+	disabled.MemoryPolicy.CandidateGeneration = false
+	record, err = store.Update(record.Employee.ID, record.Employee.Revision, disabled, record.ProjectBindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.MemoryCandidates(record.Employee.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft.ID = "candidate-generated-disabled"
+	draft.Provenance[0].SourceID = "run-disabled"
+	created, err = store.AddGeneratedMemoryCandidate(record.Employee.ID, draft, now.Add(time.Second))
+	if err != nil || created {
+		t.Fatalf("disabled generated Candidate = %t, %v", created, err)
+	}
+	after, err := store.MemoryCandidates(record.Employee.ID)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("disabled policy changed Candidates: before=%#v after=%#v err=%v", before, after, err)
+	}
+
+	existing := phase4Candidate(t, record.Employee.ID, "candidate-existing")
+	if err := store.AddMemoryCandidate(record.Employee.ID, existing); err != nil {
+		t.Fatalf("ordinary Candidate insertion under disabled generation = %v", err)
+	}
+	after, err = store.MemoryCandidates(record.Employee.ID)
+	if err != nil || len(after) != len(before)+1 {
+		t.Fatalf("ordinary Candidate insertion = %#v, %v", after, err)
+	}
+}
+
 func TestCandidateAcceptRejectEditForgetAndActivityBoundaries(t *testing.T) {
 	store, _ := NewStore(filepath.Join(t.TempDir(), "employees"))
 	createRecord(t, store, "employee-a")
@@ -119,6 +175,34 @@ func TestCandidateAcceptRejectEditForgetAndActivityBoundaries(t *testing.T) {
 	}
 	if !acceptedEvent || !editedEvent || !forgottenEvent {
 		t.Fatalf("missing bounded activity: %#v", activity.Events)
+	}
+}
+
+func TestAcceptMemoryCandidateRejectsDisabledPromotionWithoutMutation(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "employees"))
+	record := createRecord(t, store, "employee-a")
+	candidate := phase4Candidate(t, "employee-a", "candidate-disabled")
+	if err := store.AddMemoryCandidate("employee-a", candidate); err != nil {
+		t.Fatal(err)
+	}
+	proposed := record.Employee
+	proposed.MemoryPolicy = employee.MemoryPolicy{Promotion: employee.MemoryPromotionDisabled}
+	if _, err := store.Update(record.Employee.ID, record.Employee.Revision, proposed, record.ProjectBindings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcceptMemoryCandidate("employee-a", candidate.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("accept with disabled promotion = %v, want conflict", err)
+	}
+	candidates, err := store.MemoryCandidates("employee-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.Memory("employee-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].ID != candidate.ID || len(facts) != 0 {
+		t.Fatalf("disabled promotion mutated memory: candidates=%#v facts=%#v", candidates, facts)
 	}
 }
 

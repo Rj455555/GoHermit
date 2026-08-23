@@ -170,6 +170,9 @@ func controlPlaneDraft(id string) employee.Employee {
 		PermissionPolicy:  employee.PermissionPolicy{AllowedCapabilities: []string{"read", "write"}},
 		BudgetPolicy:      employee.BudgetPolicy{MaxModelCalls: 8, MaxTokens: 100000, TimeoutSeconds: 3600},
 		ConcurrencyPolicy: employee.ConcurrencyPolicy{MaxRunningTasks: 1},
-		MemoryPolicy:      employee.MemoryPolicy{Promotion: employee.MemoryPromotionOwnerConfirmation},
+		MemoryPolicy: employee.MemoryPolicy{
+			CandidateGeneration: true, Promotion: employee.MemoryPromotionOwnerConfirmation,
+			MaxContextFacts: 32, MaxContextBytes: 32 << 10,
+		},
 	}
 }

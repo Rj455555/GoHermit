@@ -70,6 +70,15 @@ func (s *Service) PrepareEmployeeTask(ctx context.Context, taskID string) (Emplo
 	if current.Employee.State != employee.StateActive {
 		return EmployeeTaskPreparation{}, classified(KindConflict, fmt.Errorf("Employee state %s is not ready", current.Employee.State))
 	}
+	compactMemory, err := s.prepareTaskMemory(task)
+	if err != nil {
+		return EmployeeTaskPreparation{}, err
+	}
+	if err := validateEmployeeMemoryContextPolicy(
+		current.Employee.MemoryPolicy, task.EmployeeID, compactMemory, KindConflict,
+	); err != nil {
+		return EmployeeTaskPreparation{}, err
+	}
 	revision, err := s.employees.LoadRevision(task.EmployeeID, task.EmployeeRevision)
 	if err != nil {
 		return EmployeeTaskPreparation{}, classifyEmployeeStore(err)
@@ -124,10 +133,6 @@ func (s *Service) PrepareEmployeeTask(ctx context.Context, taskID string) (Emplo
 		return EmployeeTaskPreparation{}, err
 	}
 	compactKnowledge, err := s.prepareTaskKnowledge(task)
-	if err != nil {
-		return EmployeeTaskPreparation{}, err
-	}
-	compactMemory, err := s.prepareTaskMemory(task)
 	if err != nil {
 		return EmployeeTaskPreparation{}, err
 	}
@@ -195,7 +200,12 @@ func (s *Service) PrepareEmployeeTask(ctx context.Context, taskID string) (Emplo
 	if err != nil {
 		return EmployeeTaskPreparation{}, classified(KindInternal, fmt.Errorf("Session Store target is unsafe or unavailable: %w", err))
 	}
-	journal, err := s.employees.PrepareDispatch(expectedJournal)
+	if err := s.callPrepareStageHook("memory_gate_checked"); err != nil {
+		return EmployeeTaskPreparation{}, classified(KindInternal, err)
+	}
+	journal, err := s.employees.PrepareDispatchWithMemoryGate(
+		expectedJournal, current.Employee.Revision, task.MemoryFacts,
+	)
 	if err != nil {
 		return EmployeeTaskPreparation{}, classifyEmployeeStore(err)
 	}
@@ -357,14 +367,11 @@ func (s *Service) prepareTaskMemory(task employee.EmployeeTask) ([]employee.Comp
 		if !exists || fact.EmployeeID != task.EmployeeID || fact.Digest != pinned.Digest {
 			return nil, classified(KindConflict, fmt.Errorf("accepted Memory Fact %q changed or is unavailable", pinned.FactID))
 		}
-		provenance, marshalErr := json.Marshal(fact.Provenance)
-		if marshalErr != nil {
-			return nil, classified(KindInternal, marshalErr)
+		compact, compactErr := compactMemoryFromFact(fact)
+		if compactErr != nil {
+			return nil, classified(KindInternal, compactErr)
 		}
-		result = append(result, employee.CompactMemory{
-			FactID: fact.ID, Digest: fact.Digest, Category: fact.Category,
-			Value: fact.Value, Provenance: string(provenance),
-		})
+		result = append(result, compact)
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left].FactID < result[right].FactID })
 	return result, nil
@@ -489,7 +496,7 @@ func (s *Service) CreateEmployeeTask(_ context.Context, employeeID string, input
 	if err != nil {
 		return EmployeeTaskView{}, err
 	}
-	selectedMemory, err := s.selectTaskMemory(employeeID, input.MemoryFactIDs)
+	selectedMemory, err := s.selectTaskMemory(employeeID, input.MemoryFactIDs, record.Employee.MemoryPolicy)
 	if err != nil {
 		return EmployeeTaskView{}, err
 	}
@@ -661,7 +668,15 @@ func (s *Service) selectTaskKnowledge(employeeID string, selections []EmployeeTa
 	return result, nil
 }
 
-func (s *Service) selectTaskMemory(employeeID string, factIDs []string) ([]employee.TaskMemoryFactSnapshot, error) {
+func (s *Service) selectTaskMemory(
+	employeeID string, factIDs []string, policy employee.MemoryPolicy,
+) ([]employee.TaskMemoryFactSnapshot, error) {
+	if len(factIDs) > policy.MaxContextFacts {
+		return nil, classified(KindInvalid, fmt.Errorf(
+			"selected Memory Fact count %d exceeds memory_policy.max_context_facts %d",
+			len(factIDs), policy.MaxContextFacts,
+		))
+	}
 	if len(factIDs) == 0 {
 		return []employee.TaskMemoryFactSnapshot{}, nil
 	}
@@ -669,25 +684,67 @@ func (s *Service) selectTaskMemory(employeeID string, factIDs []string) ([]emplo
 	if err != nil {
 		return nil, classifyMemoryStore(err)
 	}
-	available := make(map[string]string, len(facts))
+	available := make(map[string]employeememory.Fact, len(facts))
 	for _, fact := range facts {
-		available[fact.ID] = fact.Digest
+		available[fact.ID] = fact
 	}
 	result := make([]employee.TaskMemoryFactSnapshot, 0, len(factIDs))
+	compact := make([]employee.CompactMemory, 0, len(factIDs))
 	seen := make(map[string]struct{}, len(factIDs))
 	for _, factID := range factIDs {
 		if _, duplicate := seen[factID]; duplicate {
 			return nil, classified(KindInvalid, errors.New("duplicate Employee Task Memory Fact selection"))
 		}
 		seen[factID] = struct{}{}
-		digest, exists := available[factID]
+		fact, exists := available[factID]
 		if !exists {
 			return nil, classified(KindInvalid, fmt.Errorf("accepted Memory Fact %q is not available", factID))
 		}
-		result = append(result, employee.TaskMemoryFactSnapshot{FactID: factID, Digest: digest})
+		item, compactErr := compactMemoryFromFact(fact)
+		if compactErr != nil {
+			return nil, classified(KindInternal, compactErr)
+		}
+		result = append(result, employee.TaskMemoryFactSnapshot{FactID: factID, Digest: fact.Digest})
+		compact = append(compact, item)
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left].FactID < result[right].FactID })
+	if err := validateEmployeeMemoryContextPolicy(policy, employeeID, compact, KindInvalid); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func compactMemoryFromFact(fact employeememory.Fact) (employee.CompactMemory, error) {
+	provenance, err := json.Marshal(fact.Provenance)
+	if err != nil {
+		return employee.CompactMemory{}, err
+	}
+	return employee.CompactMemory{
+		FactID: fact.ID, Digest: fact.Digest, Category: fact.Category,
+		Value: fact.Value, Provenance: string(provenance),
+	}, nil
+}
+
+func validateEmployeeMemoryContextPolicy(
+	policy employee.MemoryPolicy,
+	employeeID string,
+	memory []employee.CompactMemory,
+	kind Kind,
+) error {
+	if len(memory) > policy.MaxContextFacts {
+		return classified(kind, fmt.Errorf(
+			"selected Memory Fact count %d exceeds memory_policy.max_context_facts %d",
+			len(memory), policy.MaxContextFacts,
+		))
+	}
+	bytes := contextmgr.CompactMemoryPayloadBytes(employeeID, memory)
+	if bytes > policy.MaxContextBytes {
+		return classified(kind, fmt.Errorf(
+			"selected Memory context is %d UTF-8 bytes and exceeds memory_policy.max_context_bytes %d",
+			bytes, policy.MaxContextBytes,
+		))
+	}
+	return nil
 }
 
 func selectTaskProject(bindings []employee.ProjectBinding, bindingID string) (employee.ProjectBinding, error) {

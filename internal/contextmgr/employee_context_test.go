@@ -125,6 +125,21 @@ func TestEmployeeContextFromCompactPreservesLayerOrder(t *testing.T) {
 	}
 }
 
+func TestCompactMemoryPayloadBytesCountsRenderedUTF8Payload(t *testing.T) {
+	item := employee.CompactMemory{
+		FactID: "fact-a", Digest: strings.Repeat("a", 64), Category: "preference",
+		Value: "优先使用确定性系统", Provenance: `[{"source_type":"owner","source_id":"owner-note"}]`,
+	}
+	want := len([]byte(
+		"[source:employee-memory:employee-a/fact-a@" + item.Digest + "]\n" +
+			"# Private Employee Memory: preference\n\n" +
+			"Provenance: " + item.Provenance + "\n\n" + item.Value,
+	))
+	if got := CompactMemoryPayloadBytes("employee-a", []employee.CompactMemory{item}); got != want {
+		t.Fatalf("CompactMemoryPayloadBytes = %d, want UTF-8 rendered payload %d", got, want)
+	}
+}
+
 func TestBuildEmployeeRunRejectsUnsafeOrUnboundedContext(t *testing.T) {
 	manager, _ := New(Config{MaxTokens: 8192, CompressionThreshold: .8, HardLimitThreshold: .95, ReserveOutputTokens: 512})
 	tests := []struct {

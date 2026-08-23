@@ -398,6 +398,23 @@ func memoryLayer(employeeID string, item MemoryContext) string {
 	)
 }
 
+// CompactMemoryPayloadBytes returns the exact UTF-8 byte count of the private
+// Memory layers emitted by BuildEmployeeRun. Sorting makes the calculation
+// deterministic and the rendered layer includes the Employee/Fact identity,
+// digest, category, provenance, and value that reach model context.
+func CompactMemoryPayloadBytes(employeeID string, values []employee.CompactMemory) int {
+	items := append([]employee.CompactMemory(nil), values...)
+	sort.Slice(items, func(left, right int) bool { return items[left].FactID < items[right].FactID })
+	total := 0
+	for _, item := range items {
+		total += len(memoryLayer(employeeID, MemoryContext{
+			ID: item.FactID, Digest: item.Digest, Category: item.Category,
+			Value: item.Value, Provenance: item.Provenance,
+		}))
+	}
+	return total
+}
+
 func dropLastLayer(layers *[]model.Message, prefix string) bool {
 	for index := len(*layers) - 1; index >= 0; index-- {
 		if strings.HasPrefix((*layers)[index].Content, prefix) {
