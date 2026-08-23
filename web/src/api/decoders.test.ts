@@ -8,7 +8,12 @@ import {
   decodeConfigured,
   decodeDecision,
   decodeDryRun,
+  decodeEmployeeActivity,
+  decodeEmployeeDryRun,
+  decodeEmployeeKnowledge,
   decodeEmployeeList,
+  decodeEmployeeMemory,
+  decodeEmployeeMemoryCandidates,
   decodeEmployeeRecord,
   decodeEmployeeSkills,
   decodeEmployeeTask,
@@ -24,12 +29,15 @@ import {
   decodeNotificationStatus,
   decodeLoops,
   decodeOwnerProfile,
+  decodeProjects,
+  decodeReports,
   decodeRunReference,
   decodeSessionCreated,
   decodeRuntimeEvent,
   decodeSessionDetail,
   decodeSessionList,
   decodeSkillCatalog,
+  decodeTaskBoard,
   decodeTeamTemplate,
 } from './decoders'
 
@@ -775,5 +783,193 @@ describe('endpoint decoders', () => {
       cancelled: true,
       status: 'cancelled',
     })
+  })
+
+  it('strictly decodes Employee knowledge, memory, activity, and readiness projections', () => {
+    const citation = {
+      schema_version: 1,
+      id: 'citation-1',
+      employee_id: 'employee-1',
+      source_id: 'source-1',
+      path: 'docs/guide.md',
+      heading: 'Memory policy',
+      start_line: 10,
+      end_line: 14,
+      digest: 'citation-digest',
+      snippet: 'Candidate generation is owner controlled.',
+    }
+    const provenance = {
+      source_type: 'employee_task',
+      source_id: 'task-1',
+      source_task_id: 'task-1',
+      source_session_id: 'session-1',
+      source_run_id: 'run-1',
+      verified_at: now,
+    }
+    const candidate = {
+      schema_version: 1,
+      id: 'candidate-1',
+      employee_id: 'employee-1',
+      category: 'preference',
+      value: 'Keep generated memory owner controlled.',
+      provenance: [provenance],
+      created_at: now,
+      digest: 'candidate-digest',
+    }
+    const fact = {
+      ...candidate,
+      id: 'fact-1',
+      candidate_id: candidate.id,
+      updated_at: now,
+      owner_edited: false,
+    }
+
+    expect(decodeEmployeeDryRun({
+      employee_id: 'employee-1',
+      revision: 4,
+      ready: true,
+      checks: [{ name: 'model', ready: true, detail: 'ready' }],
+    })).toMatchObject({ employee_id: 'employee-1', revision: 4, ready: true })
+    expect(decodeProjects({
+      projects: [{
+        id: 'project-1',
+        label: 'GoHermit',
+        workspace_real_path: '/workspace/gohermit',
+        workspace_fingerprint: 'workspace-digest',
+      }],
+    }).projects[0]).toMatchObject({ id: 'project-1', label: 'GoHermit' })
+    expect(decodeEmployeeKnowledge({
+      employee_id: 'employee-1',
+      sources: [{
+        schema_version: 1,
+        id: 'source-1',
+        employee_id: 'employee-1',
+        kind: 'project_docs',
+        title: 'Memory guide',
+        relative_path: 'docs/guide.md',
+        digest: 'source-digest',
+        status: 'ready',
+      }],
+      indexes: [{
+        schema_version: 1,
+        employee_id: 'employee-1',
+        source_id: 'source-1',
+        source_digest: 'source-digest',
+        documents: [{
+          path: 'docs/guide.md',
+          digest: 'document-digest',
+          terms: ['memory', 'policy'],
+          citations: [citation],
+        }],
+      }],
+      results: [{ source_id: 'source-1', title: 'Memory guide', score: 2, citation }],
+    }).results?.[0]?.citation).toMatchObject({ id: 'citation-1', start_line: 10 })
+    expect(decodeEmployeeMemory({ employee_id: 'employee-1', facts: [fact] }).facts[0]).toMatchObject({
+      id: 'fact-1',
+      candidate_id: 'candidate-1',
+      owner_edited: false,
+    })
+    expect(decodeEmployeeMemoryCandidates({
+      employee_id: 'employee-1',
+      candidates: [candidate],
+    }).candidates[0]?.provenance[0]).toMatchObject({ source_run_id: 'run-1' })
+    expect(decodeEmployeeActivity({
+      events: [{
+        schema_version: 1,
+        id: 'activity-1',
+        employee_id: 'employee-1',
+        type: 'memory_promoted',
+        time: now,
+        employee_revision: 4,
+        subject_id: 'fact-1',
+        task_id: 'task-1',
+        session_id: 'session-1',
+        run_id: 'run-1',
+      }],
+      next_cursor: 'cursor-2',
+    })).toMatchObject({ next_cursor: 'cursor-2', events: [{ subject_id: 'fact-1' }] })
+    expect(() => decodeEmployeeMemory({ employee_id: 'employee-1', facts: [{ ...fact, owner_edited: 'no' }] })).toThrow()
+  })
+
+  it('strictly decodes Task Board and report projections', () => {
+    const board = decodeTaskBoard({
+      schema_version: 1,
+      definition: {
+        id: 'default',
+        name: 'Task Board',
+        columns: [{ id: 'queued', title: 'Queued', color: 'blue', hidden: false, wip_limit: 5 }],
+      },
+      cards: [{
+        id: 'card-1',
+        task_id: 'task-1',
+        kind: 'task',
+        title: 'Verify Memory P0.1',
+        body: 'Run the isolated acceptance suite.',
+        column_id: 'queued',
+        rank: 1,
+        labels: ['memory'],
+        priority: 2,
+        due_at: now,
+        pinned: true,
+        blocked: false,
+        blocker_reason: '',
+        depends_on: [],
+        source_url: '/tasks/task-1',
+        loop_id: 'loop-1',
+        employee_id: 'employee-1',
+        employee_name: 'Verifier',
+        provider: 'openai-codex',
+        model: 'gpt-5.6',
+        state: 'queued',
+        state_source: 'employee_task',
+        projection_reason: 'task_state',
+        authoritative_updated_at: now,
+        session_id: 'session-1',
+        run_id: 'run-1',
+        session_event_sequence: 3,
+        session_count: 1,
+        approval_status: 'none',
+        verification_status: 'pending',
+        stale: false,
+      }],
+      view: { view: 'board', column_width: 320, wip_enabled: true },
+      filters: {
+        employee_id: 'employee-1',
+        states: ['queued'],
+        labels: ['memory'],
+        priority: 2,
+        blocked: false,
+        needs_owner: false,
+      },
+      updated_at: now,
+      projection_generated_at: now,
+    })
+    expect(board.definition.columns[0]).toMatchObject({ id: 'queued', wip_limit: 5 })
+    expect(board.cards[0]).toMatchObject({ id: 'card-1', state: 'queued', priority: 2 })
+
+    const reports = decodeReports({
+      reports: [{
+        schema_version: 1,
+        id: 'report-1',
+        source_type: 'employee_task',
+        source_id: 'task-1',
+        title: 'Memory P0.1 verification',
+        status: 'completed',
+        summary: 'All isolated checks passed.',
+        finished_at: now,
+        created_at: now,
+        updated_at: now,
+        delivery_status: 'sent',
+        delivery_channel: 'owner',
+        delivered_at: now,
+      }],
+      limit: 100,
+    })
+    expect(reports).toMatchObject({
+      limit: 100,
+      reports: [{ id: 'report-1', delivery_status: 'sent' }],
+    })
+    expect(() => decodeTaskBoard({ ...board, cards: [{ ...board.cards[0], priority: 5 }] })).toThrow()
+    expect(() => decodeReports({ reports: [{ ...reports.reports[0], delivery_status: 'unknown' }], limit: 100 })).toThrow()
   })
 })
