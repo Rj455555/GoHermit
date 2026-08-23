@@ -17,6 +17,7 @@ import {
   createEmployeeTask,
   createLoop,
   createSession,
+  createTaskBoardNote,
   decideApproval,
   deleteEmployeeKnowledge,
   deleteProviderCredentials,
@@ -36,6 +37,7 @@ import {
   getNotificationStatus,
   getOwner,
   getSession,
+  getTaskBoard,
   getTeamTemplate,
   importLoop,
   importTeamTemplate,
@@ -46,6 +48,7 @@ import {
   listLoopInvocationDetails,
   listLoopInvocations,
   listLoops,
+  listReports,
   listSessions,
   listProjects,
   listSkills,
@@ -55,6 +58,7 @@ import {
   rejectEmployeeMemoryCandidate,
   resumeEmployeeTask,
   resumeRun,
+  retryReport,
   saveOwner,
   saveOwnerFact,
   saveProviderAPIKey,
@@ -67,6 +71,8 @@ import {
   updateEmployee,
   updateEmployeeSkills,
   updateLoop,
+  updateTaskBoardCard,
+  updateTaskBoardSettings,
 } from './endpoints'
 import type { Employee, LoopDefinition } from './types'
 
@@ -181,6 +187,43 @@ describe('Phase 3 endpoint map', () => {
       startLoopInvocation('loop one'),
       getLoopInvocation('invocation one'),
       cancelLoopInvocation('invocation one'),
+      listReports(),
+      retryReport('report one'),
+      getTaskBoard(),
+      updateTaskBoardSettings({
+        definition: {
+          id: 'default',
+          name: 'Task Board',
+          columns: [{ id: 'queued', title: 'Queued', color: 'blue', hidden: false }],
+        },
+        view: { view: 'board', column_width: 320, wip_enabled: true },
+        filters: { states: ['queued'], labels: ['memory'] },
+      }),
+      updateTaskBoardCard('task one', {
+        column_id: 'queued',
+        rank: 1,
+        labels: ['memory'],
+        priority: 2,
+        due_at: null,
+        pinned: true,
+        blocked: false,
+        blocker_reason: '',
+        depends_on: [],
+        source_url: '/tasks/task-one',
+        loop_id: '',
+      }),
+      createTaskBoardNote({
+        title: 'Verify Memory P0.1',
+        body: 'Run the isolated acceptance suite.',
+        column_id: 'queued',
+        rank: 2,
+        labels: ['memory'],
+        priority: 1,
+        due_at: null,
+        pinned: false,
+        source_url: '',
+        blocker_reason: '',
+      }),
       getTeamTemplate(),
       importTeamTemplate({
         schema_version: 2,
@@ -196,7 +239,21 @@ describe('Phase 3 endpoint map', () => {
     expect(paths).toContain('/api/employee-tasks/task%20one/start')
     expect(paths).toContain('/api/loops/loop%20one/dry-run')
     expect(paths).toContain('/api/loop-invocations/invocation%20one/cancel')
+    expect(paths).toContain('/api/reports?limit=100')
+    expect(paths).toContain('/api/reports/report%20one/retry')
+    expect(paths).toContain('/api/task-board')
+    expect(paths).toContain('/api/task-board/cards/task%20one')
+    expect(paths).toContain('/api/task-board/notes')
     expect(paths).not.toContain('/api/tasks/task%20one/events')
+    const retryCall = client.apiRequest.mock.calls.find(([path]) =>
+      path === '/api/reports/report%20one/retry')
+    expect(retryCall?.[2]).toMatchObject({ method: 'POST' })
+    const boardCardCall = client.apiRequest.mock.calls.find(([path]) =>
+      path === '/api/task-board/cards/task%20one')
+    expect(boardCardCall?.[2]).toMatchObject({
+      method: 'PUT',
+      body: { column_id: 'queued', rank: 1, priority: 2 },
+    })
     const createCall = client.apiRequest.mock.calls.find(([path]) => path === '/api/employees')
     const createOptions = createCall?.[2] as unknown as {
       method: string

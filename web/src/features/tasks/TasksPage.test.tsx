@@ -538,19 +538,20 @@ describe('Employee Tasks Phase 4 pages', () => {
     expect(screen.getByTestId('location')).toHaveTextContent(
       'employee=employee-ada&project=project-main&state=waiting_owner&time=7d',
     )
-    for (const [state, label] of [
-      ['queued', 'Queued'],
-      ['prepared', 'Prepared'],
-      ['waiting_owner', 'Waiting for owner'],
-      ['running', 'Running'],
-      ['verifying', 'Verifying'],
-      ['interrupted', 'Interrupted'],
-      ['completed', 'Completed'],
-      ['failed', 'Failed'],
-      ['cancelled', 'Cancelled'],
-    ] as const) {
-      expect(state).toBeTruthy()
-      selectAntOption('State filter', label)
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'State filter' }))
+    for (const label of [
+      'Queued',
+      'Prepared',
+      'Waiting for owner',
+      'Running',
+      'Verifying',
+      'Interrupted',
+      'Completed',
+      'Failed',
+      'Cancelled',
+    ]) {
+      expect(screen.getAllByText(label, { exact: true }).some((node) =>
+        node.classList.contains('ant-select-item-option-content'))).toBe(true)
     }
   })
 
