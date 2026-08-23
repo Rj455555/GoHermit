@@ -48,6 +48,65 @@ type DispatchRecord struct {
 func (s *Store) PrepareDispatch(expected DispatchRecord) (DispatchRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.prepareDispatchLocked(expected)
+}
+
+// PrepareDispatchWithMemoryGate atomically binds dispatch creation to the
+// current Employee revision and the Task's selected Memory Fact digests.
+func (s *Store) PrepareDispatchWithMemoryGate(
+	expected DispatchRecord,
+	expectedEmployeeRevision int,
+	expectedMemoryFacts []employee.TaskMemoryFactSnapshot,
+) (DispatchRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, err := s.getTaskLocked(expected.TaskID)
+	if err != nil {
+		return DispatchRecord{}, err
+	}
+	if task.EmployeeID != expected.EmployeeID {
+		return DispatchRecord{}, fmt.Errorf("%w: dispatch Task identity mismatch", ErrConflict)
+	}
+	record, err := s.getLockedWithoutMutex(task.EmployeeID)
+	if err != nil {
+		return DispatchRecord{}, err
+	}
+	if record.Employee.Revision != expectedEmployeeRevision {
+		return DispatchRecord{}, fmt.Errorf(
+			"%w: expected Employee revision %d, current %d",
+			ErrConflict, expectedEmployeeRevision, record.Employee.Revision,
+		)
+	}
+	if record.Employee.State != employee.StateActive {
+		return DispatchRecord{}, fmt.Errorf("%w: Employee is not active", ErrConflict)
+	}
+	if !sameTaskMemoryFacts(task.MemoryFacts, expectedMemoryFacts) {
+		return DispatchRecord{}, fmt.Errorf("%w: dispatch Memory selection does not match Task", ErrConflict)
+	}
+	if len(expectedMemoryFacts) > 0 {
+		facts, loadErr := s.loadFacts(task.EmployeeID)
+		if loadErr != nil {
+			return DispatchRecord{}, loadErr
+		}
+		current := make(map[string]string, len(facts))
+		for _, fact := range facts {
+			if fact.EmployeeID == task.EmployeeID {
+				current[fact.ID] = fact.Digest
+			}
+		}
+		for _, pinned := range expectedMemoryFacts {
+			if digest, exists := current[pinned.FactID]; !exists || digest != pinned.Digest {
+				return DispatchRecord{}, fmt.Errorf(
+					"%w: accepted Memory Fact %q changed or is unavailable", ErrConflict, pinned.FactID,
+				)
+			}
+		}
+	}
+	return s.prepareDispatchLocked(expected)
+}
+
+func (s *Store) prepareDispatchLocked(expected DispatchRecord) (DispatchRecord, error) {
 
 	if expected.Stage == "" {
 		expected.Stage = DispatchPrepared
@@ -87,6 +146,18 @@ func (s *Store) PrepareDispatch(expected DispatchRecord) (DispatchRecord, error)
 		return DispatchRecord{}, err
 	}
 	return expected, nil
+}
+
+func sameTaskMemoryFacts(left, right []employee.TaskMemoryFactSnapshot) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) LoadDispatch(taskID string) (DispatchRecord, error) {

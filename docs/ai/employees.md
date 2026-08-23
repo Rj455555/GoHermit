@@ -130,6 +130,21 @@ Facts can be viewed, edited with provenance retained, and forgotten. Forget
 removes the fact from subsequent context assembly. Project Memory remains a
 separate workspace-scoped verified layer.
 
+The current Employee Memory policy is enforced at runtime. Task creation and
+Prepare reject selected Facts whose count or rendered UTF-8 context payload
+exceeds `max_context_facts` or `max_context_bytes`; Prepare rereads the current
+Facts and policy before writing a dispatch journal or Session. Completed Runs
+generate Candidates only while `candidate_generation` is enabled, and
+Candidate acceptance returns a conflict while promotion is disabled. Project
+Memory persists verified commands and known issues, but does not infer new
+Architecture or Decision facts from touched paths or CompletedSteps.
+
+The Employee Store defines the two runtime atomic points: generated Candidate
+policy evaluation and Candidate persistence share one Store lock; Prepare's
+current Employee revision/state and selected Fact digest checks share one Store
+lock with dispatch-journal creation or idempotent reload. Resume continues from
+the already sealed compact Session snapshot and does not repeat this gate.
+
 ## Team Role mapping
 
 TeamTemplate schema v2 adds optional `employee_id`. A dedicated v1 wire schema

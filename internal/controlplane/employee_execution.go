@@ -631,19 +631,16 @@ func (s *Service) finalizeEmployeeTaskOutcome(taskID string) error {
 	if value := strings.TrimSpace(run.FinalMessage); value != "" {
 		value = clipUTF8Bytes(value, employeememory.MaxValueBytes)
 		sum := sha256.Sum256([]byte(task.EmployeeID + "\x00" + task.ID + "\x00" + task.SessionID + "\x00" + task.RunID))
-		candidate, candidateErr := employeememory.NewCandidate(employeememory.Candidate{
+		if _, err = s.employees.AddGeneratedMemoryCandidate(task.EmployeeID, employeememory.Candidate{
 			ID: "candidate-run-" + hex.EncodeToString(sum[:12]), EmployeeID: task.EmployeeID,
 			Category: "verified-run", Value: value,
 			Provenance: []employeememory.Provenance{{
 				SourceType: "run", SourceID: task.RunID, SourceTaskID: task.ID,
 				SourceSessionID: task.SessionID, SourceRunID: task.RunID, VerifiedAt: verifiedAt,
 			}},
-		}, verifiedAt)
-		if candidateErr == nil {
-			if err = s.employees.AddMemoryCandidate(task.EmployeeID, candidate); err != nil {
-				if !errors.Is(err, employeestore.ErrCapacity) {
-					return err
-				}
+		}, verifiedAt); err != nil {
+			if !errors.Is(err, employeememory.ErrInvalid) && !errors.Is(err, employeestore.ErrCapacity) {
+				return err
 			}
 		}
 	}

@@ -137,11 +137,18 @@ func TestV07KnowledgeEmployeeMemoryAndProjectMemoryLayering(t *testing.T) {
 		t.Fatal(err)
 	}
 	projectSession.CompletedSteps = []string{"Project-wide verified convention."}
-	if err = contextmgr.UpdateProjectMemory(filepath.Join(root, "workspace"), projectSession, session.Run{ID: "run-project-memory"}); err != nil {
+	projectSession.TestResults = []session.TestResult{{
+		Command: "go test ./...", Passed: true, Time: now, RunID: "run-project-memory",
+	}}
+	projectRun := session.Run{ID: "run-project-memory", ModifiedFiles: []string{"internal/project.go"}}
+	if err = contextmgr.UpdateProjectMemory(filepath.Join(root, "workspace"), projectSession, projectRun); err != nil {
 		t.Fatal(err)
 	}
 	projectMemory, err := contextmgr.LoadProjectMemory(filepath.Join(root, "workspace"))
-	if err != nil || len(projectMemory.Decisions) != 1 || strings.Contains(projectMemory.Decisions[0].Value, fact.Value) {
+	if err != nil || len(projectMemory.VerifiedCommands) != 1 ||
+		projectMemory.VerifiedCommands[0].Value != "go test ./..." ||
+		len(projectMemory.Architecture) != 0 || len(projectMemory.Decisions) != 0 ||
+		strings.Contains(projectMemory.VerifiedCommands[0].Value, fact.Value) {
 		t.Fatalf("Project Memory mixed with Employee Memory: %#v, %v", projectMemory, err)
 	}
 	if err = store.ForgetMemory(employeeA.ID, fact.ID); err != nil {

@@ -221,6 +221,122 @@ func TestEmployeeTaskStartReconcilesBindingCrashPoints(t *testing.T) {
 	}
 }
 
+func completeEmployeeTaskWithoutLaunching(t *testing.T, fixture *phase6Fixture, withArtifact bool) employee.EmployeeTask {
+	t.Helper()
+	fixture.service.employeeTaskStageHook = func(stage string) error {
+		if stage == "journal_task_bound" {
+			return errors.New("stop before launch")
+		}
+		return nil
+	}
+	if _, err := fixture.service.StartEmployeeTask(context.Background(), fixture.taskID); err == nil {
+		t.Fatal("expected pre-launch stop")
+	}
+	fixture.service.employeeTaskStageHook = nil
+	task, err := fixture.employees.GetTask(fixture.taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := fixture.sessions.Load(context.Background(), task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := findRun(sess, task.RunID)
+	if run == nil {
+		t.Fatal("bound Run is missing")
+	}
+	now := time.Now().UTC()
+	run.Status = session.RunCompleted
+	run.CompletedAt = &now
+	run.FinalMessage = "Verified outcome that must be skipped as Memory."
+	if withArtifact {
+		run.ModifiedFiles = []string{"result.txt"}
+		sess.ModifiedFiles["result.txt"] = strings.Repeat("a", 64)
+	}
+	if err := fixture.sessions.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+func TestFinalizeEmployeeTaskOutcomeSkipsCandidateWhenGenerationDisabled(t *testing.T) {
+	fixture := newPhase6Fixture(t)
+	updateEmployeeMemoryPolicy(t, fixture.employees, "employee-a", employee.MemoryPolicy{
+		Promotion: employee.MemoryPromotionOwnerConfirmation, MaxContextFacts: 32, MaxContextBytes: 32 << 10,
+	})
+	task := completeEmployeeTaskWithoutLaunching(t, fixture, false)
+	if err := fixture.service.finalizeEmployeeTaskOutcome(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := fixture.employees.MemoryCandidates(task.EmployeeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("disabled Candidate Generation produced %#v", candidates)
+	}
+}
+
+func TestFinalizeEmployeeTaskOutcomeStillCollectsArtifactsWhenCandidateGenerationDisabled(t *testing.T) {
+	fixture := newPhase6Fixture(t)
+	updateEmployeeMemoryPolicy(t, fixture.employees, "employee-a", employee.MemoryPolicy{
+		Promotion: employee.MemoryPromotionOwnerConfirmation, MaxContextFacts: 32, MaxContextBytes: 32 << 10,
+	})
+	task := completeEmployeeTaskWithoutLaunching(t, fixture, true)
+	if err := fixture.service.finalizeEmployeeTaskOutcome(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := fixture.employees.Artifacts(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 1 || artifacts[0].Path != "result.txt" {
+		t.Fatalf("Artifact collection changed when Candidate Generation was disabled: %#v", artifacts)
+	}
+}
+
+func TestFinalizeEmployeeTaskOutcomeSkipsInvalidCandidateAndCollectsArtifacts(t *testing.T) {
+	fixture := newPhase6Fixture(t)
+	record, err := fixture.employees.Get("employee-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.Employee.MemoryPolicy.CandidateGeneration {
+		t.Fatal("test requires Candidate Generation to be enabled")
+	}
+	task := completeEmployeeTaskWithoutLaunching(t, fixture, true)
+	sess, err := fixture.sessions.Load(context.Background(), task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := findRun(sess, task.RunID)
+	if run == nil {
+		t.Fatal("bound Run is missing")
+	}
+	run.FinalMessage = "Verified result with api_key=do-not-store"
+	if err := fixture.sessions.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fixture.service.finalizeEmployeeTaskOutcome(task.ID); err != nil {
+		t.Fatalf("invalid Candidate blocked finalization: %v", err)
+	}
+	candidates, err := fixture.employees.MemoryCandidates(task.EmployeeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("invalid FinalMessage produced Candidates: %#v", candidates)
+	}
+	artifacts, err := fixture.employees.Artifacts(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 1 || artifacts[0].Path != "result.txt" {
+		t.Fatalf("invalid Candidate blocked Artifact persistence: %#v", artifacts)
+	}
+}
+
 func TestEmployeeTaskVerifiedOutcomeCreatesCandidateWithoutPromotion(t *testing.T) {
 	fixture := newPhase6Fixture(t)
 	provider := &phase7Provider{}
@@ -350,6 +466,10 @@ func TestEmployeeTaskInterruptedResumeUsesOriginalRun(t *testing.T) {
 	if run == nil {
 		t.Fatal("bound Run is missing")
 	}
+	originalSnapshot := sess.EmployeeContextSnapshot.Clone()
+	updateEmployeeMemoryPolicy(t, fixture.employees, "employee-a", employee.MemoryPolicy{
+		Promotion: employee.MemoryPromotionOwnerConfirmation, MaxContextFacts: 0, MaxContextBytes: 0,
+	})
 	run.Status = session.RunInterrupted
 	if err = fixture.sessions.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
@@ -367,6 +487,19 @@ func TestEmployeeTaskInterruptedResumeUsesOriginalRun(t *testing.T) {
 	loaded, err := fixture.sessions.Load(context.Background(), task.SessionID)
 	if err != nil || len(loaded.Runs) != 1 || loaded.Runs[0].ID != task.RunID || provider.runs.Load() != 1 {
 		t.Fatalf("resumed Run = %#v, %v; execution calls=%d", loaded.Runs, err, provider.runs.Load())
+	}
+	if loaded.EmployeeContextSnapshot == nil || !reflect.DeepEqual(*loaded.EmployeeContextSnapshot, originalSnapshot) {
+		t.Fatalf("Resume changed the prepared Compact Snapshot: before=%#v after=%#v", originalSnapshot, loaded.EmployeeContextSnapshot)
+	}
+	provider.mu.Lock()
+	request := provider.request
+	provider.mu.Unlock()
+	joined := ""
+	for _, message := range request.Messages {
+		joined += message.Content + "\n"
+	}
+	if !strings.Contains(joined, "Private Employee Memory") {
+		t.Fatal("Resume did not use the prepared Memory snapshot after policy tightening")
 	}
 }
 

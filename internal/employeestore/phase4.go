@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/employeememory"
 	"github.com/Rj455555/GoHermit/internal/knowledge"
 )
@@ -220,40 +221,73 @@ func (s *Store) MemoryCandidates(id string) ([]employeememory.Candidate, error) 
 	return s.loadCandidates(id)
 }
 
-// AddMemoryCandidate is a persistence seam for future verified runtime output
-// and tests. Phase 4 intentionally exposes no HTTP endpoint that creates one.
+// AddMemoryCandidate persists an already constructed Candidate. It deliberately
+// does not apply the automatic generation policy so existing Candidates can be
+// restored and tests can construct owner-visible inbox state.
 func (s *Store) AddMemoryCandidate(id string, candidate employeememory.Candidate) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_, err := s.addMemoryCandidateLocked(id, candidate)
+	return err
+}
+
+// AddGeneratedMemoryCandidate atomically applies the current Employee policy
+// and, when enabled, constructs and persists a verified runtime Candidate.
+func (s *Store) AddGeneratedMemoryCandidate(
+	id string, draft employeememory.Candidate, createdAt time.Time,
+) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := validateStoreID(id); err != nil {
-		return err
+		return false, err
+	}
+	record, err := s.getLockedWithoutMutex(id)
+	if err != nil {
+		return false, err
+	}
+	if !record.Employee.MemoryPolicy.CandidateGeneration {
+		return false, nil
+	}
+	candidate, err := employeememory.NewCandidate(draft, createdAt)
+	if err != nil {
+		return false, err
+	}
+	return s.addMemoryCandidateLocked(id, candidate)
+}
+
+func (s *Store) addMemoryCandidateLocked(id string, candidate employeememory.Candidate) (bool, error) {
+	if err := validateStoreID(id); err != nil {
+		return false, err
 	}
 	if _, err := s.getLockedWithoutMutex(id); err != nil {
-		return err
+		return false, err
 	}
 	if candidate.EmployeeID != id {
-		return errors.New("Memory Candidate identity mismatch")
+		return false, errors.New("Memory Candidate identity mismatch")
 	}
 	if err := employeememory.ValidateCandidate(candidate); err != nil {
-		return err
+		return false, err
 	}
 	candidates, err := s.loadCandidates(id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	position := findCandidate(candidates, candidate.ID)
 	if position >= 0 {
 		if candidates[position].Digest == candidate.Digest {
-			return nil
+			return false, nil
 		}
-		return ErrConflict
+		return false, ErrConflict
 	}
 	if len(candidates) >= employeememory.MaxCandidates {
-		return fmt.Errorf("%w: Memory Candidate limit reached", ErrCapacity)
+		return false, fmt.Errorf("%w: Memory Candidate limit reached", ErrCapacity)
 	}
 	candidates = append(candidates, candidate)
 	employeememory.SortCandidates(candidates)
-	return s.writeCandidates(id, candidates)
+	if err := s.writeCandidates(id, candidates); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) AcceptMemoryCandidate(id, candidateID string) (employeememory.Fact, error) {
@@ -268,6 +302,13 @@ func (s *Store) AcceptMemoryCandidate(id, candidateID string) (employeememory.Fa
 	record, err := s.getLockedWithoutMutex(id)
 	if err != nil {
 		return employeememory.Fact{}, err
+	}
+	switch record.Employee.MemoryPolicy.Promotion {
+	case employee.MemoryPromotionOwnerConfirmation:
+	case employee.MemoryPromotionDisabled:
+		return employeememory.Fact{}, fmt.Errorf("%w: Employee Memory promotion is disabled", ErrConflict)
+	default:
+		return employeememory.Fact{}, fmt.Errorf("%w: unsupported Employee Memory promotion policy", ErrCorrupt)
 	}
 	facts, err := s.loadFacts(id)
 	if err != nil {

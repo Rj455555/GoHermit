@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rj455555/GoHermit/internal/employee"
 	"github.com/Rj455555/GoHermit/internal/employeememory"
 	"github.com/Rj455555/GoHermit/internal/employeestore"
 	"github.com/Rj455555/GoHermit/internal/knowledge"
@@ -73,5 +74,40 @@ func TestEmployeeMemoryControlPlaneRequiresExplicitOwnerAcceptance(t *testing.T)
 	}
 	if _, err := service.AcceptEmployeeMemoryCandidate(context.Background(), "employee-a", "missing"); !errors.As(err, new(*Error)) {
 		t.Fatalf("missing Candidate was not classified: %v", err)
+	}
+}
+
+func TestEmployeeMemoryControlPlaneRejectsAcceptanceWhenPromotionDisabled(t *testing.T) {
+	store, _ := employeestore.NewStore(filepath.Join(t.TempDir(), "employees"))
+	draft := controlPlaneDraft("employee-a")
+	draft.MemoryPolicy = employee.MemoryPolicy{Promotion: employee.MemoryPromotionDisabled}
+	if _, err := store.Create(draft, nil); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Workspace: t.TempDir(), employees: store}
+	now := time.Now().UTC()
+	candidate, err := employeememory.NewCandidate(employeememory.Candidate{
+		ID: "candidate-disabled", EmployeeID: "employee-a", Category: "fact", Value: "Existing candidate.",
+		Provenance: []employeememory.Provenance{{SourceType: "owner", SourceID: "owner-note", VerifiedAt: now}},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddMemoryCandidate("employee-a", candidate); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AcceptEmployeeMemoryCandidate(context.Background(), "employee-a", candidate.ID); serviceErrorKind(err) != KindConflict {
+		t.Fatalf("accept with disabled promotion = %v, want Control Plane conflict", err)
+	}
+	candidates, err := store.MemoryCandidates("employee-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.Memory("employee-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].ID != candidate.ID || len(facts) != 0 {
+		t.Fatalf("disabled promotion mutated memory: candidates=%#v facts=%#v", candidates, facts)
 	}
 }
