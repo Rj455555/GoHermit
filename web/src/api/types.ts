@@ -641,6 +641,7 @@ export interface Employee extends EmployeeSummary {
   memory_policy: {
     candidate_generation: boolean
     promotion: 'disabled' | 'owner_confirmation'
+    automatic_recall?: boolean | undefined
     max_context_facts: number
     max_context_bytes: number
   }

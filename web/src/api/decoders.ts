@@ -942,6 +942,7 @@ function decodeEmployeeValue(value: unknown): Employee {
     memory_policy: {
       candidate_generation: boolean(memory.candidate_generation),
       promotion: enumeration(memory.promotion, ['disabled', 'owner_confirmation'] as const),
+      automatic_recall: memory.automatic_recall === undefined ? false : boolean(memory.automatic_recall),
       max_context_facts: integer(memory.max_context_facts),
       max_context_bytes: integer(memory.max_context_bytes),
     },

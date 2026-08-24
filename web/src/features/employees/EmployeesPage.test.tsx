@@ -70,6 +70,7 @@ const employeeRecord = {
     memory_policy: {
       candidate_generation: true,
       promotion: 'owner_confirmation',
+      automatic_recall: true,
       max_context_facts: 8,
       max_context_bytes: 8_192,
     },
@@ -557,6 +558,7 @@ describe('Employees Phase 4 pages', () => {
     await waitFor(() => expect(api.dryRunEmployee).toHaveBeenCalledOnce())
     expect(await screen.findByText('1/1')).toBeVisible()
     await openEmployeeTab(user, 'Settings')
+    expect(screen.queryByRole('switch', { name: /Automatic recall|自动召回/u })).not.toBeInTheDocument()
     const name = await screen.findByLabelText('Name')
     await user.clear(name)
     await user.type(name, 'Ada Lovelace')
@@ -572,7 +574,7 @@ describe('Employees Phase 4 pages', () => {
     }
     expect(overviewPayload).toMatchObject({
       expected_revision: summary.revision,
-      employee: { name: 'Ada Lovelace' },
+      employee: { name: 'Ada Lovelace', memory_policy: { automatic_recall: true } },
     })
 
     await openEmployeeTab(user, 'Projects')
