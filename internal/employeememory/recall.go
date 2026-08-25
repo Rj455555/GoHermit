@@ -6,16 +6,33 @@ import (
 	"unicode"
 )
 
-// RecallFacts returns the accepted Facts eligible for deterministic automatic
-// recall. Invalid Facts, Facts owned by another Employee, and manually pinned
-// Facts are excluded. The returned slice is ordered independently of the
-// input/store order.
+// The set is fixed so eligibility is deterministic and auditable. Business
+// words such as frontend, go, before, and without intentionally remain valid.
+var englishStopwords = map[string]struct{}{
+	"a": {}, "an": {}, "and": {}, "are": {}, "as": {}, "at": {}, "be": {}, "by": {},
+	"for": {}, "from": {}, "in": {}, "is": {}, "it": {}, "of": {}, "on": {}, "or": {},
+	"that": {}, "the": {}, "this": {}, "to": {}, "with": {},
+}
+
+// Only explicitly audited plural forms are normalized; this is not stemming.
+var englishSingulars = map[string]string{
+	"dependencies": "dependency",
+	"managers":     "manager",
+	"migrations":   "migration",
+	"packages":     "package",
+	"repositories": "repository",
+	"tests":        "test",
+}
+
+// RecallFacts returns accepted Facts eligible for deterministic automatic
+// recall. Invalid Facts, Facts owned by another Employee, manually pinned
+// Facts, and Facts without a qualifying relevance match are excluded.
 func RecallFacts(prompt, employeeID string, facts []Fact, excludedIDs []string) []Fact {
 	excluded := make(map[string]struct{}, len(excludedIDs))
 	for _, id := range excludedIDs {
 		excluded[id] = struct{}{}
 	}
-	promptTokens := memoryTokens(prompt)
+	promptTokens := tokenizeMemory(prompt)
 	items := make([]recalledFact, 0, len(facts))
 	for _, fact := range facts {
 		if fact.EmployeeID != employeeID {
@@ -27,23 +44,32 @@ func RecallFacts(prompt, employeeID string, facts []Fact, excludedIDs []string) 
 		if err := ValidateFact(fact); err != nil {
 			continue
 		}
-		intersection := tokenIntersection(promptTokens, memoryTokens(fact.Value))
-		if intersection == 0 && !fact.OwnerEdited && fact.Category == "verified-run" {
+		match := calculateRecallMatch(promptTokens, tokenizeMemory(fact.Value))
+		if !match.eligible {
 			continue
 		}
-		items = append(items, recalledFact{fact: fact, intersection: intersection})
+		items = append(items, recalledFact{
+			fact:               fact,
+			tokenIntersection:  match.tokenIntersection,
+			phraseIntersection: match.phraseIntersection,
+			cjkIntersection:    match.cjkIntersection,
+		})
 	}
 	sort.Slice(items, func(left, right int) bool {
-		if items[left].intersection != items[right].intersection {
-			return items[left].intersection > items[right].intersection
+		if items[left].tokenIntersection != items[right].tokenIntersection {
+			return items[left].tokenIntersection > items[right].tokenIntersection
+		}
+		if items[left].phraseIntersection != items[right].phraseIntersection {
+			return items[left].phraseIntersection > items[right].phraseIntersection
+		}
+		if items[left].cjkIntersection != items[right].cjkIntersection {
+			return items[left].cjkIntersection > items[right].cjkIntersection
 		}
 		if items[left].fact.OwnerEdited != items[right].fact.OwnerEdited {
 			return items[left].fact.OwnerEdited
 		}
-		leftVerified := items[left].fact.Category == "verified-run"
-		rightVerified := items[right].fact.Category == "verified-run"
-		if leftVerified != rightVerified {
-			return !leftVerified
+		if items[left].fact.Category != items[right].fact.Category {
+			return items[left].fact.Category < items[right].fact.Category
 		}
 		if !items[left].fact.UpdatedAt.Equal(items[right].fact.UpdatedAt) {
 			return items[left].fact.UpdatedAt.After(items[right].fact.UpdatedAt)
@@ -58,13 +84,51 @@ func RecallFacts(prompt, employeeID string, facts []Fact, excludedIDs []string) 
 }
 
 type recalledFact struct {
-	fact         Fact
-	intersection int
+	fact               Fact
+	tokenIntersection  int
+	phraseIntersection int
+	cjkIntersection    int
 }
 
-func memoryTokens(value string) map[string]struct{} {
+type memoryTokenData struct {
+	all     map[string]struct{}
+	english map[string]struct{}
+	cjk     map[string]struct{}
+	phrases map[string]struct{}
+}
+
+type recallMatch struct {
+	tokenIntersection  int
+	phraseIntersection int
+	cjkIntersection    int
+	eligible           bool
+}
+
+func calculateRecallMatch(prompt, fact memoryTokenData) recallMatch {
+	englishIntersection := tokenIntersection(prompt.english, fact.english)
+	cjkIntersection := tokenIntersection(prompt.cjk, fact.cjk)
+	phraseIntersection := tokenIntersection(prompt.phrases, fact.phrases)
+	tokenIntersection := englishIntersection + cjkIntersection
+	oneExactEnglishToken := len(prompt.english) == 1 && len(prompt.all) == 1 && englishIntersection == 1
+	return recallMatch{
+		tokenIntersection:  tokenIntersection,
+		phraseIntersection: phraseIntersection,
+		cjkIntersection:    cjkIntersection,
+		eligible: phraseIntersection > 0 || englishIntersection >= 2 ||
+			oneExactEnglishToken || cjkIntersection > 0,
+	}
+}
+
+func tokenizeMemory(value string) memoryTokenData {
+	data := memoryTokenData{
+		all:     make(map[string]struct{}),
+		english: make(map[string]struct{}),
+		cjk:     make(map[string]struct{}),
+		phrases: make(map[string]struct{}),
+	}
 	runes := []rune(strings.ToLower(value))
-	tokens := make(map[string]struct{})
+	previousEnglish := ""
+	previousWasEnglish := false
 	for index := 0; index < len(runes); {
 		if isCJKRune(runes[index]) {
 			end := index + 1
@@ -72,8 +136,12 @@ func memoryTokens(value string) map[string]struct{} {
 				end++
 			}
 			for pair := index; pair+1 < end; pair++ {
-				tokens[string(runes[pair:pair+2])] = struct{}{}
+				token := string(runes[pair : pair+2])
+				data.all[token] = struct{}{}
+				data.cjk[token] = struct{}{}
 			}
+			previousEnglish = ""
+			previousWasEnglish = false
 			index = end
 			continue
 		}
@@ -82,13 +150,43 @@ func memoryTokens(value string) map[string]struct{} {
 			for end < len(runes) && isWordRune(runes[end]) {
 				end++
 			}
-			tokens[string(runes[index:end])] = struct{}{}
+			token := normalizeEnglishToken(string(runes[index:end]))
+			if token == "" {
+				previousEnglish = ""
+				previousWasEnglish = false
+				index = end
+				continue
+			}
+			data.all[token] = struct{}{}
+			data.english[token] = struct{}{}
+			if previousWasEnglish {
+				data.phrases[previousEnglish+" "+token] = struct{}{}
+			}
+			previousEnglish = token
+			previousWasEnglish = true
 			index = end
 			continue
 		}
+		previousEnglish = ""
+		previousWasEnglish = false
 		index++
 	}
-	return tokens
+	return data
+}
+
+func normalizeEnglishToken(token string) string {
+	token = strings.ToLower(token)
+	if _, stopword := englishStopwords[token]; stopword {
+		return ""
+	}
+	if singular, ok := englishSingulars[token]; ok {
+		return singular
+	}
+	return token
+}
+
+func memoryTokens(value string) map[string]struct{} {
+	return tokenizeMemory(value).all
 }
 
 func isWordRune(value rune) bool {

@@ -219,7 +219,7 @@ func TestCreateEmployeeTaskAutomaticallyRecallsAcceptedFacts(t *testing.T) {
 	for _, item := range created.MemoryFacts {
 		ids = append(ids, item.FactID)
 	}
-	want := memoryFactIDs(fixture.facts[:2])
+	want := memoryFactIDs(fixture.facts[:1])
 	sort.Strings(want)
 	if !reflect.DeepEqual(ids, want) {
 		t.Fatalf("automatic recall ids = %#v, want matched facts only", ids)
