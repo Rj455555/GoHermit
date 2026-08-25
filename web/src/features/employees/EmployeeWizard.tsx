@@ -27,6 +27,7 @@ import {
   ensureEmployeeId,
   generateEmployeeDraft,
   isValidEmployeeId,
+  defaultMemoryPolicy,
   type EmployeePreset,
 } from './employeeDraft'
 
@@ -61,12 +62,7 @@ function initialEmployee(): Employee {
     permission_policy: { allowed_capabilities: ['read'], network_allowed: false },
     budget_policy: { max_model_calls: 8, max_tokens: 32_000, timeout_seconds: 1_200 },
     concurrency_policy: { max_running_tasks: 1 },
-    memory_policy: {
-      candidate_generation: true,
-      promotion: 'owner_confirmation',
-      max_context_facts: 16,
-      max_context_bytes: 32_768,
-    },
+    memory_policy: defaultMemoryPolicy(),
     project_count: 0,
     created_at: epoch,
     updated_at: epoch,
@@ -394,12 +390,7 @@ export function EmployeeWizard({ onClose, onCreated }: {
           behavior_boundaries: [],
           skill_bindings: [],
           project_binding_ids: [project.id],
-          memory_policy: {
-            candidate_generation: false,
-            promotion: 'disabled',
-            max_context_facts: 0,
-            max_context_bytes: 0,
-          },
+          memory_policy: defaultMemoryPolicy(),
         },
         project_bindings: [project],
       })
@@ -686,6 +677,7 @@ export function EmployeeWizard({ onClose, onCreated }: {
       {step === 5 ? (
         <div className="form-grid">
           <label className="choice-field wide"><input type="checkbox" checked={employee.memory_policy.candidate_generation} onChange={(event) => patch({ memory_policy: { ...employee.memory_policy, candidate_generation: event.target.checked, promotion: event.target.checked ? 'owner_confirmation' : 'disabled' } })} />{t('employees.memoryCandidates')}</label>
+          <label className="choice-field wide"><input type="checkbox" checked={employee.memory_policy.automatic_recall} onChange={(event) => patch({ memory_policy: { ...employee.memory_policy, automatic_recall: event.target.checked } })} />{t('employees.automaticRecall')}</label>
           <label>{t('employees.maxContextFacts')}<input type="number" min="0" value={employee.memory_policy.max_context_facts} onChange={(event) => patch({ memory_policy: { ...employee.memory_policy, max_context_facts: Number(event.target.value) } })} /></label>
           <label>{t('employees.maxContextBytes')}<input type="number" min="0" value={employee.memory_policy.max_context_bytes} onChange={(event) => patch({ memory_policy: { ...employee.memory_policy, max_context_bytes: Number(event.target.value) } })} /></label>
         </div>

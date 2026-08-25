@@ -496,7 +496,7 @@ func (s *Service) CreateEmployeeTask(_ context.Context, employeeID string, input
 	if err != nil {
 		return EmployeeTaskView{}, err
 	}
-	selectedMemory, err := s.selectTaskMemory(employeeID, input.MemoryFactIDs, record.Employee.MemoryPolicy)
+	selectedMemory, err := s.selectTaskMemory(employeeID, input.Prompt, input.MemoryFactIDs, record.Employee.MemoryPolicy)
 	if err != nil {
 		return EmployeeTaskView{}, err
 	}
@@ -669,7 +669,7 @@ func (s *Service) selectTaskKnowledge(employeeID string, selections []EmployeeTa
 }
 
 func (s *Service) selectTaskMemory(
-	employeeID string, factIDs []string, policy employee.MemoryPolicy,
+	employeeID, prompt string, factIDs []string, policy employee.MemoryPolicy,
 ) ([]employee.TaskMemoryFactSnapshot, error) {
 	if len(factIDs) > policy.MaxContextFacts {
 		return nil, classified(KindInvalid, fmt.Errorf(
@@ -677,7 +677,7 @@ func (s *Service) selectTaskMemory(
 			len(factIDs), policy.MaxContextFacts,
 		))
 	}
-	if len(factIDs) == 0 {
+	if len(factIDs) == 0 && !policy.AutomaticRecall {
 		return []employee.TaskMemoryFactSnapshot{}, nil
 	}
 	facts, err := s.employees.Memory(employeeID)
@@ -700,6 +700,12 @@ func (s *Service) selectTaskMemory(
 		if !exists {
 			return nil, classified(KindInvalid, fmt.Errorf("accepted Memory Fact %q is not available", factID))
 		}
+		if fact.EmployeeID != employeeID {
+			return nil, classified(KindInvalid, fmt.Errorf("Memory Fact %q belongs to another Employee", factID))
+		}
+		if err := employeememory.ValidateFact(fact); err != nil {
+			return nil, classifyMemoryStore(err)
+		}
 		item, compactErr := compactMemoryFromFact(fact)
 		if compactErr != nil {
 			return nil, classified(KindInternal, compactErr)
@@ -711,6 +717,28 @@ func (s *Service) selectTaskMemory(
 	if err := validateEmployeeMemoryContextPolicy(policy, employeeID, compact, KindInvalid); err != nil {
 		return nil, err
 	}
+	if !policy.AutomaticRecall || len(result) >= policy.MaxContextFacts || policy.MaxContextBytes == 0 {
+		sort.Slice(result, func(left, right int) bool { return result[left].FactID < result[right].FactID })
+		return result, nil
+	}
+
+	automatic := employeememory.RecallFacts(prompt, employeeID, facts, factIDs)
+	for _, fact := range automatic {
+		if len(result) >= policy.MaxContextFacts {
+			break
+		}
+		item, compactErr := compactMemoryFromFact(fact)
+		if compactErr != nil {
+			return nil, classified(KindInternal, compactErr)
+		}
+		candidateMemory := append(append([]employee.CompactMemory{}, compact...), item)
+		if contextmgr.CompactMemoryPayloadBytes(employeeID, candidateMemory) > policy.MaxContextBytes {
+			continue
+		}
+		result = append(result, employee.TaskMemoryFactSnapshot{FactID: fact.ID, Digest: fact.Digest})
+		compact = append(compact, item)
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].FactID < result[right].FactID })
 	return result, nil
 }
 

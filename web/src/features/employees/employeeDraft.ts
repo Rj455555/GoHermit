@@ -1,5 +1,15 @@
 import type { Employee } from '../../api/types'
 
+export function defaultMemoryPolicy(): Employee['memory_policy'] {
+  return {
+    candidate_generation: true,
+    promotion: 'owner_confirmation',
+    automatic_recall: true,
+    max_context_facts: 12,
+    max_context_bytes: 16_384,
+  }
+}
+
 export type EmployeePreset = 'developer' | 'researcher' | 'operations' | 'writer'
 
 interface DraftInput {

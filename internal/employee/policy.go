@@ -55,6 +55,19 @@ type MemoryPolicy struct {
 	MaxContextBytes     int             `json:"max_context_bytes"`
 }
 
+// DefaultMemoryPolicy is the OPC Employee creation policy. A zero-valued
+// MemoryPolicy is the only input that receives these defaults; explicit
+// policies, including disabled policies, remain untouched.
+func DefaultMemoryPolicy() MemoryPolicy {
+	return MemoryPolicy{
+		CandidateGeneration: true,
+		Promotion:           MemoryPromotionOwnerConfirmation,
+		AutomaticRecall:     true,
+		MaxContextFacts:     12,
+		MaxContextBytes:     16 << 10,
+	}
+}
+
 // ProjectPolicy is the narrowing policy carried by one ProjectBinding.
 type ProjectPolicy struct {
 	ReadAllowed             bool          `json:"read_allowed"`

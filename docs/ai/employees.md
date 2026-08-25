@@ -139,6 +139,13 @@ Candidate acceptance returns a conflict while promotion is disabled. Project
 Memory persists verified commands and known issues, but does not infer new
 Architecture or Decision facts from touched paths or CompletedSteps.
 
+New OPC Employees default to Candidate generation, owner-confirmed promotion,
+automatic recall, a maximum of 12 Facts, and a 16 KiB rendered Memory budget.
+Automatic recall is deterministic and local-only: it runs once during ordinary
+Employee Task creation, after manual Fact selection has been validated and
+given priority. Prepare, Start, Resume, Session recovery, Provider calls, and
+Team Role Memory assembly do not recall additional Facts.
+
 The Employee Store defines the two runtime atomic points: generated Candidate
 policy evaluation and Candidate persistence share one Store lock; Prepare's
 current Employee revision/state and selected Fact digest checks share one Store

@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
-import { ensureEmployeeId, generateEmployeeDraft, isValidEmployeeId } from './employeeDraft'
+import { defaultMemoryPolicy, ensureEmployeeId, generateEmployeeDraft, isValidEmployeeId } from './employeeDraft'
 
 describe('guided Employee draft generation', () => {
+  it('shares the OPC memory defaults across normal and quick creation', () => {
+    expect(defaultMemoryPolicy()).toEqual({
+      candidate_generation: true,
+      promotion: 'owner_confirmation',
+      automatic_recall: true,
+      max_context_facts: 12,
+      max_context_bytes: 16_384,
+    })
+    expect(defaultMemoryPolicy()).toEqual(defaultMemoryPolicy())
+  })
+
   it('creates a safe, complete Chinese developer draft from one short brief', () => {
     const draft = generateEmployeeDraft({
       preset: 'developer',
