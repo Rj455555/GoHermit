@@ -339,6 +339,7 @@ describe('Employees Phase 4 pages', () => {
         memory_policy: {
           candidate_generation: boolean
           promotion: string
+          automatic_recall: boolean
           max_context_facts: number
           max_context_bytes: number
         }
@@ -363,10 +364,11 @@ describe('Employees Phase 4 pages', () => {
       network_allowed: false,
     })
     expect(payload.employee.memory_policy).toEqual({
-      candidate_generation: false,
-      promotion: 'disabled',
-      max_context_facts: 0,
-      max_context_bytes: 0,
+      candidate_generation: true,
+      promotion: 'owner_confirmation',
+      automatic_recall: true,
+      max_context_facts: 12,
+      max_context_bytes: 16_384,
     })
     expect(payload.employee.project_binding_ids).toHaveLength(1)
     expect(payload.project_bindings).toEqual([
@@ -558,7 +560,7 @@ describe('Employees Phase 4 pages', () => {
     await waitFor(() => expect(api.dryRunEmployee).toHaveBeenCalledOnce())
     expect(await screen.findByText('1/1')).toBeVisible()
     await openEmployeeTab(user, 'Settings')
-    expect(screen.queryByRole('switch', { name: /Automatic recall|自动召回/u })).not.toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: /Automatic recall|自动召回/u })).toBeChecked()
     const name = await screen.findByLabelText('Name')
     await user.clear(name)
     await user.type(name, 'Ada Lovelace')
@@ -590,6 +592,25 @@ describe('Employees Phase 4 pages', () => {
         network_allowed: true,
       })],
     }), expect.anything()))
+  }, 30_000)
+
+  it('shows the Automatic Recall switch and persists an explicit off value', async () => {
+    const user = userEvent.setup()
+    api.updateEmployee.mockImplementation((_id: string, input: typeof employeeRecord) => Promise.resolve({
+      employee: input.employee,
+      project_bindings: input.project_bindings,
+    }))
+    renderEmployees('/employees/employee-ada')
+
+    await openEmployeeTab(user, 'Settings')
+    const automaticRecall = await screen.findByRole('switch', { name: /Automatic recall|自动召回/u })
+    expect(automaticRecall).toBeChecked()
+    await user.click(automaticRecall)
+    expect(automaticRecall).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.updateEmployee).toHaveBeenCalledOnce())
+    expect((api.updateEmployee.mock.calls[0]?.[1] as { employee: typeof employeeRecord.employee }).employee.memory_policy.automatic_recall).toBe(false)
   }, 30_000)
 
   it('edits every backend-supported Employee setting with the model catalog', async () => {

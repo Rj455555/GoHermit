@@ -101,10 +101,11 @@ test('quick create persists a conservative Employee from only a Chinese name', a
     network_allowed: false,
   })
   expect(body.employee.memory_policy).toEqual({
-    candidate_generation: false,
-    promotion: 'disabled',
-    max_context_facts: 0,
-    max_context_bytes: 0,
+    candidate_generation: true,
+    promotion: 'owner_confirmation',
+    automatic_recall: true,
+    max_context_facts: 12,
+    max_context_bytes: 16_384,
   })
   expect(body.project_bindings).toEqual([
     expect.objectContaining({

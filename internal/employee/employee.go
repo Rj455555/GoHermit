@@ -125,6 +125,9 @@ func Create(draft Employee, now time.Time) (Employee, error) {
 	if now.IsZero() {
 		return Employee{}, errors.New("employee creation time is required")
 	}
+	if draft.MemoryPolicy == (MemoryPolicy{}) {
+		draft.MemoryPolicy = DefaultMemoryPolicy()
+	}
 	employee := normalizeEmployee(draft)
 	employee.SchemaVersion = SchemaVersion
 	employee.Revision = 1

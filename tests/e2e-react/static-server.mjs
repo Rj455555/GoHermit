@@ -309,8 +309,9 @@ const employeeRecord = {
     memory_policy: {
       candidate_generation: true,
       promotion: 'owner_confirmation',
-      max_context_facts: 8,
-      max_context_bytes: 8192,
+      automatic_recall: true,
+      max_context_facts: 12,
+      max_context_bytes: 16_384,
     },
   },
   project_bindings: [{

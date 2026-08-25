@@ -262,6 +262,7 @@ beforeEach(() => {
       memory_policy: {
         candidate_generation: true,
         promotion: 'owner_confirmation',
+        automatic_recall: true,
         max_context_facts: 8,
         max_context_bytes: 8192,
       },

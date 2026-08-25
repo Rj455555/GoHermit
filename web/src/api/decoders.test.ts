@@ -151,6 +151,7 @@ describe('endpoint decoders', () => {
       memory_policy: {
         candidate_generation: true,
         promotion: 'owner_confirmation',
+        automatic_recall: true,
         max_context_facts: 8,
         max_context_bytes: 8192,
       },
@@ -458,6 +459,7 @@ describe('endpoint decoders', () => {
     expect(record.employee.responsibilities).toEqual([])
     expect(record.employee.behavior_boundaries).toEqual([])
     expect(record.employee.skill_bindings).toEqual([])
+    expect(record.employee.memory_policy.automatic_recall).toBe(false)
   })
 
   it('defaults a missing next_event_sequence to zero', () => {

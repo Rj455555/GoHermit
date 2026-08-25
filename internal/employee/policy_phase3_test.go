@@ -1,9 +1,107 @@
 package employee
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 )
+
+func TestDefaultMemoryPolicyAndCreateCompatibility(t *testing.T) {
+	if got, want := DefaultMemoryPolicy(), (MemoryPolicy{
+		CandidateGeneration: true,
+		Promotion:           MemoryPromotionOwnerConfirmation,
+		AutomaticRecall:     true,
+		MaxContextFacts:     12,
+		MaxContextBytes:     16 << 10,
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("DefaultMemoryPolicy() = %#v, want %#v", got, want)
+	}
+
+	created, err := Create(validEmployeeDraftWithMemoryPolicy(MemoryPolicy{}), time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(created.MemoryPolicy, DefaultMemoryPolicy()) {
+		t.Fatalf("zero creation policy = %#v, want default %#v", created.MemoryPolicy, DefaultMemoryPolicy())
+	}
+
+	disabled := MemoryPolicy{Promotion: MemoryPromotionDisabled}
+	created, err = Create(validEmployeeDraftWithMemoryPolicy(disabled), time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(created.MemoryPolicy, disabled) {
+		t.Fatalf("explicit disabled policy = %#v, want %#v", created.MemoryPolicy, disabled)
+	}
+
+	explicit := MemoryPolicy{
+		CandidateGeneration: true,
+		Promotion:           MemoryPromotionOwnerConfirmation,
+		AutomaticRecall:     false,
+		MaxContextFacts:     4,
+		MaxContextBytes:     4 << 10,
+	}
+	created, err = Create(validEmployeeDraftWithMemoryPolicy(explicit), time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(created.MemoryPolicy, explicit) {
+		t.Fatalf("explicit non-zero policy = %#v, want %#v", created.MemoryPolicy, explicit)
+	}
+}
+
+func TestReviseDoesNotApplyNewMemoryDefaultsAndLegacySnapshotDigestSurvives(t *testing.T) {
+	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	legacyPolicy := MemoryPolicy{
+		CandidateGeneration: true,
+		Promotion:           MemoryPromotionOwnerConfirmation,
+		MaxContextFacts:     16,
+		MaxContextBytes:     32 << 10,
+	}
+	current, err := Create(validEmployeeDraftWithMemoryPolicy(legacyPolicy), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposed := current
+	proposed.Name = "Updated Employee"
+	revised, err := Revise(current, proposed, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(revised.MemoryPolicy, legacyPolicy) {
+		t.Fatalf("Revise() changed legacy policy = %#v, want %#v", revised.MemoryPolicy, legacyPolicy)
+	}
+
+	binding, err := CreateProjectBinding(validProjectBinding(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewRevisionSnapshot(current, []ProjectBinding{binding})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyJSON, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded RevisionSnapshot
+	if err := json.Unmarshal(legacyJSON, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Employee.MemoryPolicy.AutomaticRecall {
+		t.Fatal("legacy snapshot unexpectedly enabled automatic recall")
+	}
+	if !decoded.VerifyDigest() || decoded.Digest != snapshot.Digest {
+		t.Fatalf("legacy snapshot digest changed: decoded=%s original=%s", decoded.Digest, snapshot.Digest)
+	}
+}
+
+func validEmployeeDraftWithMemoryPolicy(policy MemoryPolicy) Employee {
+	draft := validEmployeeDraft()
+	draft.MemoryPolicy = policy
+	return draft
+}
 
 func TestEffectivePolicyIncludesAgentProfileAndSkillsOnlyNarrow(t *testing.T) {
 	base := CapabilityIntersection{

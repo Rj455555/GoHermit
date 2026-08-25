@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,6 +113,26 @@ func memoryFactIDs(facts []employeememory.Fact) []string {
 	return result
 }
 
+func addAcceptedMemoryFact(t *testing.T, fixture *memoryPolicyTaskFixture, id, category, value string, at time.Time) employeememory.Fact {
+	t.Helper()
+	candidate, err := employeememory.NewCandidate(employeememory.Candidate{
+		ID: id + "-candidate", EmployeeID: fixture.employee, Category: category, Value: value,
+		Provenance: []employeememory.Provenance{{SourceType: "owner", SourceID: id, VerifiedAt: at}},
+	}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.employees.AddMemoryCandidate(fixture.employee, candidate); err != nil {
+		t.Fatal(err)
+	}
+	fact, err := fixture.employees.AcceptMemoryCandidate(fixture.employee, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.facts = append(fixture.facts, fact)
+	return fact
+}
+
 func renderedMemoryPayloadBytes(t *testing.T, fact employeememory.Fact) int {
 	t.Helper()
 	provenance, err := json.Marshal(fact.Provenance)
@@ -177,6 +200,148 @@ func TestCreateEmployeeTaskEnforcesMemoryFactCountBoundaries(t *testing.T) {
 		}
 		assertNoTaskOrSessionSideEffects(t, over)
 	})
+}
+
+func TestCreateEmployeeTaskAutomaticallyRecallsAcceptedFacts(t *testing.T) {
+	fixture := newMemoryPolicyTaskFixture(t, "Database migration checklist", "Unrelated runtime output")
+	addAcceptedMemoryFact(t, fixture, "fact-verified-unrelated", "verified-run", "A completed release run", time.Date(2026, 8, 24, 11, 0, 0, 0, time.UTC))
+	updateEmployeeMemoryPolicy(t, fixture.employees, fixture.employee, employee.MemoryPolicy{
+		CandidateGeneration: true, Promotion: employee.MemoryPromotionOwnerConfirmation, AutomaticRecall: true,
+		MaxContextFacts: 12, MaxContextBytes: 16 << 10,
+	})
+	input := fixture.input()
+	input.Prompt = "Please review the database migration checklist."
+	created, err := fixture.service.CreateEmployeeTask(context.Background(), fixture.employee, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(created.MemoryFacts))
+	for _, item := range created.MemoryFacts {
+		ids = append(ids, item.FactID)
+	}
+	want := memoryFactIDs(fixture.facts[:2])
+	sort.Strings(want)
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("automatic recall ids = %#v, want matched facts only", ids)
+	}
+	digests := map[string]string{fixture.facts[0].ID: fixture.facts[0].Digest, fixture.facts[1].ID: fixture.facts[1].Digest}
+	for _, item := range created.MemoryFacts {
+		if item.Digest != digests[item.FactID] {
+			t.Fatalf("automatic recall did not pin FactID + Digest: %#v", created.MemoryFacts)
+		}
+	}
+}
+
+func TestAutomaticRecallFillsRemainingBytesWithoutDisplacingManualFacts(t *testing.T) {
+	fixture := newMemoryPolicyTaskFixture(t, "Manual memory", "migration", strings.Repeat("migration ", 200))
+	manual := fixture.facts[0]
+	small := fixture.facts[1]
+	limit := renderedMemoryPayloadBytes(t, manual) + renderedMemoryPayloadBytes(t, small)
+	updateEmployeeMemoryPolicy(t, fixture.employees, fixture.employee, employee.MemoryPolicy{
+		CandidateGeneration: true, Promotion: employee.MemoryPromotionOwnerConfirmation, AutomaticRecall: true,
+		MaxContextFacts: 2, MaxContextBytes: limit,
+	})
+	input := fixture.input(manual.ID)
+	input.Prompt = "migration"
+	created, err := fixture.service.CreateEmployeeTask(context.Background(), fixture.employee, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.MemoryFacts) != 2 {
+		t.Fatalf("selected %d Memory Facts, want manual plus one automatic: %#v", len(created.MemoryFacts), created.MemoryFacts)
+	}
+	ids := []string{created.MemoryFacts[0].FactID, created.MemoryFacts[1].FactID}
+	want := []string{manual.ID, small.ID}
+	sort.Strings(want)
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("manual/automatic ids = %#v, want %#v", ids, want)
+	}
+}
+
+func TestAutomaticRecallDisabledPreservesManualOnlySelection(t *testing.T) {
+	fixture := newMemoryPolicyTaskFixture(t, "database migration", "another database migration")
+	updateEmployeeMemoryPolicy(t, fixture.employees, fixture.employee, employee.MemoryPolicy{
+		CandidateGeneration: true, Promotion: employee.MemoryPromotionOwnerConfirmation, AutomaticRecall: false,
+		MaxContextFacts: 12, MaxContextBytes: 16 << 10,
+	})
+	input := fixture.input(fixture.facts[0].ID)
+	input.Prompt = "database migration"
+	created, err := fixture.service.CreateEmployeeTask(context.Background(), fixture.employee, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := memoryFactIDsFromSnapshots(created.MemoryFacts); !reflect.DeepEqual(got, []string{fixture.facts[0].ID}) {
+		t.Fatalf("automatic recall disabled selected = %#v", got)
+	}
+}
+
+func TestAutomaticRecallStopsAtTwelveFacts(t *testing.T) {
+	values := make([]string, 13)
+	for index := range values {
+		values[index] = fmt.Sprintf("migration fact %02d", index)
+	}
+	fixture := newMemoryPolicyTaskFixture(t, values...)
+	updateEmployeeMemoryPolicy(t, fixture.employees, fixture.employee, employee.MemoryPolicy{
+		CandidateGeneration: true, Promotion: employee.MemoryPromotionOwnerConfirmation, AutomaticRecall: true,
+		MaxContextFacts: 12, MaxContextBytes: 16 << 10,
+	})
+	input := fixture.input()
+	input.Prompt = "migration"
+	created, err := fixture.service.CreateEmployeeTask(context.Background(), fixture.employee, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.MemoryFacts) != 12 {
+		t.Fatalf("automatic recall selected %d Facts, want 12: %#v", len(created.MemoryFacts), created.MemoryFacts)
+	}
+	seen := make(map[string]struct{}, len(created.MemoryFacts))
+	for _, item := range created.MemoryFacts {
+		if _, duplicate := seen[item.FactID]; duplicate {
+			t.Fatalf("automatic recall selected duplicate Fact %q", item.FactID)
+		}
+		seen[item.FactID] = struct{}{}
+	}
+}
+
+func TestAutomaticRecallAcceptsExactByteBoundaryAndSkipsOverlargeFact(t *testing.T) {
+	exact := newMemoryPolicyTaskFixture(t, "migration")
+	limit := renderedMemoryPayloadBytes(t, exact.facts[0])
+	updateEmployeeMemoryPolicy(t, exact.employees, exact.employee, employee.MemoryPolicy{
+		CandidateGeneration: true, Promotion: employee.MemoryPromotionOwnerConfirmation, AutomaticRecall: true,
+		MaxContextFacts: 1, MaxContextBytes: limit,
+	})
+	input := exact.input()
+	input.Prompt = "migration"
+	created, err := exact.service.CreateEmployeeTask(context.Background(), exact.employee, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := memoryFactIDsFromSnapshots(created.MemoryFacts); !reflect.DeepEqual(got, []string{exact.facts[0].ID}) {
+		t.Fatalf("exact automatic byte boundary selected = %#v", got)
+	}
+
+	over := newMemoryPolicyTaskFixture(t, "migration")
+	updateEmployeeMemoryPolicy(t, over.employees, over.employee, employee.MemoryPolicy{
+		CandidateGeneration: true, Promotion: employee.MemoryPromotionOwnerConfirmation, AutomaticRecall: true,
+		MaxContextFacts: 1, MaxContextBytes: limit - 1,
+	})
+	input = over.input()
+	input.Prompt = "migration"
+	created, err = over.service.CreateEmployeeTask(context.Background(), over.employee, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.MemoryFacts) != 0 {
+		t.Fatalf("overlarge automatic Fact was selected: %#v", created.MemoryFacts)
+	}
+}
+
+func memoryFactIDsFromSnapshots(items []employee.TaskMemoryFactSnapshot) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.FactID)
+	}
+	return result
 }
 
 func TestCreateEmployeeTaskEnforcesMemoryPayloadByteBoundaries(t *testing.T) {
