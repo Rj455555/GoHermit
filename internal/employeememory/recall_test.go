@@ -50,7 +50,7 @@ func TestRecallFactsUsesUnicodeTokensAndStablePriority(t *testing.T) {
 	for _, fact := range got {
 		ids = append(ids, fact.ID)
 	}
-	want := []string{"fact-c", "fact-z", "fact-b", "fact-a"}
+	want := []string{"fact-c", "fact-z", "fact-b"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Fatalf("RecallFacts() ids = %#v, want %#v", ids, want)
 	}
@@ -62,7 +62,7 @@ func TestRecallFactsUsesUnicodeTokensAndStablePriority(t *testing.T) {
 	}
 }
 
-func TestRecallFactsAllowsOwnerEditedAndConfirmedNonRunFacts(t *testing.T) {
+func TestRecallFactsRequiresRelevantIntersectionForEveryCategory(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	makeFact := func(id, category string, ownerEdited bool) Fact {
 		candidate, err := NewCandidate(Candidate{
@@ -90,8 +90,8 @@ func TestRecallFactsAllowsOwnerEditedAndConfirmedNonRunFacts(t *testing.T) {
 	for _, fact := range got {
 		ids = append(ids, fact.ID)
 	}
-	if want := []string{"fact-owner", "fact-confirmed"}; !reflect.DeepEqual(ids, want) {
-		t.Fatalf("eligible facts = %#v, want %#v", ids, want)
+	if len(ids) != 0 {
+		t.Fatalf("zero-relevance facts = %#v, want none", ids)
 	}
 }
 
