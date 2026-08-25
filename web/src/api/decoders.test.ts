@@ -69,6 +69,28 @@ function session(overrides: Record<string, unknown> = {}) {
 }
 
 describe('endpoint decoders', () => {
+  it('decodes the compatibility automatic_recall field from missing, false, and true wire values', () => {
+    const employee = {
+      id: 'employee-compat', revision: 1, state: 'active', name: 'Compat', job_title: 'Engineer',
+      agent_profile: 'coding', project_count: 0, created_at: now, updated_at: now,
+      schema_version: 1, avatar: { kind: 'initials', value: 'C' }, charter: 'Keep compatibility.',
+      responsibilities: [], behavior_boundaries: [],
+      default_selection: { company: 'openai', access: 'codex', model: 'gpt' },
+      skill_bindings: [], project_binding_ids: [],
+      permission_policy: { allowed_capabilities: ['read'], network_allowed: false },
+      budget_policy: { max_model_calls: 1, max_tokens: 1000, timeout_seconds: 60 },
+      concurrency_policy: { max_running_tasks: 1 },
+      memory_policy: { candidate_generation: false, promotion: 'disabled', max_context_facts: 0, max_context_bytes: 0 },
+    }
+    const decode = (memoryPolicy: Record<string, unknown>) => decodeEmployeeRecord({
+      employee: { ...employee, memory_policy: memoryPolicy }, project_bindings: [],
+    }).employee.memory_policy.automatic_recall
+
+    expect(decode({ ...employee.memory_policy })).toBe(false)
+    expect(decode({ ...employee.memory_policy, automatic_recall: false })).toBe(false)
+    expect(decode({ ...employee.memory_policy, automatic_recall: true })).toBe(true)
+  })
+
   it('validates Health fields and enums', () => {
     expect(decodeHealth({ status: 'ok', version: '0.3', active: false })).toEqual({
       status: 'ok',

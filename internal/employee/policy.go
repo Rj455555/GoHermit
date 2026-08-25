@@ -50,6 +50,7 @@ const (
 type MemoryPolicy struct {
 	CandidateGeneration bool            `json:"candidate_generation"`
 	Promotion           MemoryPromotion `json:"promotion"`
+	AutomaticRecall     bool            `json:"automatic_recall,omitempty"`
 	MaxContextFacts     int             `json:"max_context_facts"`
 	MaxContextBytes     int             `json:"max_context_bytes"`
 }
