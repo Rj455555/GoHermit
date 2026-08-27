@@ -106,7 +106,7 @@ func (r *Runner) awaitApproval(runCtx context.Context, s *session.Session, run *
 	if err = r.emit(s, r.approvalEvent(s, run, turn, event.ApprovalConsumed, target), true); err != nil {
 		return tool.Result{}, err
 	}
-	return r.Executor.ExecuteApproved(runCtx, tool.Call{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
+	return r.executeTool(runCtx, tool.Call{ID: call.ID, Name: call.Name, Arguments: call.Arguments}, true)
 }
 
 // approvalDenialResult is the structured tool result every non-executed

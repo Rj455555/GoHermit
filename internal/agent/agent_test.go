@@ -287,7 +287,7 @@ func TestFailedModelCallCountsProviderAttempts(t *testing.T) {
 	if err == nil || len(s.Runs) != 1 || s.Runs[0].Status != session.RunFailed {
 		t.Fatalf("err=%v runs=%+v", err, s.Runs)
 	}
-	if s.Runs[0].ModelCalls != 2 || s.Runs[0].TotalTokens != 0 {
+	if s.Runs[0].ModelCalls != 1 || s.Runs[0].TotalTokens != 0 {
 		t.Fatalf("failed attempts must count without fabricated tokens: run=%+v", s.Runs[0])
 	}
 }
@@ -307,7 +307,7 @@ func TestRetriedAndFailedCompressCallsAreCounted(t *testing.T) {
 	if run.Status != session.RunCompleted {
 		t.Fatalf("run=%+v", run)
 	}
-	if run.ModelCalls != 4 || run.TotalTokens != 15 {
+	if run.ModelCalls != 2 || run.TotalTokens != 15 {
 		t.Fatalf("retried success and failed compress must count: run=%+v", run)
 	}
 	if strings.TrimSpace(s.Summary) == "" {

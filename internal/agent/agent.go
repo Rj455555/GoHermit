@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -27,6 +28,7 @@ import (
 
 type Config struct {
 	MaxTurns                   int
+	MaxModelCalls              int
 	Timeout                    time.Duration
 	Model                      string
 	Stream                     bool
@@ -37,6 +39,9 @@ type Config struct {
 	// zero uses the contract TTL (approval.TTL, 15 minutes).
 	ApprovalTTL time.Duration
 }
+
+var ErrModelCallBudgetExhausted = errors.New("model call budget exhausted")
+
 type Runner struct {
 	Provider model.Provider
 	Executor tool.Executor
@@ -61,8 +66,9 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 	if r.Config.MaxTurns < 1 {
 		return errors.New("max turns must be positive")
 	}
-	runCtx, cancel := context.WithTimeout(ctx, r.Config.Timeout)
-	defer cancel()
+	if r.Config.MaxModelCalls < 0 {
+		return errors.New("max model calls must not be negative")
+	}
 	r.Store.SeedEventSequence(s.ID, s.NextEventSequence)
 	active := s.ActiveRun()
 	if active == nil {
@@ -81,6 +87,8 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 	if active.PlanMode == session.PlanReview && !active.PlanApproved {
 		return errors.New("review plan must be approved before execution")
 	}
+	runCtx, cancel := runContext(ctx, active.StartedAt, r.Config.Timeout)
+	defer cancel()
 	completedBeforeStart := completedToolFrontier{}
 	if active.Status == session.RunInterrupted {
 		completedBeforeStart = completedToolCalls(s.ToolCalls, active.ID, active.EndTurn)
@@ -150,12 +158,29 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			return r.fail(runCtx, s, "employee context assembly failed", err)
 		}
 		if compressed {
-			r.compress(runCtx, s, active, messages)
+			if err := r.compress(runCtx, s, active, messages); err != nil {
+				if runCtx.Err() != nil {
+					return r.stop(runCtx, s, runCtx.Err())
+				}
+				if errors.Is(err, ErrModelCallBudgetExhausted) {
+					return r.fail(runCtx, s, "model call budget exhausted", err)
+				}
+				return r.fail(runCtx, s, "context compression failed", err)
+			}
 			messages = boundedMessages(messages)
 			assembled, _, err = r.buildRunContext(s, active, messages, runState)
 			if err != nil {
 				return r.fail(runCtx, s, "employee context assembly failed", err)
 			}
+		}
+		if err := r.reserveModelCall(runCtx, s, active); err != nil {
+			if errors.Is(err, ErrModelCallBudgetExhausted) {
+				return r.fail(runCtx, s, "model call budget exhausted", err)
+			}
+			if runCtx.Err() != nil {
+				return r.stop(runCtx, s, runCtx.Err())
+			}
+			return r.fail(runCtx, s, "model call budget reservation failed", err)
 		}
 		e = event.New(event.ModelStarted, s.ID)
 		e.RunID = active.ID
@@ -163,8 +188,12 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 		if err := r.emit(s, e, true); err != nil {
 			return err
 		}
-		response, err := r.Provider.Generate(runCtx, model.GenerateRequest{Model: r.Config.Model, Messages: assembled, Tools: r.Executor.Registry.ModelDefinitions(), Stream: r.Config.Stream, OnStream: func(delta model.StreamEvent) {
-			if delta.Delta == "" {
+		var streamMu sync.RWMutex
+		streamClosed := false
+		response, err := r.generate(runCtx, model.GenerateRequest{Model: r.Config.Model, Messages: assembled, Tools: r.Executor.Registry.ModelDefinitions(), Stream: r.Config.Stream, OnStream: func(delta model.StreamEvent) {
+			streamMu.RLock()
+			defer streamMu.RUnlock()
+			if streamClosed || delta.Delta == "" || runCtx.Err() != nil {
 				return
 			}
 			ev := event.New(event.ModelDelta, s.ID)
@@ -173,15 +202,23 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			ev.Message = delta.Delta
 			_ = r.emit(s, ev, false)
 		}})
+		streamMu.Lock()
+		streamClosed = true
+		streamMu.Unlock()
 		if err != nil {
 			if runCtx.Err() != nil {
 				return r.stop(runCtx, s, runCtx.Err())
 			}
-			active.ModelCalls += modelAttempts(err)
+			if retryableProviderError(err) &&
+				(r.Config.MaxModelCalls <= 0 || active.ModelCalls < r.Config.MaxModelCalls) {
+				continue
+			}
 			s.LastError = err.Error()
 			return r.fail(runCtx, s, "model request failed", err)
 		}
-		active.ModelCalls += max(1, response.Attempts)
+		if err := runCtx.Err(); err != nil {
+			return r.stop(runCtx, s, err)
+		}
 		active.PromptTokens += response.Usage.PromptTokens
 		active.CompletionTokens += response.Usage.CompletionTokens
 		active.TotalTokens += response.Usage.TotalTokens
@@ -233,6 +270,12 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			return err
 		}
 		for _, call := range response.Message.ToolCalls {
+			if err := runCtx.Err(); err != nil {
+				return r.stop(runCtx, s, err)
+			}
+			if r.Config.MaxModelCalls > 0 && active.ModelCalls >= r.Config.MaxModelCalls {
+				return r.fail(runCtx, s, "model call budget exhausted", ErrModelCallBudgetExhausted)
+			}
 			argsDigest, digestErr := toolCallDigest(call)
 			if digestErr != nil {
 				return r.fail(runCtx, s, "invalid tool arguments", digestErr)
@@ -264,7 +307,13 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			if err := r.Store.Save(context.WithoutCancel(runCtx), s); err != nil {
 				return err
 			}
-			result, _ := r.Executor.Execute(runCtx, tool.Call{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
+			result, executeErr := r.executeTool(runCtx, tool.Call{ID: call.ID, Name: call.Name, Arguments: call.Arguments}, false)
+			if executeErr != nil {
+				if runCtx.Err() != nil {
+					return r.stop(runCtx, s, runCtx.Err())
+				}
+				return r.fail(runCtx, s, "tool execution failed", executeErr)
+			}
 			if result.Error != nil && result.Error.Code == tool.CodeApprovalRequired && r.Approvals != nil {
 				result, err = r.awaitApproval(runCtx, s, active, turn, call, result)
 				if err != nil {
@@ -274,6 +323,7 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 					return err
 				}
 			}
+			toolTimedOut := result.Error != nil && result.Error.Code == "tool_timeout"
 			if result.Error != nil && (result.Error.Code == "confirmation_required" || result.Error.Code == "blocked" || result.Error.Code == tool.CodeApprovalRequired) {
 				pe := event.New(event.PermissionRequired, s.ID)
 				pe.RunID = active.ID
@@ -304,6 +354,9 @@ func (r *Runner) Run(ctx context.Context, s *session.Session) error {
 			e.Message = summary
 			if err := r.emit(s, e, true); err != nil {
 				return err
+			}
+			if toolTimedOut {
+				return r.fail(runCtx, s, "tool execution timed out", errors.New("tool execution timed out"))
 			}
 			if defTool, ok := r.Executor.Registry.Get(call.Name); ok && defTool.Definition().MutatesWorkspace {
 				active.LastMutationTurn = turn
@@ -554,42 +607,118 @@ func canonicalJSONNumber(value json.Number) (json.Number, error) {
 	return json.Number(sign + raw + "e" + strconv.Itoa(exponent)), nil
 }
 
-// modelAttempts reports how many provider attempts a failed Generate made;
-// errors without an explicit attempt count are a single attempt.
-func modelAttempts(err error) int {
-	var pe *model.ProviderError
-	if errors.As(err, &pe) {
-		return max(1, pe.Attempts)
+func retryableProviderError(err error) bool {
+	var providerErr *model.ProviderError
+	return errors.As(err, &providerErr) && providerErr.Retryable
+}
+
+type providerResult struct {
+	response model.GenerateResponse
+	err      error
+}
+
+func (r *Runner) generate(ctx context.Context, request model.GenerateRequest) (model.GenerateResponse, error) {
+	result := make(chan providerResult, 1)
+	go func() {
+		response, err := r.Provider.Generate(ctx, request)
+		result <- providerResult{response: response, err: err}
+	}()
+	select {
+	case output := <-result:
+		if err := ctx.Err(); err != nil {
+			return model.GenerateResponse{}, err
+		}
+		return output.response, output.err
+	case <-ctx.Done():
+		return model.GenerateResponse{}, ctx.Err()
 	}
-	return 1
+}
+
+type toolResult struct {
+	result tool.Result
+	err    error
+}
+
+func (r *Runner) executeTool(ctx context.Context, call tool.Call, approved bool) (tool.Result, error) {
+	result := make(chan toolResult, 1)
+	go func() {
+		var output tool.Result
+		var err error
+		if approved {
+			output, err = r.Executor.ExecuteApproved(ctx, call)
+		} else {
+			output, err = r.Executor.Execute(ctx, call)
+		}
+		result <- toolResult{result: output, err: err}
+	}()
+	select {
+	case output := <-result:
+		if err := ctx.Err(); err != nil {
+			return tool.Result{}, err
+		}
+		return output.result, output.err
+	case <-ctx.Done():
+		return tool.Result{}, ctx.Err()
+	}
+}
+
+func (r *Runner) reserveModelCall(ctx context.Context, s *session.Session, run *session.Run) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	reserved, err := r.Store.ReserveModelCall(context.WithoutCancel(ctx), s, run.ID, r.Config.MaxModelCalls)
+	if err != nil {
+		return err
+	}
+	if !reserved {
+		return ErrModelCallBudgetExhausted
+	}
+	return nil
+}
+
+func runContext(parent context.Context, started time.Time, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 && !started.IsZero() {
+		return context.WithDeadline(parent, started.Add(timeout))
+	}
+	return context.WithTimeout(parent, timeout)
 }
 
 func (r *Runner) runState(s *session.Session, run *session.Run) string {
 	return fmt.Sprintf("Run %s is %s. Turn %d. Last mutation turn: %d. Last verified turn: %d. Pending work: %s", run.ID, run.Status, s.Turns, run.LastMutationTurn, run.LastVerificationTurn, strings.Join(s.PendingSteps, "; "))
 }
 
-func (r *Runner) compress(ctx context.Context, s *session.Session, run *session.Run, messages []model.Message) {
+func (r *Runner) compress(ctx context.Context, s *session.Session, run *session.Run, messages []model.Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := r.reserveModelCall(ctx, s, run); err != nil {
+		return err
+	}
 	deterministic := contextmgr.StructuredSummary(s)
 	request := []model.Message{
 		{Role: model.RoleSystem, Content: "Compress the visible coding-session facts into JSON only. Never include secrets, private reasoning, full prompts, or raw tool output. Return exactly {\"summary\":\"markdown using the headings Current goal, Completed work, Modified files, Commands run, Test results, Confirmed decisions, Current problems, Remaining work, Resume information\"}."},
 		{Role: model.RoleUser, Content: deterministic + "\n\nRecent visible context:\n" + visibleContext(messages)},
 	}
-	response, err := r.Provider.Generate(ctx, model.GenerateRequest{Model: r.Config.Model, Messages: request, Stream: false})
+	response, err := r.generate(ctx, model.GenerateRequest{Model: r.Config.Model, Messages: request, Stream: false})
 	if err != nil {
-		run.ModelCalls += modelAttempts(err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		s.Summary = deterministic
-		return
+		return nil
 	}
-	run.ModelCalls += max(1, response.Attempts)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	run.PromptTokens += response.Usage.PromptTokens
 	run.CompletionTokens += response.Usage.CompletionTokens
 	run.TotalTokens += response.Usage.TotalTokens
 	var payload struct {
-		Summary string `json:"summary"`
+		Summary string
 	}
 	if json.Unmarshal([]byte(response.Message.Content), &payload) != nil || strings.TrimSpace(payload.Summary) == "" {
 		s.Summary = deterministic
-		return
+		return nil
 	}
 	payload.Summary = strings.TrimSpace(payload.Summary)
 	if len(payload.Summary) > 16<<10 {
@@ -597,6 +726,7 @@ func (r *Runner) compress(ctx context.Context, s *session.Session, run *session.
 	}
 	s.Summary = payload.Summary
 	run.UpdatedAt = time.Now().UTC()
+	return nil
 }
 
 func visibleContext(messages []model.Message) string {
@@ -653,6 +783,9 @@ func documentationOnly(paths []string) bool {
 }
 
 func (r *Runner) complete(ctx context.Context, s *session.Session, run *session.Run, final string, messages []model.Message) error {
+	if err := ctx.Err(); err != nil {
+		return r.stop(ctx, s, err)
+	}
 	if err := r.planComplete(s, run, "verify", "验证已通过"); err != nil {
 		return err
 	}
@@ -665,6 +798,12 @@ func (r *Runner) complete(ctx context.Context, s *session.Session, run *session.
 	if run.Plan == nil || run.Plan.Status != taskplan.Completed {
 		return r.fail(ctx, s, "live plan did not reach completion", errors.New("live plan completion gate failed"))
 	}
+	if err := r.compress(ctx, s, run, messages); err != nil && ctx.Err() != nil {
+		return r.stop(ctx, s, ctx.Err())
+	}
+	if err := ctx.Err(); err != nil {
+		return r.stop(ctx, s, err)
+	}
 	now := time.Now().UTC()
 	run.Status = session.RunCompleted
 	run.FinalMessage = final
@@ -676,7 +815,6 @@ func (r *Runner) complete(ctx context.Context, s *session.Session, run *session.
 	s.CompletedSteps = append(s.CompletedSteps, "Run "+run.ID+" completed after verification")
 	s.PendingSteps = nil
 	s.RecentMessages = boundedMessages(messages)
-	r.compress(ctx, s, run, messages)
 	s.GitState = session.GitState(ctx, s.Workspace)
 	if strings.TrimSpace(final) != "" {
 		if err := r.Store.AppendMessage(s.ID, session.MessageRecord{RunID: run.ID, Role: model.RoleAssistant, Content: final, CreatedAt: now}); err != nil {

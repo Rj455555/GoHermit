@@ -60,6 +60,9 @@ type RuntimeOptions struct {
 	// EffectivePolicy is an already intersected EmployeeTask ceiling. It only
 	// narrows global/profile registration and network access.
 	EffectivePolicy *employee.EffectivePolicy
+	// Budget is an already validated EmployeeTask budget. It is runtime-only;
+	// the immutable Task/Session snapshots remain the persistence boundary.
+	Budget *employee.BudgetPolicy
 }
 
 func (r *Runtime) Close() {
@@ -400,7 +403,25 @@ func BuildRuntimeWithOptions(ctx context.Context, workspace, configPath string, 
 		cleanup()
 		return nil, err
 	}
-	runner := &agent.Runner{Provider: provider, Executor: tool.Executor{Registry: registry, DefaultTimeout: conf.Tools.DefaultTimeout.Value()}, Context: manager, Store: store, Config: agent.Config{MaxTurns: conf.Agent.MaxTurns, Timeout: conf.Agent.Timeout.Value(), Model: conf.Model.Name, Stream: conf.Model.Stream, CheckpointEveryTurns: conf.Storage.CheckpointEveryTurns, CheckpointOnToolCompletion: conf.Storage.CheckpointOnToolCompletion}, Approvals: options.Approvals}
+	runnerConfig := agent.Config{
+		MaxTurns: conf.Agent.MaxTurns, Timeout: conf.Agent.Timeout.Value(),
+		Model: conf.Model.Name, Stream: conf.Model.Stream,
+		CheckpointEveryTurns:       conf.Storage.CheckpointEveryTurns,
+		CheckpointOnToolCompletion: conf.Storage.CheckpointOnToolCompletion,
+	}
+	if options.Budget != nil {
+		runnerConfig.MaxModelCalls = options.Budget.MaxModelCalls
+		if options.Budget.TimeoutSeconds > 0 {
+			budgetTimeout := time.Duration(options.Budget.TimeoutSeconds) * time.Second
+			if runnerConfig.Timeout <= 0 || budgetTimeout < runnerConfig.Timeout {
+				runnerConfig.Timeout = budgetTimeout
+			}
+		}
+	}
+	runner := &agent.Runner{
+		Provider: provider, Executor: tool.Executor{Registry: registry, DefaultTimeout: conf.Tools.DefaultTimeout.Value()},
+		Context: manager, Store: store, Config: runnerConfig, Approvals: options.Approvals,
+	}
 	return &Runtime{Workspace: workspace, Config: conf, Store: store, Runner: runner, close: cleanup}, nil
 }
 
