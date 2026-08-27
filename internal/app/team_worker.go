@@ -88,11 +88,26 @@ func (w *TeamWorker) Execute(ctx context.Context, assignment team.Assignment) (t
 			return BuildRuntimeWithOptions(ctx, workspace, configPath, options, nil)
 		}
 	}
-	runtime, err := build(ctx, w.Workspace, w.ConfigPath, RuntimeOptions{Selection: &selection, APIKey: apiKey, Models: models, Approvals: w.Approvals})
+	var budget *employee.BudgetPolicy
+	if assignment.Employee != nil && roleRuntime.EmployeeContext != nil {
+		value := roleRuntime.EmployeeContext.Budget
+		budget = &value
+	}
+	runtime, err := build(ctx, w.Workspace, w.ConfigPath, RuntimeOptions{
+		Selection: &selection, APIKey: apiKey, Models: models, Approvals: w.Approvals,
+		Budget: budget,
+	})
 	if err != nil {
 		return team.Result{}, err
 	}
 	defer runtime.Close()
+	if budget != nil {
+		runtime.Runner.Config.MaxModelCalls = budget.MaxModelCalls
+		budgetTimeout := time.Duration(budget.TimeoutSeconds) * time.Second
+		if budgetTimeout > 0 && (runtime.Runner.Config.Timeout <= 0 || budgetTimeout < runtime.Runner.Config.Timeout) {
+			runtime.Runner.Config.Timeout = budgetTimeout
+		}
+	}
 	if assignment.Employee != nil {
 		runtime.Runner.Executor.Registry.RestrictCapabilities(roleRuntime.EmployeeContext.EffectivePolicy.AllowedCapabilities)
 		contextCopy, contextErr := contextmgr.EmployeeContextFromCompact(roleRuntime.EmployeeContext.Clone())

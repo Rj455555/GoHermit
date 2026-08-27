@@ -40,6 +40,7 @@ type EmployeeContext struct {
 	Responsibilities   []string
 	BehaviorBoundaries []string
 	EffectivePolicy    employee.EffectivePolicy
+	Budget             employee.BudgetPolicy
 	BudgetSummary      string
 	ProjectSummary     string
 	PinnedSkills       []SkillContext
@@ -88,6 +89,7 @@ func EmployeeContextFromCompact(snapshot employee.CompactSnapshot) (EmployeeCont
 			AllowedCapabilities: append([]string{}, snapshot.EffectivePolicy.AllowedCapabilities...),
 			NetworkAllowed:      snapshot.EffectivePolicy.NetworkAllowed,
 		},
+		Budget: snapshot.Budget,
 		BudgetSummary: fmt.Sprintf(
 			"max_model_calls=%d, max_tokens=%d, timeout_seconds=%d",
 			snapshot.Budget.MaxModelCalls, snapshot.Budget.MaxTokens, snapshot.Budget.TimeoutSeconds,

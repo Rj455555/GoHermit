@@ -236,7 +236,7 @@ func TestTeamWorkerReportsPartialUsageOnChildRunFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected child run failure")
 	}
-	if result.ModelCalls != 3 || result.Tokens != 15 {
+	if result.ModelCalls != 2 || result.Tokens != 15 {
 		t.Fatalf("partial usage must report exactly what the failed run recorded: result=%+v", result)
 	}
 }

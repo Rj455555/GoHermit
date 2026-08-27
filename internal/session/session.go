@@ -1360,3 +1360,39 @@ func (s *Store) ListSummaries(ctx context.Context, limit int) ([]SessionSummary,
 	}
 	return out, nil
 }
+
+// ReserveModelCall atomically consumes one application-level Provider
+// invocation for a Run and persists the increment before the caller enters
+// Provider.Generate. A non-positive maximum means unlimited, preserving
+// legacy sessions that have no Employee budget.
+func (s *Store) ReserveModelCall(ctx context.Context, checkpoint *Session, runID string, maximum int) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if checkpoint == nil || runID == "" {
+		return false, errors.New("Session and Run are required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var run *Run
+	for index := range checkpoint.Runs {
+		if checkpoint.Runs[index].ID == runID {
+			run = &checkpoint.Runs[index]
+			break
+		}
+	}
+	if run == nil {
+		return false, errors.New("Run is not present in Session")
+	}
+	if maximum > 0 && run.ModelCalls >= maximum {
+		return false, nil
+	}
+	run.ModelCalls++
+	run.UpdatedAt = time.Now().UTC()
+	if err := s.commitLocked(ctx, checkpoint, append([]event.Event(nil), s.pending[checkpoint.ID]...)); err != nil {
+		run.ModelCalls--
+		return false, err
+	}
+	delete(s.pending, checkpoint.ID)
+	return true, nil
+}

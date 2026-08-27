@@ -360,6 +360,15 @@ func (s *Service) launchSessionRunConfigured(sess *session.Session, message stri
 			s.failLaunchedRun(sess, runID, buildErr)
 			return
 		}
+		if employeeLaunch != nil {
+			runtime.Runner.Config.MaxModelCalls = employeeLaunch.Context.Budget.MaxModelCalls
+			if employeeLaunch.Context.Budget.TimeoutSeconds > 0 {
+				budgetTimeout := time.Duration(employeeLaunch.Context.Budget.TimeoutSeconds) * time.Second
+				if runtime.Runner.Config.Timeout <= 0 || budgetTimeout < runtime.Runner.Config.Timeout {
+					runtime.Runner.Config.Timeout = budgetTimeout
+				}
+			}
+		}
 		s.applyOwner(runtime)
 		defer runtime.Close()
 		runtime.Runner.Sink = s.emit
