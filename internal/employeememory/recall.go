@@ -167,8 +167,10 @@ func tokenizeMemory(value string) memoryTokenData {
 			index = end
 			continue
 		}
-		previousEnglish = ""
-		previousWasEnglish = false
+		if !isHorizontalWhitespace(runes[index]) {
+			previousEnglish = ""
+			previousWasEnglish = false
+		}
 		index++
 	}
 	return data
@@ -187,6 +189,19 @@ func normalizeEnglishToken(token string) string {
 
 func memoryTokens(value string) map[string]struct{} {
 	return tokenizeMemory(value).all
+}
+
+func isHorizontalWhitespace(value rune) bool {
+	switch value {
+	case ' ', '\t',
+		'\u00a0', '\u1680',
+		'\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005',
+		'\u2006', '\u2007', '\u2008', '\u2009', '\u200a',
+		'\u202f', '\u205f', '\u3000':
+		return true
+	default:
+		return false
+	}
 }
 
 func isWordRune(value rune) bool {
